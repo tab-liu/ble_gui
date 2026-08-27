@@ -1,0 +1,53 @@
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component MetricCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> unit;
+    in property <string> hint;
+    in property <color> accent;
+
+    width: 180px;
+    height: 100px;
+    border-radius: 10px;
+    background: Theme.bg-card;
+    border-width: 1px;
+    border-color: Theme.border-card;
+
+    VerticalBox {
+        padding: 14px;
+        spacing: 4px;
+
+        Text {
+            text: root.label;
+            color: Theme.text-muted;
+            font-size: 12px;
+        }
+
+        HorizontalBox {
+            spacing: 4px;
+            alignment: start;
+
+            Text {
+                text: root.value;
+                color: Theme.text-primary;
+                font-size: 28px;
+                font-weight: 700;
+            }
+
+            Text {
+                text: root.unit;
+                color: Theme.text-muted;
+                font-size: 14px;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.hint;
+            color: root.accent;
+            font-size: 11px;
+        }
+    }
+}

@@ -1,0 +1,44 @@
+// theme-mode: 0=跟随系统, 1=浅色, 2=深色
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    in-out property <int> mode: 0;
+    in-out property <bool> dark: true;
+
+    out property <string> quick-toggle-label: root.dark ? "☀ 浅色" : "🌙 深色";
+    out property <string> mode-label: root.mode == 0 ? "跟随系统"
+        : root.mode == 1 ? "浅色" : "深色";
+
+    // 浅色：主内容区最亮，侧栏/状态栏仅作轻微 chrome 区分
+    out property <color> bg-window: root.dark ? #1a1c24 : #ffffff;
+    out property <color> bg-sidebar: root.dark ? #14161c : #f3f5f8;
+    out property <color> bg-statusbar: root.dark ? #14161c : #eceef2;
+    out property <color> bg-panel: root.dark ? #252836 : #ffffff;
+    out property <color> bg-panel-alt: root.dark ? #1e2130 : #f8f9fb;
+    out property <color> bg-card: root.dark ? #2a2d3a : #ffffff;
+    out property <color> bg-nav-selected: root.dark ? #353849 : #e8edf5;
+    out property <color> bg-tab: root.dark ? #252836 : #f5f6f8;
+    out property <color> bg-tab-selected: root.dark ? #353849 : #e8edf5;
+    out property <color> border: root.dark ? #353849 : #e2e6ed;
+    out property <color> border-subtle: root.dark ? #2a2d3a : #e8ebf0;
+    out property <color> border-card: root.dark ? #3d4154 : #e2e6ed;
+    out property <color> border-accent: root.dark ? #4a7cff : #2563eb;
+    out property <color> text-primary: root.dark ? #eef0f6 : #1a1c24;
+    out property <color> text-secondary: root.dark ? #a0a6bc : #4a5068;
+    out property <color> text-muted: root.dark ? #8b90a5 : #6b7190;
+    out property <color> text-dim: root.dark ? #6b7190 : #8b90a5;
+    out property <color> accent: root.dark ? #4a7cff : #2563eb;
+    out property <color> success: root.dark ? #7ec8a4 : #059669;
+    out property <color> error: root.dark ? #e07a7a : #dc2626;
+    out property <color> overlay: root.dark ? #000000aa : #00000055;
+
+    public function sync-palette() {
+        if (root.mode == 0) {
+            Palette.color-scheme = ColorScheme.unknown;
+        } else if (root.mode == 1) {
+            Palette.color-scheme = ColorScheme.light;
+        } else {
+            Palette.color-scheme = ColorScheme.dark;
+        }
+    }
+}

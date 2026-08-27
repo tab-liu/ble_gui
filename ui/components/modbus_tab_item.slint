@@ -1,0 +1,50 @@
+import { LineEdit, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component ModbusTabItem inherits Rectangle {
+    in property <string> title;
+    in property <bool> selected;
+    in property <bool> renaming;
+    in-out property <string> edit-title;
+    callback switch-tab();
+    callback request-rename();
+    callback commit-rename();
+
+    min-width: 100px;
+    height: 36px;
+    border-radius: 8px;
+    background: root.selected ? Theme.bg-tab-selected : Theme.bg-tab;
+    border-width: 1px;
+    border-color: root.selected ? Theme.border-accent : Theme.border;
+
+    if !root.renaming: TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            root.switch-tab();
+        }
+
+        double-clicked => {
+            root.request-rename();
+        }
+
+        Text {
+            text: root.title;
+            color: root.selected ? Theme.text-primary : Theme.text-muted;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.renaming: HorizontalBox {
+        padding: 4px;
+
+        LineEdit {
+            text <=> root.edit-title;
+            accepted => {
+                root.commit-rename();
+            }
+        }
+    }
+}

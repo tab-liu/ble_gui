@@ -1,0 +1,72 @@
+import { Button, VerticalBox, HorizontalBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+// dialog-kind: 1 = 新建标签
+export component NewTabDialog inherits Rectangle {
+    in property <int> dialog-kind;
+    in-out property <string> dialog-name;
+    callback confirm();
+    callback cancel();
+
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    if root.dialog-kind != 0: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Theme.overlay;
+
+        if root.dialog-kind == 1: Rectangle {
+            width: 420px;
+            height: 200px;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: "新建标签";
+                    color: Theme.text-primary;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: "标签名称";
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                }
+
+                LineEdit {
+                    text <=> root.dialog-name;
+                    placeholder-text: "例如：模拟量";
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "取消";
+                        clicked => { root.cancel(); }
+                    }
+
+                    Button {
+                        text: "确定";
+                        primary: true;
+                        clicked => { root.confirm(); }
+                    }
+                }
+            }
+        }
+    }
+}

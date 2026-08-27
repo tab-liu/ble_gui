@@ -1,0 +1,126 @@
+import { Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+component ThemeOption inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    callback picked();
+
+    min-width: 100px;
+    height: 36px;
+    border-radius: 8px;
+    background: root.selected ? Theme.bg-nav-selected : Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: root.selected ? Theme.border-accent : Theme.border;
+
+    TouchArea {
+        clicked => {
+            root.picked();
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Theme.text-primary : Theme.text-secondary;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component SettingsPage inherits VerticalBox {
+    callback set-theme-mode(int);
+
+    spacing: 12px;
+    vertical-stretch: 1;
+
+    Text {
+        text: "设置";
+        color: Theme.text-primary;
+        font-size: 18px;
+        font-weight: 700;
+    }
+
+    Rectangle {
+        border-radius: 10px;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        VerticalBox {
+            padding: 20px;
+            spacing: 16px;
+
+            Text {
+                text: "外观";
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            Text {
+                text: "当前: " + Theme.mode-label;
+                color: Theme.text-secondary;
+                font-size: 13px;
+            }
+
+            HorizontalBox {
+                spacing: 8px;
+                alignment: start;
+
+                ThemeOption {
+                    label: "跟随系统";
+                    selected: Theme.mode == 0;
+                    picked => { root.set-theme-mode(0); }
+                }
+                ThemeOption {
+                    label: "浅色";
+                    selected: Theme.mode == 1;
+                    picked => { root.set-theme-mode(1); }
+                }
+                ThemeOption {
+                    label: "深色";
+                    selected: Theme.mode == 2;
+                    picked => { root.set-theme-mode(2); }
+                }
+            }
+
+            Text {
+                text: "也可在左侧栏底部使用快捷按钮切换深/浅色";
+                color: Theme.text-dim;
+                font-size: 11px;
+            }
+        }
+    }
+
+    Rectangle {
+        vertical-stretch: 1;
+        border-radius: 10px;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        VerticalBox {
+            padding: 20px;
+            spacing: 12px;
+
+            Text {
+                text: "Modbus 通信参数（占位）";
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            for row in [
+                "默认从站号: 1",
+                "读取超时: 1000 ms",
+                "轮询间隔: 500 ms",
+                "自动重连: 开启",
+            ]: Text {
+                text: row;
+                color: Theme.text-secondary;
+                font-size: 13px;
+            }
+        }
+    }
+}

@@ -1,0 +1,167 @@
+import { VerticalBox, HorizontalBox, ScrollView, LineEdit, CheckBox } from "std-widgets.slint";
+import { DashboardMetric, BleScanDevice } from "../types.slint";
+import { Theme } from "../theme.slint";
+import { MetricCard } from "../components/metric_card.slint";
+import { ScanDeviceRow } from "../components/scan_device_row.slint";
+
+export component DashboardPage inherits VerticalBox {
+    in property <bool> device-connected;
+    in property <bool> scanning;
+    in property <[BleScanDevice]> scan-devices;
+    in property <int> scan-device-total;
+    in property <[DashboardMetric]> metrics;
+    in property <[string]> dashboard-summary;
+    in-out property <string> scan-filter;
+    in-out property <bool> scan-rssi-filter-enabled;
+    in-out property <string> scan-rssi-min;
+    callback connect-device(string);
+    callback scan-filters-changed();
+
+    spacing: 16px;
+    vertical-stretch: 1;
+
+    if !root.device-connected: VerticalBox {
+        spacing: 12px;
+        vertical-stretch: 1;
+
+        Text {
+            text: "连接蓝牙设备";
+            color: Theme.text-primary;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        Text {
+            text: root.scanning ? "正在扫描附近设备…" : "点击顶部「扫描设备」或下方列表连接";
+            color: Theme.text-muted;
+            font-size: 13px;
+        }
+
+        LineEdit {
+            text <=> root.scan-filter;
+            placeholder-text: "按名称过滤（不区分大小写）";
+            edited => {
+                root.scan-filters-changed();
+            }
+        }
+
+        HorizontalBox {
+            spacing: 12px;
+            alignment: start;
+
+            CheckBox {
+                text: "按信号强度过滤";
+                checked <=> root.scan-rssi-filter-enabled;
+                toggled => {
+                    root.scan-filters-changed();
+                }
+            }
+
+            LineEdit {
+                width: 100px;
+                enabled: root.scan-rssi-filter-enabled;
+                text <=> root.scan-rssi-min;
+                placeholder-text: "-70";
+                edited => {
+                    root.scan-filters-changed();
+                }
+            }
+
+            Text {
+                text: "dBm 及以上";
+                color: root.scan-rssi-filter-enabled ? Theme.text-secondary : Theme.text-dim;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.scan-device-total > 0: Text {
+            text: root.scan-devices.length == root.scan-device-total
+                ? "共 " + root.scan-device-total + " 台，按信号强度从强到弱排序"
+                : "共 " + root.scan-device-total + " 台，显示 " + root.scan-devices.length + " 台（按信号强度排序）";
+            color: Theme.text-dim;
+            font-size: 12px;
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+
+            VerticalBox {
+                spacing: 8px;
+
+                for dev in root.scan-devices: ScanDeviceRow {
+                    name: dev.name;
+                    address: dev.address;
+                    rssi: dev.rssi;
+                    connect-clicked => {
+                        root.connect-device(dev.address);
+                    }
+                }
+
+                if root.scan-devices.length == 0: Rectangle {
+                    height: 120px;
+                    Text {
+                        text: root.scan-device-total == 0
+                            ? "暂无设备，请点击顶部扫描"
+                            : "无符合当前过滤条件的设备";
+                        color: Theme.text-dim;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.device-connected: VerticalBox {
+        spacing: 16px;
+        vertical-stretch: 1;
+
+        Text {
+            text: "Modbus 数据概览";
+            color: Theme.text-primary;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        HorizontalBox {
+            spacing: 12px;
+            alignment: start;
+
+            for metric in root.metrics: MetricCard {
+                label: metric.label;
+                value: metric.value;
+                unit: metric.unit;
+                hint: metric.hint;
+                accent: metric.accent-color;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 10px;
+
+                Text {
+                    text: "设备运行摘要";
+                    color: Theme.text-primary;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+
+                for row in root.dashboard-summary: Text {
+                    text: row;
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                }
+            }
+        }
+    }
+}

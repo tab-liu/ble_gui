@@ -1,0 +1,62 @@
+import { VerticalBox, Button } from "std-widgets.slint";
+import { NavItem } from "nav_item.slint";
+import { Theme } from "../theme.slint";
+
+export component Sidebar inherits Rectangle {
+    in property <int> current-page;
+    in property <bool> device-connected;
+    callback navigate(int);
+    callback toggle-theme();
+
+    width: 160px;
+    background: Theme.bg-sidebar;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 6px;
+
+        Text {
+            text: "功能";
+            color: Theme.text-primary;
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        Rectangle { height: 8px; }
+
+        NavItem {
+            label: "主页";
+            selected: root.current-page == 0;
+            clicked => { root.navigate(0); }
+        }
+        NavItem {
+            label: "Modbus";
+            selected: root.current-page == 1;
+            enabled: root.device-connected;
+            clicked => { if root.device-connected { root.navigate(1); } }
+        }
+        NavItem {
+            label: "设置";
+            selected: root.current-page == 2;
+            clicked => { root.navigate(2); }
+        }
+        NavItem {
+            label: "固件升级";
+            selected: root.current-page == 3;
+            enabled: root.device-connected;
+            clicked => { if root.device-connected { root.navigate(3); } }
+        }
+
+        Rectangle { vertical-stretch: 1; }
+
+        Button {
+            text: Theme.quick-toggle-label;
+            horizontal-stretch: 1;
+            clicked => {
+                root.toggle-theme();
+            }
+        }
+    }
+}

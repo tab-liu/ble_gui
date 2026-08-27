@@ -1,0 +1,217 @@
+import { VerticalBox, HorizontalBox, Palette } from "std-widgets.slint";
+
+import {
+    ModbusQueryItem,
+    ModbusTab,
+    DashboardMetric,
+    BleScanDevice,
+} from "types.slint";
+
+import { Theme } from "theme.slint";
+import { BleStatusBar } from "components/ble_status_bar.slint";
+import { Sidebar } from "components/sidebar.slint";
+import { NewTabDialog } from "components/new_tab_dialog.slint";
+import { DashboardPage } from "pages/dashboard.slint";
+import { ModbusPage } from "pages/modbus.slint";
+import { SettingsPage } from "pages/settings.slint";
+import { FirmwarePage } from "pages/firmware.slint";
+
+export {
+    ModbusQueryItem,
+    ModbusTab,
+    DashboardMetric,
+    BleScanDevice,
+    Theme,
+    Palette,
+}
+
+// dialog-kind: 0=关闭, 1=新建标签
+export component MainWindow inherits Window {
+    in-out property <bool> device-connected;
+    in-out property <string> ble-status-text;
+    in-out property <string> ble-device-name;
+    in-out property <string> ble-rssi-text;
+    in-out property <string> ble-action-text;
+    in-out property <[BleScanDevice]> scan-devices;
+    in-out property <int> scan-device-total;
+    in-out property <bool> scanning;
+    in-out property <string> ble-scan-filter: "";
+    in-out property <bool> ble-scan-rssi-filter-enabled: false;
+    in-out property <string> ble-scan-rssi-min: "-70";
+
+    in-out property <[DashboardMetric]> metrics;
+    in-out property <[string]> dashboard-summary;
+
+    in-out property <[ModbusTab]> modbus-tabs;
+    in-out property <int> active-modbus-tab: 0;
+
+    in-out property <string> firmware-current-version;
+    in-out property <string> firmware-status-text;
+
+    in-out property <int> current-page: 0;
+    in-out property <int> dialog-kind: 0;
+    in-out property <string> dialog-name: "";
+
+    in-out property <bool> show-add-query-form: false;
+    in-out property <string> query-form-name: "";
+    in-out property <string> query-form-slave-id: "1";
+    in-out property <string> query-form-register: "";
+
+    in-out property <int> renaming-tab-index: -1;
+    in-out property <string> editing-tab-title: "";
+
+    callback navigate(int);
+    callback ble-action-clicked();
+    callback connect-device(string);
+    callback ble-scan-filters-changed();
+    callback add-modbus-tab-request();
+    callback remove-modbus-tab(int);
+    callback switch-modbus-tab(int);
+    callback start-rename-modbus-tab(int);
+    callback commit-rename-modbus-tab();
+    callback cancel-rename-modbus-tab();
+    callback show-add-query-panel(int);
+    callback confirm-add-query();
+    callback cancel-add-query();
+    callback remove-modbus-query(int, int);
+    callback firmware-check-update();
+    callback dialog-confirm();
+    callback dialog-cancel();
+    callback set-theme-mode(int);
+    callback toggle-theme-quick();
+
+    title: "BLE Modbus 工具";
+    preferred-width: 960px;
+    preferred-height: 640px;
+    background: Theme.bg-window;
+
+    VerticalBox {
+        padding: 0px;
+        spacing: 0px;
+
+        BleStatusBar {
+            connected: root.device-connected;
+            status-text: root.ble-status-text;
+            device-name: root.ble-device-name;
+            rssi-text: root.ble-rssi-text;
+            action-text: root.ble-action-text;
+            action-clicked => {
+                root.ble-action-clicked();
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+
+            HorizontalBox {
+                padding: 0px;
+                spacing: 0px;
+
+                Sidebar {
+                    current-page: root.current-page;
+                    device-connected: root.device-connected;
+                    navigate(page) => {
+                        root.navigate(page);
+                    }
+                    toggle-theme => {
+                        root.toggle-theme-quick();
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: Theme.bg-window;
+
+                    VerticalBox {
+                        padding: 16px;
+                        spacing: 16px;
+
+                        if root.current-page == 0: DashboardPage {
+                            device-connected: root.device-connected;
+                            scanning: root.scanning;
+                            scan-devices: root.scan-devices;
+                            scan-device-total: root.scan-device-total;
+                            scan-filter <=> root.ble-scan-filter;
+                            scan-rssi-filter-enabled <=> root.ble-scan-rssi-filter-enabled;
+                            scan-rssi-min <=> root.ble-scan-rssi-min;
+                            metrics: root.metrics;
+                            dashboard-summary: root.dashboard-summary;
+                            connect-device(address) => {
+                                root.connect-device(address);
+                            }
+                            scan-filters-changed => {
+                                root.ble-scan-filters-changed();
+                            }
+                        }
+
+                        if root.current-page == 1: ModbusPage {
+                            device-connected: root.device-connected;
+                            modbus-tabs: root.modbus-tabs;
+                            active-modbus-tab: root.active-modbus-tab;
+                            show-add-query-form: root.show-add-query-form;
+                            query-form-name <=> root.query-form-name;
+                            query-form-slave-id <=> root.query-form-slave-id;
+                            query-form-register <=> root.query-form-register;
+                            renaming-tab-index: root.renaming-tab-index;
+                            editing-tab-title <=> root.editing-tab-title;
+                            add-tab-request => {
+                                root.add-modbus-tab-request();
+                            }
+                            remove-tab(index) => {
+                                root.remove-modbus-tab(index);
+                            }
+                            switch-tab(index) => {
+                                root.switch-modbus-tab(index);
+                            }
+                            start-rename-tab(index) => {
+                                root.start-rename-modbus-tab(index);
+                            }
+                            commit-rename-tab => {
+                                root.commit-rename-modbus-tab();
+                            }
+                            show-add-query-panel(index) => {
+                                root.show-add-query-panel(index);
+                            }
+                            confirm-add-query => {
+                                root.confirm-add-query();
+                            }
+                            cancel-add-query => {
+                                root.cancel-add-query();
+                            }
+                            remove-query(tab, item) => {
+                                root.remove-modbus-query(tab, item);
+                            }
+                        }
+
+                        if root.current-page == 2: SettingsPage {
+                            set-theme-mode(mode) => {
+                                root.set-theme-mode(mode);
+                            }
+                        }
+
+                        if root.current-page == 3: FirmwarePage {
+                            device-connected: root.device-connected;
+                            device-name: root.ble-device-name;
+                            firmware-current-version: root.firmware-current-version;
+                            firmware-status-text: root.firmware-status-text;
+                            check-update => {
+                                root.firmware-check-update();
+                            }
+                        }
+                    }
+                }
+            }
+
+            NewTabDialog {
+                dialog-kind: root.dialog-kind;
+                dialog-name <=> root.dialog-name;
+                confirm => {
+                    root.dialog-confirm();
+                }
+                cancel => {
+                    root.dialog-cancel();
+                }
+            }
+        }
+    }
+}

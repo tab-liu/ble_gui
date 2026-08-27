@@ -1,0 +1,70 @@
+import { Button, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component ModbusQueryRow inherits Rectangle {
+    in property <string> name;
+    in property <string> slave-id;
+    in property <string> register;
+    in property <string> status;
+    in property <string> result;
+    in property <bool> enabled: true;
+    callback remove-clicked();
+
+    height: 72px;
+    background: Theme.bg-panel-alt;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: Theme.border;
+    opacity: root.enabled ? 1.0 : 0.5;
+
+    HorizontalBox {
+        padding: 12px;
+        spacing: 16px;
+        alignment: stretch;
+
+        VerticalBox {
+            spacing: 4px;
+            min-width: 140px;
+
+            Text {
+                text: root.name;
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+            }
+
+            Text {
+                text: "从站 " + root.slave-id + " · 寄存器 " + root.register;
+                color: Theme.text-dim;
+                font-size: 12px;
+            }
+        }
+
+        VerticalBox {
+            spacing: 4px;
+            horizontal-stretch: 1;
+
+            Text {
+                text: "状态: " + root.status;
+                color: Theme.text-secondary;
+                font-size: 12px;
+            }
+
+            Text {
+                text: root.result;
+                color: Theme.success;
+                font-size: 12px;
+                wrap: word-wrap;
+            }
+        }
+
+        Button {
+            text: "删除";
+            min-width: 64px;
+            enabled: root.enabled;
+            clicked => {
+                root.remove-clicked();
+            }
+        }
+    }
+}

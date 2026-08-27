@@ -1,0 +1,29 @@
+import { Theme } from "../theme.slint";
+
+export component NavItem inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked();
+
+    height: 40px;
+    border-radius: 8px;
+    background: root.selected ? Theme.bg-nav-selected : transparent;
+    opacity: root.enabled ? 1.0 : 0.45;
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => {
+            root.clicked();
+        }
+
+        Text {
+            text: root.label;
+            color: root.selected ? Theme.text-primary : Theme.text-muted;
+            font-size: 14px;
+            horizontal-alignment: left;
+            vertical-alignment: center;
+            x: 12px;
+        }
+    }
+}

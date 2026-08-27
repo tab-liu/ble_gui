@@ -1,0 +1,26 @@
+export struct ModbusQueryItem {
+    name: string,
+    slave-id: string,
+    register: string,
+    status: string,
+    result: string,
+}
+
+export struct ModbusTab {
+    title: string,
+    items: [ModbusQueryItem],
+}
+
+export struct DashboardMetric {
+    label: string,
+    value: string,
+    unit: string,
+    hint: string,
+    accent-color: color,
+}
+
+export struct BleScanDevice {
+    name: string,
+    address: string,
+    rssi: string,
+}

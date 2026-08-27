@@ -1,0 +1,73 @@
+import { Button, VerticalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component FirmwarePage inherits VerticalBox {
+    in property <bool> device-connected;
+    in property <string> device-name;
+    in property <string> firmware-current-version;
+    in property <string> firmware-status-text;
+    callback check-update();
+
+    spacing: 12px;
+    vertical-stretch: 1;
+
+    if root.device-connected: VerticalBox {
+        spacing: 12px;
+        vertical-stretch: 1;
+
+        Text {
+            text: "设备固件升级";
+            color: Theme.text-primary;
+            font-size: 18px;
+            font-weight: 700;
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: "已连接设备: " + root.device-name;
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                }
+
+                Text {
+                    text: "当前固件: " + root.firmware-current-version;
+                    color: Theme.text-secondary;
+                    font-size: 13px;
+                }
+
+                Text {
+                    text: root.firmware-status-text;
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                }
+
+                Button {
+                    text: "检查设备固件更新";
+                    min-width: 160px;
+                    clicked => { root.check-update(); }
+                }
+            }
+        }
+    }
+
+    if !root.device-connected: VerticalBox {
+        vertical-stretch: 1;
+        Text {
+            text: "请先连接蓝牙设备后再升级固件";
+            color: Theme.text-dim;
+            font-size: 14px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

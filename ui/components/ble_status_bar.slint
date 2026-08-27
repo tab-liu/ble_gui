@@ -1,0 +1,88 @@
+import { HorizontalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+component StatusBarButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> emphasized: false;
+    callback clicked();
+
+    min-width: 96px;
+    height: 32px;
+    border-radius: 6px;
+    background: root.emphasized ? Theme.accent : Theme.bg-panel;
+    border-width: 1px;
+    border-color: root.emphasized ? Theme.accent : Theme.border;
+
+    TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => {
+            root.clicked();
+        }
+
+        Text {
+            text: root.label;
+            color: root.emphasized ? #ffffff : Theme.text-primary;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component BleStatusBar inherits Rectangle {
+    in property <bool> connected;
+    in property <string> status-text;
+    in property <string> device-name;
+    in property <string> rssi-text;
+    in property <string> action-text;
+    callback action-clicked();
+
+    height: 48px;
+    background: Theme.bg-statusbar;
+    border-width: 1px;
+    border-color: Theme.border-subtle;
+
+    HorizontalBox {
+        padding-left: 16px;
+        padding-right: 16px;
+        spacing: 16px;
+        alignment: center;
+
+        Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 5px;
+            background: root.connected ? Theme.success : Theme.error;
+        }
+
+        Text {
+            text: root.status-text;
+            color: Theme.text-primary;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        Text {
+            text: root.connected ? ("设备: " + root.device-name) : "未连接蓝牙设备";
+            color: Theme.text-secondary;
+            font-size: 13px;
+        }
+
+        Text {
+            text: root.connected ? ("信号: " + root.rssi-text) : "";
+            color: Theme.text-secondary;
+            font-size: 13px;
+        }
+
+        Rectangle { horizontal-stretch: 1; }
+
+        StatusBarButton {
+            label: root.action-text;
+            emphasized: !root.connected;
+            clicked => {
+                root.action-clicked();
+            }
+        }
+    }
+}
