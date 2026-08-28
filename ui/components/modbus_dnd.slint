@@ -1,0 +1,5 @@
+export global ModbusDndApi {
+    pure callback make-data(source-index: int) -> data-transfer;
+    pure callback can-drop(event: DropEvent) -> DragAction;
+    callback dropped(event: DropEvent, hover-x: length, hover-y: length, grid-width: length);
+}

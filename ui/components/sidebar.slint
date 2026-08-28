@@ -38,11 +38,6 @@ export component Sidebar inherits Rectangle {
             clicked => { if root.device-connected { root.navigate(1); } }
         }
         NavItem {
-            label: "设置";
-            selected: root.current-page == 2;
-            clicked => { root.navigate(2); }
-        }
-        NavItem {
             label: "固件升级";
             selected: root.current-page == 3;
             enabled: root.device-connected;
@@ -50,6 +45,12 @@ export component Sidebar inherits Rectangle {
         }
 
         Rectangle { vertical-stretch: 1; }
+
+        NavItem {
+            label: "设置";
+            selected: root.current-page == 2;
+            clicked => { root.navigate(2); }
+        }
 
         Button {
             text: Theme.quick-toggle-label;

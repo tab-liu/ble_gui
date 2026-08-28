@@ -14,7 +14,7 @@ use crate::ui::MainWindow;
 
 pub mod dialog;
 
-pub use dialog::{DIALOG_NEW_TAB, DIALOG_NONE};
+pub use dialog::{DIALOG_COPY_QUERY, DIALOG_NEW_TAB, DIALOG_NONE};
 
 pub const PAGE_DASHBOARD: i32 = 0;
 pub const PAGE_MODBUS: i32 = 1;

@@ -3,7 +3,14 @@ import { Palette } from "std-widgets.slint";
 
 export global Theme {
     in-out property <int> mode: 0;
-    in-out property <bool> dark: true;
+    in-out property <bool> dark: false;
+
+    changed mode => {
+        root.sync-palette();
+    }
+    changed dark => {
+        root.sync-palette();
+    }
 
     out property <string> quick-toggle-label: root.dark ? "☀ 浅色" : "🌙 深色";
     out property <string> mode-label: root.mode == 0 ? "跟随系统"
@@ -33,12 +40,7 @@ export global Theme {
     out property <color> overlay: root.dark ? #000000aa : #00000055;
 
     public function sync-palette() {
-        if (root.mode == 0) {
-            Palette.color-scheme = ColorScheme.unknown;
-        } else if (root.mode == 1) {
-            Palette.color-scheme = ColorScheme.light;
-        } else {
-            Palette.color-scheme = ColorScheme.dark;
-        }
+        // std-widgets（LineEdit 等）需要明确的 color-scheme，unknown 会导致首次渲染样式异常
+        Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
 }

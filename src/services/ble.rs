@@ -7,7 +7,10 @@ use std::rc::Rc;
 pub struct BleScanEntry {
     pub name: String,
     pub address: String,
+    /// 当前信号强度，随广播实时更新。
     pub rssi: i32,
+    /// 首次发现时的信号强度，用于稳定排序。
+    pub initial_rssi: i32,
 }
 
 impl BleScanEntry {
@@ -82,21 +85,40 @@ impl BleService {
         }
     }
 
-    pub fn start_scan(&self) {
+    /// 收到一条广播时调用：新设备记录首次 RSSI，已存在设备只更新当前 RSSI。
+    pub fn upsert_advertisement(&self, name: &str, address: &str, rssi: i32) {
         let mut inner = self.inner.borrow_mut();
-        inner.scanning = true;
-        inner.scan_devices = vec![
-            scan_entry("Modbus-Gateway-A1", "AA:BB:CC:DD:EE:01", -58),
-            scan_entry("Modbus-Gateway-B2", "AA:BB:CC:DD:EE:02", -62),
-            scan_entry("Modbus-Gateway-C3", "AA:BB:CC:DD:EE:03", -65),
-            scan_entry("Temp-Sensor-01", "AA:BB:CC:DD:EE:04", -68),
-            scan_entry("Temp-Sensor-02", "AA:BB:CC:DD:EE:05", -70),
-            scan_entry("BLE-Scale-Office", "AA:BB:CC:DD:EE:06", -72),
-            scan_entry("BLE-Scale-Warehouse", "AA:BB:CC:DD:EE:07", -74),
-            scan_entry("Modbus-Gateway-D4", "AA:BB:CC:DD:EE:08", -76),
-            scan_entry("Modbus-Gateway-E5", "AA:BB:CC:DD:EE:09", -78),
-            scan_entry("Unknown-Device", "AA:BB:CC:DD:EE:0A", -80),
-        ];
+        if let Some(existing) = inner
+            .scan_devices
+            .iter_mut()
+            .find(|d| d.address == address)
+        {
+            existing.rssi = rssi;
+            if !name.is_empty() {
+                existing.name = name.to_string();
+            }
+        } else {
+            inner.scan_devices.push(BleScanEntry {
+                name: name.to_string(),
+                address: address.to_string(),
+                rssi,
+                initial_rssi: rssi,
+            });
+        }
+    }
+
+    pub fn start_scan(&self) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.scanning = true;
+            inner.scan_devices.clear();
+        }
+
+        for (name, address, rssi) in MOCK_SCAN_DEVICES {
+            self.upsert_advertisement(name, address, rssi);
+        }
+
+        let mut inner = self.inner.borrow_mut();
         inner.scanning = false;
     }
 
@@ -134,10 +156,15 @@ impl BleService {
     }
 }
 
-fn scan_entry(name: &str, address: &str, rssi: i32) -> BleScanEntry {
-    BleScanEntry {
-        name: name.into(),
-        address: address.into(),
-        rssi,
-    }
-}
+const MOCK_SCAN_DEVICES: [(&str, &str, i32); 10] = [
+    ("Modbus-Gateway-A1", "AA:BB:CC:DD:EE:01", -58),
+    ("Modbus-Gateway-B2", "AA:BB:CC:DD:EE:02", -62),
+    ("Modbus-Gateway-C3", "AA:BB:CC:DD:EE:03", -65),
+    ("Temp-Sensor-01", "AA:BB:CC:DD:EE:04", -68),
+    ("Temp-Sensor-02", "AA:BB:CC:DD:EE:05", -70),
+    ("BLE-Scale-Office", "AA:BB:CC:DD:EE:06", -72),
+    ("BLE-Scale-Warehouse", "AA:BB:CC:DD:EE:07", -74),
+    ("Modbus-Gateway-D4", "AA:BB:CC:DD:EE:08", -76),
+    ("Modbus-Gateway-E5", "AA:BB:CC:DD:EE:09", -78),
+    ("Unknown-Device", "AA:BB:CC:DD:EE:0A", -80),
+];

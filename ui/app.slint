@@ -3,6 +3,7 @@ import { VerticalBox, HorizontalBox, Palette } from "std-widgets.slint";
 import {
     ModbusQueryItem,
     ModbusTab,
+    ModbusQueryLayoutRow,
     DashboardMetric,
     BleScanDevice,
 } from "types.slint";
@@ -15,14 +16,17 @@ import { DashboardPage } from "pages/dashboard.slint";
 import { ModbusPage } from "pages/modbus.slint";
 import { SettingsPage } from "pages/settings.slint";
 import { FirmwarePage } from "pages/firmware.slint";
+import { ModbusDndApi } from "components/modbus_dnd.slint";
 
 export {
     ModbusQueryItem,
     ModbusTab,
+    ModbusQueryLayoutRow,
     DashboardMetric,
     BleScanDevice,
     Theme,
     Palette,
+    ModbusDndApi,
 }
 
 // dialog-kind: 0=关闭, 1=新建标签
@@ -44,6 +48,7 @@ export component MainWindow inherits Window {
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
+    in-out property <[ModbusQueryLayoutRow]> modbus-query-layout-rows;
 
     in-out property <string> firmware-current-version;
     in-out property <string> firmware-status-text;
@@ -54,8 +59,12 @@ export component MainWindow inherits Window {
 
     in-out property <bool> show-add-query-form: false;
     in-out property <string> query-form-name: "";
-    in-out property <string> query-form-slave-id: "1";
     in-out property <string> query-form-register: "";
+
+    in-out property <string> active-tab-slave-id: "0";
+    in-out property <bool> has-selected-queries;
+    in-out property <[bool]> query-selection-states;
+    in-out property <[string]> dialog-tab-options;
 
     in-out property <int> renaming-tab-index: -1;
     in-out property <string> editing-tab-title: "";
@@ -70,10 +79,15 @@ export component MainWindow inherits Window {
     callback start-rename-modbus-tab(int);
     callback commit-rename-modbus-tab();
     callback cancel-rename-modbus-tab();
+    callback commit-tab-slave-id();
     callback show-add-query-panel(int);
     callback confirm-add-query();
     callback cancel-add-query();
     callback remove-modbus-query(int, int);
+    callback select-modbus-query(int, bool);
+    callback copy-selected-modbus-query();
+    callback dialog-pick-copy-tab(int);
+    callback modbus-query-layout-width-changed(length);
     callback firmware-check-update();
     callback dialog-confirm();
     callback dialog-cancel();
@@ -84,6 +98,10 @@ export component MainWindow inherits Window {
     preferred-width: 960px;
     preferred-height: 640px;
     background: Theme.bg-window;
+
+    init => {
+        Theme.sync-palette();
+    }
 
     VerticalBox {
         padding: 0px;
@@ -123,8 +141,8 @@ export component MainWindow inherits Window {
                     background: Theme.bg-window;
 
                     VerticalBox {
-                        padding: 16px;
-                        spacing: 16px;
+                        padding: 8px;
+                        spacing: 8px;
 
                         if root.current-page == 0: DashboardPage {
                             device-connected: root.device-connected;
@@ -148,10 +166,13 @@ export component MainWindow inherits Window {
                             device-connected: root.device-connected;
                             modbus-tabs: root.modbus-tabs;
                             active-modbus-tab: root.active-modbus-tab;
+                            query-layout-rows: root.modbus-query-layout-rows;
                             show-add-query-form: root.show-add-query-form;
                             query-form-name <=> root.query-form-name;
-                            query-form-slave-id <=> root.query-form-slave-id;
                             query-form-register <=> root.query-form-register;
+                            active-tab-slave-id <=> root.active-tab-slave-id;
+                            has-selected-queries: root.has-selected-queries;
+                            query-selection-states: root.query-selection-states;
                             renaming-tab-index: root.renaming-tab-index;
                             editing-tab-title <=> root.editing-tab-title;
                             add-tab-request => {
@@ -169,6 +190,9 @@ export component MainWindow inherits Window {
                             commit-rename-tab => {
                                 root.commit-rename-modbus-tab();
                             }
+                            commit-tab-slave-id => {
+                                root.commit-tab-slave-id();
+                            }
                             show-add-query-panel(index) => {
                                 root.show-add-query-panel(index);
                             }
@@ -180,6 +204,15 @@ export component MainWindow inherits Window {
                             }
                             remove-query(tab, item) => {
                                 root.remove-modbus-query(tab, item);
+                            }
+                            select-query(index, ctrl) => {
+                                root.select-modbus-query(index, ctrl);
+                            }
+                            copy-selected-query => {
+                                root.copy-selected-modbus-query();
+                            }
+                            layout-width-changed(width) => {
+                                root.modbus-query-layout-width-changed(width);
                             }
                         }
 
@@ -205,11 +238,15 @@ export component MainWindow inherits Window {
             NewTabDialog {
                 dialog-kind: root.dialog-kind;
                 dialog-name <=> root.dialog-name;
+                dialog-tab-options: root.dialog-tab-options;
                 confirm => {
                     root.dialog-confirm();
                 }
                 cancel => {
                     root.dialog-cancel();
+                }
+                pick-tab(index) => {
+                    root.dialog-pick-copy-tab(index);
                 }
             }
         }

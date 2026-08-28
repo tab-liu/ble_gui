@@ -10,9 +10,9 @@ export component ModbusTabItem inherits Rectangle {
     callback request-rename();
     callback commit-rename();
 
-    min-width: 100px;
-    height: 36px;
-    border-radius: 8px;
+    min-width: 72px;
+    height: 26px;
+    border-radius: 6px;
     background: root.selected ? Theme.bg-tab-selected : Theme.bg-tab;
     border-width: 1px;
     border-color: root.selected ? Theme.border-accent : Theme.border;
@@ -31,14 +31,15 @@ export component ModbusTabItem inherits Rectangle {
         Text {
             text: root.title;
             color: root.selected ? Theme.text-primary : Theme.text-muted;
-            font-size: 13px;
+            font-size: 12px;
             horizontal-alignment: center;
             vertical-alignment: center;
+            overflow: elide;
         }
     }
 
     if root.renaming: HorizontalBox {
-        padding: 4px;
+        padding: 2px;
 
         LineEdit {
             text <=> root.edit-title;

@@ -30,6 +30,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             }
         } else {
             ctx_ble.ble.start_scan();
+            if ui.get_current_page() != PAGE_DASHBOARD {
+                ui.set_current_page(PAGE_DASHBOARD);
+            }
         }
         refresh_ble(&ui, &ctx_ble.ble.snapshot());
         refresh(&ui, &ctx_ble);

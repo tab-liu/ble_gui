@@ -1,13 +1,19 @@
 export struct ModbusQueryItem {
     name: string,
-    slave-id: string,
     register: string,
     status: string,
     result: string,
+    result-display: string,
+    result-font-size: int,
+}
+
+export struct ModbusQueryLayoutRow {
+    indices: [int],
 }
 
 export struct ModbusTab {
     title: string,
+    slave-id: string,
     items: [ModbusQueryItem],
 }
 

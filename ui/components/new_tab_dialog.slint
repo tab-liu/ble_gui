@@ -1,12 +1,14 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit } from "std-widgets.slint";
+import { Button, VerticalBox, HorizontalBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 
-// dialog-kind: 1 = 新建标签
+// dialog-kind: 1=新建标签, 2=复制到其他标签
 export component NewTabDialog inherits Rectangle {
     in property <int> dialog-kind;
     in-out property <string> dialog-name;
+    in property <[string]> dialog-tab-options;
     callback confirm();
     callback cancel();
+    callback pick-tab(int);
 
     width: 100%;
     height: 100%;
@@ -46,7 +48,7 @@ export component NewTabDialog inherits Rectangle {
 
                 LineEdit {
                     text <=> root.dialog-name;
-                    placeholder-text: "例如：模拟量";
+                    placeholder-text: "例如：子节点 A";
                 }
 
                 Rectangle { vertical-stretch: 1; }
@@ -64,6 +66,62 @@ export component NewTabDialog inherits Rectangle {
                         text: "确定";
                         primary: true;
                         clicked => { root.confirm(); }
+                    }
+                }
+            }
+        }
+
+        if root.dialog-kind == 2: Rectangle {
+            width: 420px;
+            height: 320px;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            VerticalBox {
+                padding: 20px;
+                spacing: 12px;
+
+                Text {
+                    text: "复制到其他标签";
+                    color: Theme.text-primary;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: "选择目标标签（查询将使用目标标签的从站号）";
+                    color: Theme.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalBox {
+                        spacing: 8px;
+
+                        for option[i] in root.dialog-tab-options: Button {
+                            text: option;
+                            horizontal-stretch: 1;
+                            clicked => {
+                                root.pick-tab(i);
+                            }
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    alignment: end;
+
+                    Button {
+                        text: "取消";
+                        clicked => { root.cancel(); }
                     }
                 }
             }

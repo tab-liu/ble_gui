@@ -1,0 +1,132 @@
+import { VerticalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { ModbusDndApi } from "modbus_dnd.slint";
+
+export component ModbusQueryCard inherits Rectangle {
+    in property <string> name;
+    in property <string> register;
+    in property <string> result;
+    in property <string> result-display;
+    in property <int> result-font-size;
+    in property <color> accent: Theme.success;
+    in property <int> source-index;
+    in property <bool> selected;
+    callback remove-clicked();
+    callback select-clicked(bool);
+
+    width: 180px;
+    height: 110px;
+    border-radius: 10px;
+    background: Theme.bg-card;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.accent : (card-hover.has-hover ? Theme.border-accent : Theme.border-card);
+
+    card-hover := TouchArea {
+        width: 100%;
+        height: 100%;
+        mouse-cursor: default;
+
+        Tooltip {
+            VerticalBox {
+                padding: 8px;
+                spacing: 4px;
+
+                Text {
+                    text: root.name;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: root.result;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: "寄存器 " + root.register;
+                    font-size: 11px;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        drag-area := DragArea {
+            width: 100%;
+            height: 100%;
+            data: ModbusDndApi.make-data(root.source-index);
+            allow-move: true;
+            enabled: !delete-hover.has-hover;
+            opacity: self.dragging ? 0.45 : 1.0;
+
+            select-touch := TouchArea {
+                width: 100%;
+                height: 100%;
+                property <bool> ctrl-held: false;
+
+                pointer-event(event) => {
+                    select-touch.ctrl-held = event.modifiers.control;
+                }
+
+                clicked => {
+                    root.select-clicked(select-touch.ctrl-held);
+                }
+
+                VerticalBox {
+                    padding: 12px;
+                    padding-right: 20px;
+                    spacing: 2px;
+
+                    Text {
+                        text: root.name;
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.result-display;
+                        color: Theme.text-primary;
+                        font-size: root.result-font-size * 1px;
+                        font-weight: 700;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: "寄存器 " + root.register;
+                        color: root.accent;
+                        font-size: 11px;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        delete-hover := TouchArea {
+            x: parent.width - 26px;
+            y: 4px;
+            width: 22px;
+            height: 22px;
+            visible: card-hover.has-hover && !drag-area.dragging;
+
+            Rectangle {
+                width: 100%;
+                height: 100%;
+                border-radius: 11px;
+                background: Theme.error;
+
+                Text {
+                    text: "×";
+                    color: #ffffff;
+                    font-size: 14px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            clicked => {
+                root.remove-clicked();
+            }
+        }
+    }
+}

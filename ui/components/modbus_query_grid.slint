@@ -1,0 +1,74 @@
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ModbusQueryItem, ModbusQueryLayoutRow } from "../types.slint";
+import { Theme } from "../theme.slint";
+import { ModbusQueryCard } from "modbus_query_card.slint";
+import { ModbusDndApi } from "modbus_dnd.slint";
+
+export component ModbusQueryGrid inherits Rectangle {
+    in property <[ModbusQueryItem]> items;
+    in property <[ModbusQueryLayoutRow]> layout-rows;
+    in property <[bool]> query-selection-states;
+    callback remove-item(int);
+    callback select-item(int, bool);
+    callback layout-width-changed(length);
+
+    property <length> hover-x: 0;
+    property <length> hover-y: 0;
+
+    horizontal-stretch: 1;
+
+    changed width => {
+        root.layout-width-changed(self.width);
+    }
+
+    drop-area := DropArea {
+        vertical-stretch: 1;
+
+        can-drop(event) => {
+            root.hover-x = event.position.x;
+            root.hover-y = event.position.y;
+            return ModbusDndApi.can-drop(event);
+        }
+        dropped(event) => {
+            ModbusDndApi.dropped(event, root.hover-x, root.hover-y, root.width);
+            return event.proposed-action;
+        }
+
+        if root.items.length == 0: Rectangle {
+            height: 120px;
+
+            Text {
+                text: "暂无 Modbus 查询项";
+                color: Theme.text-dim;
+                font-size: 13px;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        if root.items.length > 0: VerticalBox {
+            spacing: 12px;
+
+            for row in root.layout-rows: HorizontalBox {
+                spacing: 12px;
+                alignment: start;
+
+                for idx in row.indices: ModbusQueryCard {
+                    name: root.items[idx].name;
+                    register: root.items[idx].register;
+                    result: root.items[idx].result;
+                    result-display: root.items[idx].result-display;
+                    result-font-size: root.items[idx].result-font-size;
+                    source-index: idx;
+                    selected: idx < root.query-selection-states.length && root.query-selection-states[idx];
+                    remove-clicked => {
+                        root.remove-item(idx);
+                    }
+                    select-clicked(ctrl) => {
+                        root.select-item(idx, ctrl);
+                    }
+                }
+            }
+        }
+    }
+}

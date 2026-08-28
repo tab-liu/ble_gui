@@ -1,39 +1,60 @@
-import { Button, VerticalBox, HorizontalBox, LineEdit, ScrollView } from "std-widgets.slint";
-import { ModbusTab } from "../types.slint";
+import {
+    Button,
+    VerticalBox,
+    HorizontalBox,
+    LineEdit,
+    ScrollView,
+} from "std-widgets.slint";
+import { ModbusTab, ModbusQueryLayoutRow } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ModbusTabItem } from "../components/modbus_tab_item.slint";
-import { ModbusQueryRow } from "../components/modbus_query_row.slint";
+import { ModbusQueryGrid } from "../components/modbus_query_grid.slint";
+import { ToolbarButton } from "../components/toolbar_button.slint";
 
-export component ModbusPage inherits VerticalBox {
+export component ModbusPage inherits VerticalLayout {
     in property <bool> device-connected;
     in property <[ModbusTab]> modbus-tabs;
     in property <int> active-modbus-tab;
+    in property <[ModbusQueryLayoutRow]> query-layout-rows;
+    in property <bool> has-selected-queries;
+    in property <[bool]> query-selection-states;
     in property <bool> show-add-query-form;
     in-out property <string> query-form-name;
-    in-out property <string> query-form-slave-id;
     in-out property <string> query-form-register;
+    in-out property <string> active-tab-slave-id;
     in property <int> renaming-tab-index;
     in-out property <string> editing-tab-title;
+
+    property <bool> editing-slave-id: false;
 
     callback add-tab-request();
     callback remove-tab(int);
     callback switch-tab(int);
     callback start-rename-tab(int);
     callback commit-rename-tab();
+    callback commit-tab-slave-id();
     callback show-add-query-panel(int);
     callback confirm-add-query();
     callback cancel-add-query();
     callback remove-query(int, int);
+    callback select-query(int, bool);
+    callback copy-selected-query();
+    callback layout-width-changed(length);
+
+    changed active-modbus-tab => {
+        root.editing-slave-id = false;
+    }
 
     spacing: 8px;
     vertical-stretch: 1;
 
-    if root.device-connected: VerticalBox {
+    if root.device-connected: VerticalLayout {
         spacing: 8px;
         vertical-stretch: 1;
 
-        HorizontalBox {
-            alignment: space-between;
+        toolbar-row := HorizontalLayout {
+            spacing: 12px;
+            cross-axis-alignment: center;
 
             Text {
                 text: "Modbus 查询";
@@ -42,65 +63,82 @@ export component ModbusPage inherits VerticalBox {
                 font-weight: 700;
             }
 
-            HorizontalBox {
-                spacing: 8px;
-
-                Button {
-                    text: "+ 新标签";
-                    clicked => { root.add-tab-request(); }
-                }
-
-                if root.modbus-tabs.length > 1: Button {
-                    text: "删除标签";
-                    clicked => { root.remove-tab(root.active-modbus-tab); }
-                }
+            Rectangle {
+                horizontal-stretch: 1;
             }
-        }
 
-        HorizontalBox {
-            spacing: 8px;
-            alignment: start;
+            HorizontalLayout {
+                spacing: 12px;
+                cross-axis-alignment: center;
 
-            for tab[i] in root.modbus-tabs: ModbusTabItem {
-                title: tab.title;
-                selected: root.active-modbus-tab == i;
-                renaming: root.renaming-tab-index == i;
-                edit-title <=> root.editing-tab-title;
-                switch-tab => { root.switch-tab(i); }
-                request-rename => { root.start-rename-tab(i); }
-                commit-rename => { root.commit-rename-tab(); }
-            }
-        }
-
-        Text {
-            text: "提示：单击切换标签，双击标签文字可重命名";
-            color: Theme.text-dim;
-            font-size: 11px;
-        }
-
-        Rectangle {
-            vertical-stretch: 1;
-            border-radius: 10px;
-            background: Theme.bg-panel;
-            border-width: 1px;
-            border-color: Theme.border;
-
-            if root.modbus-tabs.length > 0: VerticalBox {
-                padding: 12px;
-                spacing: 8px;
-
-                HorizontalBox {
-                    alignment: space-between;
+                HorizontalLayout {
+                    spacing: 6px;
+                    cross-axis-alignment: center;
 
                     Text {
-                        text: "寄存器列表 · " + root.modbus-tabs[root.active-modbus-tab].title;
-                        color: Theme.text-primary;
-                        font-size: 14px;
-                        font-weight: 600;
+                        text: "从站号";
+                        color: Theme.text-muted;
+                        font-size: 13px;
+                        vertical-alignment: center;
                     }
 
-                    Button {
-                        text: root.show-add-query-form ? "取消添加" : "+ 添加查询";
+                    if !root.editing-slave-id: slave-view := TouchArea {
+                        Rectangle {
+                            min-width: 36px;
+                            height: 22px;
+                            border-radius: 4px;
+                            background: Theme.bg-panel-alt;
+                            border-width: 1px;
+                            border-color: slave-view.has-hover ? Theme.border-accent : Theme.border;
+
+                            Text {
+                                text: root.active-tab-slave-id == "" ? "0" : root.active-tab-slave-id;
+                                color: Theme.text-primary;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        clicked => {
+                            root.editing-slave-id = true;
+                        }
+                    }
+
+                    if root.editing-slave-id: LineEdit {
+                        width: 48px;
+                        text <=> root.active-tab-slave-id;
+                        placeholder-text: "0";
+                        accepted => {
+                            root.commit-tab-slave-id();
+                            root.editing-slave-id = false;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    cross-axis-alignment: center;
+
+                    ToolbarButton {
+                        text: "添加标签";
+                        clicked => { root.add-tab-request(); }
+                    }
+
+                    if root.modbus-tabs.length > 1: ToolbarButton {
+                        text: "删除标签";
+                        clicked => { root.remove-tab(root.active-modbus-tab); }
+                    }
+
+                    if root.has-selected-queries: ToolbarButton {
+                        text: "复制到";
+                        clicked => {
+                            root.copy-selected-query();
+                        }
+                    }
+
+                    ToolbarButton {
+                        text: root.show-add-query-form ? "取消" : "添加查询";
                         primary: !root.show-add-query-form;
                         clicked => {
                             if (root.show-add-query-form) {
@@ -111,6 +149,41 @@ export component ModbusPage inherits VerticalBox {
                         }
                     }
                 }
+            }
+        }
+
+        tab-strip := Flickable {
+            horizontal-stretch: 1;
+            height: 34px;
+            viewport-height: 34px;
+
+            HorizontalLayout {
+                spacing: 6px;
+                alignment: start;
+                cross-axis-alignment: center;
+
+                for tab[i] in root.modbus-tabs: ModbusTabItem {
+                    title: tab.title;
+                    selected: root.active-modbus-tab == i;
+                    renaming: root.renaming-tab-index == i;
+                    edit-title <=> root.editing-tab-title;
+                    switch-tab => { root.switch-tab(i); }
+                    request-rename => { root.start-rename-tab(i); }
+                    commit-rename => { root.commit-rename-tab(); }
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            if root.modbus-tabs.length > 0: VerticalBox {
+                padding: 8px;
+                spacing: 8px;
 
                 if root.show-add-query-form: Rectangle {
                     border-radius: 8px;
@@ -119,15 +192,8 @@ export component ModbusPage inherits VerticalBox {
                     border-color: Theme.border-accent;
 
                     VerticalBox {
-                        padding: 12px;
+                        padding: 10px;
                         spacing: 8px;
-
-                        Text {
-                            text: "添加 Modbus 查询";
-                            color: Theme.text-primary;
-                            font-size: 13px;
-                            font-weight: 600;
-                        }
 
                         HorizontalBox {
                             spacing: 8px;
@@ -150,23 +216,7 @@ export component ModbusPage inherits VerticalBox {
 
                             VerticalBox {
                                 spacing: 4px;
-                                min-width: 80px;
-
-                                Text {
-                                    text: "从站号";
-                                    color: Theme.text-muted;
-                                    font-size: 11px;
-                                }
-
-                                LineEdit {
-                                    text <=> root.query-form-slave-id;
-                                    placeholder-text: "1";
-                                }
-                            }
-
-                            VerticalBox {
-                                spacing: 4px;
-                                min-width: 100px;
+                                min-width: 120px;
 
                                 Text {
                                     text: "寄存器";
@@ -179,21 +229,29 @@ export component ModbusPage inherits VerticalBox {
                                     placeholder-text: "40001";
                                 }
                             }
-                        }
 
-                        HorizontalBox {
-                            spacing: 8px;
-                            alignment: end;
+                            VerticalBox {
+                                spacing: 4px;
+                                alignment: end;
 
-                            Button {
-                                text: "取消";
-                                clicked => { root.cancel-add-query(); }
-                            }
+                                Rectangle {
+                                    height: 16px;
+                                }
 
-                            Button {
-                                text: "添加";
-                                primary: true;
-                                clicked => { root.confirm-add-query(); }
+                                HorizontalBox {
+                                    spacing: 6px;
+
+                                    Button {
+                                        text: "取消";
+                                        clicked => { root.cancel-add-query(); }
+                                    }
+
+                                    Button {
+                                        text: "添加";
+                                        primary: true;
+                                        clicked => { root.confirm-add-query(); }
+                                    }
+                                }
                             }
                         }
                     }
@@ -201,30 +259,20 @@ export component ModbusPage inherits VerticalBox {
 
                 ScrollView {
                     vertical-stretch: 1;
+                    horizontal-stretch: 1;
 
-                    VerticalBox {
-                        spacing: 8px;
-
-                        for item[j] in root.modbus-tabs[root.active-modbus-tab].items: ModbusQueryRow {
-                            name: item.name;
-                            slave-id: item.slave-id;
-                            register: item.register;
-                            status: item.status;
-                            result: item.result;
-                            remove-clicked => {
-                                root.remove-query(root.active-modbus-tab, j);
-                            }
+                    ModbusQueryGrid {
+                        items: root.modbus-tabs[root.active-modbus-tab].items;
+                        layout-rows: root.query-layout-rows;
+                        query-selection-states: root.query-selection-states;
+                        remove-item(index) => {
+                            root.remove-query(root.active-modbus-tab, index);
                         }
-
-                        if root.modbus-tabs[root.active-modbus-tab].items.length == 0: Rectangle {
-                            height: 120px;
-                            Text {
-                                text: "暂无 Modbus 查询项";
-                                color: Theme.text-dim;
-                                font-size: 13px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
+                        select-item(index, ctrl) => {
+                            root.select-query(index, ctrl);
+                        }
+                        layout-width-changed(width) => {
+                            root.layout-width-changed(width);
                         }
                     }
                 }
@@ -232,7 +280,7 @@ export component ModbusPage inherits VerticalBox {
         }
     }
 
-    if !root.device-connected: VerticalBox {
+    if !root.device-connected: VerticalLayout {
         vertical-stretch: 1;
         Text {
             text: "请先连接蓝牙设备";

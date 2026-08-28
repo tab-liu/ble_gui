@@ -35,7 +35,8 @@ fn prepare_scan_devices(
         result.retain(|d| d.rssi >= min_rssi);
     }
 
-    result.sort_by(|a, b| b.rssi.cmp(&a.rssi));
+    // 按首次 RSSI 排序，避免实时信号波动导致列表跳动。
+    result.sort_by(|a, b| b.initial_rssi.cmp(&a.initial_rssi));
     result
 }
 

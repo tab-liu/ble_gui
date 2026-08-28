@@ -7,7 +7,7 @@ component StatusBarButton inherits Rectangle {
     callback clicked();
 
     min-width: 96px;
-    height: 32px;
+    height: 28px;
     border-radius: 6px;
     background: root.emphasized ? Theme.accent : Theme.bg-panel;
     border-width: 1px;
@@ -38,7 +38,7 @@ export component BleStatusBar inherits Rectangle {
     in property <string> action-text;
     callback action-clicked();
 
-    height: 48px;
+    height: 44px;
     background: Theme.bg-statusbar;
     border-width: 1px;
     border-color: Theme.border-subtle;
@@ -49,11 +49,11 @@ export component BleStatusBar inherits Rectangle {
         spacing: 16px;
         alignment: center;
 
-        Rectangle {
-            width: 10px;
-            height: 10px;
-            border-radius: 5px;
-            background: root.connected ? Theme.success : Theme.error;
+        Text {
+            text: "●";
+            color: root.connected ? Theme.success : Theme.error;
+            font-size: 22px;
+            vertical-alignment: center;
         }
 
         Text {
@@ -61,21 +61,26 @@ export component BleStatusBar inherits Rectangle {
             color: Theme.text-primary;
             font-size: 13px;
             font-weight: 600;
+            vertical-alignment: center;
         }
 
         Text {
             text: root.connected ? ("设备: " + root.device-name) : "未连接蓝牙设备";
             color: Theme.text-secondary;
             font-size: 13px;
+            vertical-alignment: center;
         }
 
         Text {
             text: root.connected ? ("信号: " + root.rssi-text) : "";
             color: Theme.text-secondary;
             font-size: 13px;
+            vertical-alignment: center;
         }
 
-        Rectangle { horizontal-stretch: 1; }
+        Rectangle {
+            horizontal-stretch: 1;
+        }
 
         StatusBarButton {
             label: root.action-text;

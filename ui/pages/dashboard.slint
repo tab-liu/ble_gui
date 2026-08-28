@@ -31,12 +31,6 @@ export component DashboardPage inherits VerticalBox {
             font-weight: 700;
         }
 
-        Text {
-            text: root.scanning ? "正在扫描附近设备…" : "点击顶部「扫描设备」或下方列表连接";
-            color: Theme.text-muted;
-            font-size: 13px;
-        }
-
         LineEdit {
             text <=> root.scan-filter;
             placeholder-text: "按名称过滤（不区分大小写）";
@@ -73,14 +67,6 @@ export component DashboardPage inherits VerticalBox {
                 font-size: 13px;
                 vertical-alignment: center;
             }
-        }
-
-        if root.scan-device-total > 0: Text {
-            text: root.scan-devices.length == root.scan-device-total
-                ? "共 " + root.scan-device-total + " 台，按信号强度从强到弱排序"
-                : "共 " + root.scan-device-total + " 台，显示 " + root.scan-devices.length + " 台（按信号强度排序）";
-            color: Theme.text-dim;
-            font-size: 12px;
         }
 
         ScrollView {
