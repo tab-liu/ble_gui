@@ -1,0 +1,943 @@
+/**
+  ******************************************************************************
+  * @file      cc1312_ota.c
+  * @version   1.0
+  * @author    lixingyu
+  * @date      2024/5/8
+  * @brief     sub1g 升级
+  * @par       History
+  * <table>
+  * <tr><th>Date       <th>Version <th>Author     <th>Description
+  * <tr><td>2024/5/8   <td>1.0     <td>lixingyu   <td>Create the initial version
+  * </table>
+  * @copyright Copyright (C) PowerOak Co.,LTD. All rights reserved.
+  ******************************************************************************
+  */
+
+//#include "cc1312_ota.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/timers.h"
+#include "freertos/semphr.h"
+#include "driver/uart.h"
+#include "esp_log.h"
+#include <stddef.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <fcntl.h>
+
+#include "xmodem.h"
+#include "xmodem_transmitter.h"
+#include "xmodem_client.h"
+#include "iot_period_task.h"
+#include "uart_device_process.h"
+#include "crc.h"
+#include "iot_wifi_init.h"
+#include "http_client.h"
+#include "dev_discovery.h"
+
+#define TAG	"[SUB1G_OTA]"
+
+static SemaphoreHandle_t uart_recv_sem;				// 串口接收信号量
+static ota_set_t cc1312_ota_set;						// ota设置参数
+static ota_state_t cc1312_ota_state;					// ota升级状态
+static int ota_flag;								// lcd模块升级标志
+
+#ifdef  CONFIG_HARDWARE_ATS
+static int uart_num = UART0;								// 串口号						
+#elif defined  CONFIG_HARDWARE_DTU100
+static int uart_num = UART1;								// 串口号
+#endif
+
+EXT_RAM_ATTR static uint8_t recv_buff[255];			// 串口接收缓存
+static uint8_t recv_len;							// 串口接收长度
+static char bin_file_name[30];						// 固件文件名
+static uint8_t *bin_ota_data;						// 固件数据指针
+static int bin_data_size;							// 固件数据大小
+
+EXT_RAM_ATTR static uint8_t xm_tx_buff[UART_TX_BUF_SIZE];			// 串口发送缓存
+static uint16_t xm_tx_len = 0;							// 串口接收长度
+
+/**
+ * @brief cc1312发起升级
+ * - 该函数将会向cc1312发起升级,通过modbus的700寄存器组写入数据实现
+ * - lcd正确响应该包指令后后续开始进入xmodem升级流程
+ * - 发送指令后等待1s的响应时间,如果未响应或响应错误则重复发送指令,最多发送5次
+ *
+ * @return 成功返回0,否则返回-1
+ */
+static int cc1312_ota_initiate(void)
+{
+	#define MD_WRITE			0x10			// modbus写多寄存器功能码
+	#define MD_OTA_REG_ADDR		((uint16_t)700)	// OTA寄存器起始地址
+
+	uint8_t i = 0;
+	uint8_t j = 0;
+	uint8_t buff[100];
+	uint16_t reg_nums = sizeof(ota_set_t) / sizeof(short);
+    
+    if (cc1312_NS_ota_state_init())
+    {
+        return -1;
+    }
+
+    
+    #if 1
+    
+    buff[i++] = 0;//reserved
+    buff[i++] = MESH_VERSION_TYPE_SUB1GHZ;//
+	 for (j = 0; j <= 7; j++)//源 MAC*8
+	 {
+		 buff[i++] = reals.local_mac_union.MAC[j];//MAC
+	 }  
+	 for (j = 0; j <= 7; j++)//目标 MAC*8
+	 {
+		 //buff[i++] = reals.mac_union.MAC[j];//MAC
+		 buff[i++] = reals.local_mac_union.MAC[j];//MAC
+	 }   	 
+    buff[i++] = MESH_FRAME_TYPE_WRITE;//报文类型
+    
+	//buff[i++] = LCD_MD_ADDR;
+    buff[i++] = SUB1G_MD_ADDR;
+	buff[i++] = MD_WRITE;
+	buff[i++] = MD_OTA_REG_ADDR >> 8;
+	buff[i++] = (uint8_t)MD_OTA_REG_ADDR;
+	buff[i++] = reg_nums >> 8;
+	buff[i++] = (uint8_t)reg_nums;
+	buff[i++] = (uint8_t)(reg_nums * 2);
+
+    //debug
+//    if (cc1312_ota_set.file_type == RF)
+//    {
+//        cc1312_ota_set.file_type = 18;
+//    }
+	memcpy(&buff[i], &cc1312_ota_set, sizeof(cc1312_ota_set));
+    //debug
+//    if (cc1312_ota_set.file_type == 18)
+//    {
+//        cc1312_ota_set.file_type = RF;
+//    } 
+    
+	uint16_t *pdata = (uint16_t*)&buff[i];
+	for (int n = 0; n < reg_nums; n++) {							// 交换高低字节
+		pdata[n] = (pdata[n] >> 8) | (pdata[n] << 8);
+	}
+	i += sizeof(cc1312_ota_set);
+    
+	uint16_t crc_modbus = crc16_modbus_calc(&buff[MESH_FRAME_ADDR_MODBUS_HEAD], i - MESH_FRAME_ADDR_MODBUS_HEAD);
+    buff[i++] = crc_modbus;
+    buff[i++] = crc_modbus >> 8;
+	uint16_t crc_mesh = crc16_modbus_calc(buff, i);
+    buff[i++] = crc_mesh;
+    buff[i++] = crc_mesh >> 8;
+    
+    #else
+    uint16_t regdata[(sizeof(ota_set_t)>>1)];
+    memcpy(regdata, &cc1312_ota_set, sizeof(cc1312_ota_set));
+    Mesh_Modbus_MasterTxCmd(MD_OTA_REG_ADDR,reg_nums,buff,SUB1G_MD_ADDR,MESH_FRAME_TYPE_WRITE,regdata);
+    #endif
+
+	/* 发送ota开始到cc1312,同时等待其正确的响应,每次等待超时3s钟,如果5次发送失败则退出升级 */
+	int retry = 5;
+	do {
+		recv_len = 0;
+		while(xSemaphoreTake(uart_recv_sem, 0) == pdTRUE);			// 清除信号量
+		int ret = uart_write_bytes(uart_num, (const char*)buff, i);			// 发起OTA开始指令
+		ESP_LOGW(TAG, "modbus send ota start, ret = %d, len = %d, data:", ret, i);
+		ESP_LOG_BUFFER_HEX_LEVEL(TAG, buff, i, ESP_LOG_WARN);
+
+		/* 等待cc1312响应 */
+		uint32_t begin_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+		while(1)
+		{
+			if (xSemaphoreTake(uart_recv_sem, pdMS_TO_TICKS(3000)) == pdTRUE) {
+				uint32_t now_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+				/* 检查CRC */
+				uint16_t crc_old = ((uint16_t)recv_buff[recv_len-1] << 8) | recv_buff[recv_len-2];
+				uint16_t crc_new = crc16_modbus_calc(recv_buff, (recv_len-2));
+				if(crc_old != crc_new)
+				{
+					ESP_LOGE(TAG, "respond crc error, addr: %d, len :%d", recv_buff[0], recv_len);
+					if ((now_time - begin_time) > 3000) {
+						break;
+					}
+					else {
+						continue;
+					}
+				}
+
+				/* 检查数据格式 */
+				if (memcmp(&buff[MESH_FRAME_ADDR_MODBUS_HEAD], recv_buff, 6) != 0)
+				{
+					ESP_LOGE(TAG, "respond data error, data:");
+					ESP_LOG_BUFFER_HEX_LEVEL(TAG, recv_buff, 6, ESP_LOG_ERROR);
+					if ((now_time - begin_time) > 3000) {
+						break;
+					}
+					else {
+						continue;
+					}
+				}
+
+				/* 响应正确退出 */
+				goto __exit;
+			}
+			else {
+				break;
+			}
+		}
+
+		ESP_LOGE(TAG, "timeout for waiting ota reponse, retries:%d", retry);
+	} while(--retry);
+
+__exit:
+	recv_len = 0;
+	if (retry <= 0) return -1;
+	return 0;
+}
+
+/**
+ * @brief xmodem发送数据接口
+ *
+ * @param requested_size 请求的数据大小
+ * @param buffer 数据缓存
+ * @param first_byte_flag
+ * - 用于指示本次发送是否为第一字节
+ * @return 无
+ */
+static void cc1312_xmd_write(const uint32_t requested_size, uint8_t * buffer)
+{
+    #if 0       //lxy 仅写入txbuffer，不作发送，便于组帧
+	int ret = uart_write_bytes(uart_num, (const char*)buffer, requested_size);
+	if (ret < 0) *write_status = 0;
+	else *write_status = 1;
+    #endif
+    
+    memcpy(&xm_tx_buff[xm_tx_len], buffer, requested_size);
+    xm_tx_len += requested_size;
+}
+
+/*------------------------------------------------------------------------------
+ Function: cc1312_xmd_send
+ -----------------------------------------------------------------------------*/
+/**
+  * @brief      计算crc，发送
+  * @param[in]  uint8_t * write_status  
+  * @param[out] None
+  * @return     static void- 用于指示本次发送是否成功,0-发送失败,1-发送成功
+  */
+static void cc1312_xmd_send(uint8_t * write_status)
+{
+    //lxy 计算crc，发送
+    UART_STRUCT *uart_structx = &reals.struct_uart1;
+    uint8_t j = 0;
+    
+    memset(uart_structx->Txbuffer, 0, UART1_TX_BUF_SIZE);
+    uart_structx->TxBytesNum = 0;
+    
+    uart_structx->Txbuffer[uart_structx->TxBytesNum++] = 0;//reserved
+    uart_structx->Txbuffer[uart_structx->TxBytesNum++] = MESH_VERSION_TYPE_SUB1GHZ;
+	 for (j = 0; j <= 7; j++)//源 MAC*8
+	 {
+		 uart_structx->Txbuffer[uart_structx->TxBytesNum++] = reals.local_mac_union.MAC[j];//MAC
+	 }  
+	 for (j = 0; j <= 7; j++)//目标 MAC*8
+	 {
+		 //uart_structx->Txbuffer[uart_structx->TxBytesNum++] = reals.mac_union.MAC[j];//MAC
+		 uart_structx->Txbuffer[uart_structx->TxBytesNum++] = reals.local_mac_union.MAC[j];//MAC
+	 }   	 	 
+    uart_structx->Txbuffer[uart_structx->TxBytesNum++] = MESH_FRAME_TYPE_XMODEM;//报文类型
+    
+    memcpy(&uart_structx->Txbuffer[uart_structx->TxBytesNum], xm_tx_buff, xm_tx_len);
+    uart_structx->TxBytesNum += xm_tx_len;
+
+    uint16_t crc16 = crc16_modbus_calc(uart_structx->Txbuffer, uart_structx->TxBytesNum);
+    uart_structx->Txbuffer[uart_structx->TxBytesNum++] = (uint8_t)crc16;
+    uart_structx->Txbuffer[uart_structx->TxBytesNum++] = (uint8_t)(crc16 >> 8);
+    
+    //ESP_LOGW(TAG, "");
+    ESP_LOGW(TAG, "cc1312_xmd_send, len:%u", uart_structx->TxBytesNum);
+    //ESP_LOG_BUFFER_HEX_LEVEL(TAG,uart_structx->Txbuffer, uart_structx->TxBytesNum,ESP_LOG_WARN);
+    
+	int ret = uart_write_bytes(uart_num, uart_structx->Txbuffer, uart_structx->TxBytesNum);
+	if (ret < 0) *write_status = 0;
+	else *write_status = 1;
+
+    memset(xm_tx_buff, 0, UART_TX_BUF_SIZE);
+    xm_tx_len = 0;
+}
+
+/**
+ * @brief xmodem读取数据接口
+ *
+ * @param requested_size 请求的数据大小
+ * @param buffer 数据缓存
+ * @param returned_size 实际返回的数据大小
+ * @return 无
+ */
+static void cc1312_xmd_read(const uint32_t requested_size, uint8_t * buffer, uint32_t * returned_size)
+{
+    #if 1
+
+    if (recv_len < requested_size)
+	{
+        ESP_LOGE(TAG, "recv_len < requested_size");
+		*returned_size = 0;
+		return;
+	}
+
+	*returned_size = recv_len;
+	memcpy(buffer, recv_buff, requested_size);
+	recv_len = 0;
+    
+    ESP_LOGW(TAG, "");
+    ESP_LOGW(TAG, "cc1312_xmd_read, requested_size:%lu, returned_size:%lu, data:", requested_size, *returned_size);
+    ESP_LOG_BUFFER_HEX(TAG, recv_buff, *returned_size);
+    #elif
+    
+    int frame = Sub_Net_Frame_Modbus_Format_Check(recv_buff, recv_len);
+    if (frame == MESH_FRAME_TYPE_XMODEM_RTN)
+    {
+    	if ((recv_len - 21) < requested_size)
+    	{
+    		*returned_size = 0;
+    		return;
+    	}
+
+    	*returned_size = recv_len-21;
+    	memcpy(buffer, &recv_buff[MESH_FRAME_ADDR_MODBUS_HEAD], requested_size);
+    	recv_len = 0;
+    }
+    else
+    {
+        *returned_size = 0;
+		return;
+    }
+    #endif
+}
+
+/**
+ * @brief xmodem串口发送缓存满标志获取接口
+ *
+ * @return 返回0(假)
+ */
+static int cc1312_xmd_outbound_full(void)
+{
+	return 0;
+}
+
+/**
+ * @brief xmodem串行接收空标志获取接口
+ *
+ * @return 当接收到串口数据响应时返回0(假),否则返回1(真)
+ */
+static int cc1312_xmd_inbound_empty(void)
+{
+	if (recv_len) return 0;
+	return 1;
+}
+
+/**
+ * @brief xmodem获取升级数据接口
+ *
+ * @param position 数据位置偏移
+ * @param buffer 用于保存数据的缓存
+ * @param buff_size 缓存大小
+ * @return 无
+ */
+static void cc1312_xmd_get_buffer(const uint32_t position, uint8_t * buffer, uint16_t buff_size)
+{
+	if ((position + buff_size) > bin_data_size) return;
+	memcpy(buffer, &bin_ota_data[position], buff_size);
+	cc1312_ota_state.progress = (uint8_t)((position + buff_size) * 100 / bin_data_size);
+}
+
+/*------------------------------------------------------------------------------
+ Function: cc1312_NS_ota_state_init
+ -----------------------------------------------------------------------------*/
+/**
+  * @brief      子设备升级状态初始化
+  * @param[in]  void       
+  * @param[out] None
+  * @return     void
+  */
+uint8_t cc1312_NS_ota_state_init(void)
+{
+    uint8_t i = 0;
+    uint8_t j = 0;
+    uint32_t old_version = 0xFFFFFFFF;
+    uint32_t new_version = 0;
+    uint8_t is_ota_dev_num = 0;
+
+    ESP_LOGI(TAG, "[cc1312_NS_ota_state_init] cc1312_ota_set.file_type: %u",cc1312_ota_set.file_type);
+    
+    for (i = 0; i < NET_SUB1G_MAX_POINT; i++)
+    {
+        reals.net_point_ota_Info[i].write_block_retries = 0;
+        reals.net_point_ota_Info[i].packed_rtn = 0;
+        reals.net_point_ota_Info[i].is_ota = RF_OTA_STA_IDLE;
+        
+        if ((NET_POINT_ONLINE == reals.net_point_base_Info[i].net_point_online)
+            &&(cc1312_ota_set.start_flag == 3))//子设备升级
+        {
+            for ( j = 0 ; j < 6 ; j++ )
+            {
+                //ESP_LOGW(TAG, "[cc1312_NS_ota_state_init] MicroInv[%d].mod_reg01100_Inv_base.soft[%d].type: %u",i+1,j,MicroInv[i+1].mod_reg01100_Inv_base.soft[j].type);
+                if (cc1312_ota_set.file_type == MicroInv[i+1].mod_reg01100_Inv_base.soft[j].type)
+                {
+                    old_version = MicroInv[i+1].mod_reg01100_Inv_base.soft[j].version;
+                    break;
+                }
+                //debug
+                else if (cc1312_ota_set.file_type == RF)
+                {
+                    old_version = MicroInv[i+1].mod_reg11000_IOT_info.software_ver;
+                    break;
+                }
+            }
+            
+            new_version = (uint32_t)(cc1312_ota_set.ver_high << 16)|(cc1312_ota_set.ver_low);
+            ESP_LOGW(TAG, "[cc1312_NS_ota_state_init] old_version: %lu  new_version:%lu",old_version,new_version);
+
+            if (old_version < new_version)//判断版本号，是否需要升级
+            {
+                reals.net_point_ota_Info[i].is_ota = RF_OTA_STA_DOING;
+                is_ota_dev_num++;
+            }
+        }
+    }
+    
+    ESP_LOGI(TAG, "[cc1312_NS_ota_state_init] is_ota_dev_num: %d",is_ota_dev_num);
+
+    if (is_ota_dev_num)
+    {
+        return 0;
+    }
+    return 1;
+}
+
+/*------------------------------------------------------------------------------
+ Function: cc1312_NS_ota_state_update
+ -----------------------------------------------------------------------------*/
+/**
+  * @brief      更新子设备升级状态
+  * @param[in]  void        
+  * @param[out] None
+  * @return     void
+  */
+void cc1312_NS_ota_state_update(void)
+{
+    uint8_t i = 0;
+    
+    for (i = 0; i < NET_SUB1G_MAX_POINT; i++)
+    {
+        if (RF_OTA_STA_DOING == reals.net_point_ota_Info[i].is_ota)//判断该设备信息是否所需
+        {
+            if((reals.net_point_ota_Info[i].packed_rtn != ACK)
+                &&(reals.net_point_ota_Info[i].packed_rtn != C))
+            {
+                reals.net_point_ota_Info[i].write_block_retries++;//有设备仍未回复或非法回复，标记
+            }
+            else
+            {
+                reals.net_point_ota_Info[i].write_block_retries = 0;
+            }
+            
+            if(reals.net_point_ota_Info[i].write_block_retries > 4)
+            {
+                reals.net_point_ota_Info[i].is_ota = RF_OTA_STA_IDLE;//有设备升级出错，不再处理
+                MicroInv[0].mod_reg00700_OTA.ota_group[i].isOta = RF_OTA_STA_IDLE;
+                
+                if((reals.net_point_ota_Info[i].packed_rtn != NACK)
+                    &&(reals.net_point_ota_Info[i].packed_rtn != CAN))
+                {
+                    MicroInv[0].mod_reg00700_OTA.ota_group[i].errCode = ERR_DEV_NO_RSP;
+                }
+                else
+                {
+                    MicroInv[0].mod_reg00700_OTA.ota_group[i].errCode = ERR_DEV_ABORT;
+                }
+            }
+
+            reals.net_point_ota_Info[i].packed_rtn = 0;
+        }
+    }
+}
+
+/*------------------------------------------------------------------------------
+ Function: cc1312_NS_ota_num_get
+ -----------------------------------------------------------------------------*/
+/**
+  * @brief      升级子设备数获取
+  * @param[in]  void  
+  * @param[out] None
+  * @return     void
+  */
+uint8_t cc1312_NS_ota_num_get(void)
+{
+    uint8_t i = 0;
+    uint8_t is_ota_dev_num = 0;
+    
+    for (i = 0; i < NET_SUB1G_MAX_POINT; i++)
+    {
+        if ((NET_POINT_ONLINE == reals.net_point_base_Info[i].net_point_online)
+            &&(RF_OTA_STA_DOING == reals.net_point_ota_Info[i].is_ota))//判断该设备信息是否所需
+        {            
+            is_ota_dev_num++;
+        }
+    }
+    
+    return is_ota_dev_num;
+}
+
+/**
+ * @brief 从文件系统中获取升级数据
+ *
+ * @param data 保存数据的指针
+ * @param size 文件大小
+ * @return 成功返回0,否则返回-1
+ */
+static int cc1312_get_ota_data(uint8_t *data, int size)
+{
+	/* 只读格式打开文件 */
+	FILE *fp = fopen(bin_file_name, "rb");
+	if(fp == NULL) return -1;
+
+	/* 读数据到缓存 */
+	if(fread(data, 1, size, fp) != size) {
+		goto __error;
+	}
+
+	fclose(fp);
+
+	// for(int i = 0; i < 64; i++) {
+	// 	ESP_LOG_BUFFER_HEXDUMP(TAG, data+(i*16), 16, ESP_LOG_WARN);
+	// 	vTaskDelay(20);
+	// }
+
+	return 0;
+
+__error:
+	fclose(fp);
+	return -1;
+}
+
+/**
+ * @brief cc1312升级任务
+ * - 1、通过modbus协议向lcd发起升级请求
+ * - 2、设置xmodem服务接口
+ * - 3、启动xmodem服务开始xmodem升级
+ * - 4、升级退出时释放申请的内存资源同时删除本任务
+ * - 升级结束后meta协议的升级状态仍然会保持,直到下次升级开始时清除
+ *
+ * @param pvParameters 任务参数
+ * @return 无
+ */
+static void cc1312_ota_thread(void * pvParameters)
+{
+	vTaskDelay(pdMS_TO_TICKS(1000));
+	esp_log_level_set("[MCU_CORE]", ESP_LOG_DEBUG);
+	uart_recv_sem = xSemaphoreCreateBinary();
+	assert(uart_recv_sem != NULL);
+
+    //esp_log_level_set("[BLE_ENCRYPT]",ESP_LOG_NONE );
+    esp_log_level_set("[MODBUS]",ESP_LOG_NONE );
+    esp_log_level_set("[md_protocol]",ESP_LOG_NONE );//
+    esp_log_level_set("[modbus_slave_data]",ESP_LOG_NONE );//
+
+	ESP_LOGW(TAG, "cc1312 ota thread running...");
+	uint32_t ota_start_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+//	ESP_LOGW(TAG, "close wifi...");
+//	iot_wifi_close(WIFI_MODE_ALL); // 升级时，关掉WiFi保证升级的稳定性和速度
+	vTaskDelay(pdMS_TO_TICKS(2000));
+
+	/* 通过modbus协议发起升级请求 */
+	if (cc1312_ota_initiate() != 0)
+	{
+		ESP_LOGE(TAG, "cc1312_ota_initiate failed");
+        
+        cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;                  // 升级结束状态设置为已完成
+		cc1312_ota_state.err_code = ERR_FILE_INVALID;
+        MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+        MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_FILE_INVALID;
+        set_ota_pct_info(NULL,NULL,NULL,NULL,2,0,ERR_FILE_INVALID);
+		goto __exit;
+	}
+
+	/* 获取升级数据,数据可能存在文件中,也可能存在内存中 */
+	bin_data_size = cc1312_ota_set.file_size * 1024;
+	if (bin_ota_data == NULL)	// ota_data为空则升级数据存在文件中,否则升级数据存在内存中
+	{
+		// #define F_OK	0	//判断文件是否存在
+		// #define X_OK	1	//判断对文件是可执行权限
+		// #define W_OK	2	//判断对文件是否有写权限
+		// #define R_OK	4	//判断对文件是否有读权限
+		if (access(bin_file_name, F_OK) < 0)
+		{
+			ESP_LOGE(TAG, "ota bin file is not accessible, file name: %s", bin_file_name);
+
+            cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;                  // 升级结束状态设置为已完成
+    		cc1312_ota_state.err_code = ERR_FLASH_READ_FIALED;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_FLASH_READ_FIALED;
+            set_ota_pct_info(NULL,NULL,NULL,NULL,2,0,ERR_FLASH_READ_FIALED);
+			goto __exit;
+		}
+
+		bin_ota_data = heap_caps_malloc(bin_data_size, MALLOC_CAP_SPIRAM);
+		if (bin_ota_data == NULL)
+		{
+			ESP_LOGE(TAG, "cc1312 ota memory allocate failed, ota size: %d", bin_data_size);
+
+            cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;                  // 升级结束状态设置为已完成
+    		cc1312_ota_state.err_code = ERR_OUT_OF_MEMORY;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_OUT_OF_MEMORY;
+            set_ota_pct_info(NULL,NULL,NULL,NULL,2,0,ERR_OUT_OF_MEMORY);
+
+			goto __exit;
+		}
+
+		if (cc1312_get_ota_data(bin_ota_data, bin_data_size) != 0)	// 获取固件数据
+		{
+			ESP_LOGE(TAG, "read ota data from %s failed, ota size: %d", bin_file_name, bin_data_size);
+            
+            cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;                  // 升级结束状态设置为已完成
+    		cc1312_ota_state.err_code = ERR_FLASH_READ_FIALED;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_FLASH_READ_FIALED;
+            set_ota_pct_info(NULL,NULL,NULL,NULL,2,0,ERR_FLASH_READ_FIALED);
+
+			goto __exit;
+		}
+	}
+
+#if 1
+	/* 设置xmodem服务端回调接口 */
+	xmodem_transmitter_set_callback_write(cc1312_xmd_write);
+    xmodem_transmitter_set_callback_uart_send(cc1312_xmd_send);
+	xmodem_transmitter_set_callback_read(cc1312_xmd_read);
+	xmodem_transmitter_set_callback_is_outbound_full(cc1312_xmd_outbound_full);
+	xmodem_transmitter_set_callback_is_inbound_empty(cc1312_xmd_inbound_empty);
+	xmodem_transmitter_set_callback_get_buffer(cc1312_xmd_get_buffer);
+    xmodem_transmitter_set_callback_state_update(cc1312_NS_ota_state_update);
+    xmodem_transmitter_set_callback_state_init(cc1312_NS_ota_state_init);
+	/* 初始化xmodem服务 */
+	xmodem_transmit_init(bin_data_size);
+#endif
+
+    while(1)
+    {
+		vTaskDelay(pdMS_TO_TICKS(10));
+
+        #if 1
+		xmodem_transmit_process((const uint32_t)(time(NULL) * 1000));	// 启动xmodem服务内核
+
+		int xmd_state = xmodem_transmit_state_get();
+        int xmd_ota_pct  = xmodem_transmit_otapct_get();
+
+        if(cc1312_ota_set.start_flag == 1)//边界路由升级进度
+        {
+            MicroInv[0].mod_reg00700_OTA.ota_cmd_group.dev_id = cc1312_ota_set.group.dev_id;
+            MicroInv[0].mod_reg00700_OTA.ota_cmd_group.dev_type = cc1312_ota_set.group.dev_type;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].level = 1;//
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_DOING;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].where = 2;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].type = cc1312_ota_set.file_type;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].pct = xmd_ota_pct;
+            MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_UPGRADE_NORMAL;
+        }
+
+        
+		if (xmd_state == XMODEM_TRANSMIT_ABORT_TRANSFER)				// xmodem终止升级
+		{
+			ESP_LOGE(TAG, "cc1312 ota failed!");
+			cc1312_ota_state.err_code = ERR_DEV_ABORT;
+			cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;					// 升级结束状态设置为已完成
+
+            if(cc1312_ota_set.start_flag == 1)//边界路由升级进度
+            {
+                MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+                MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_DEV_ABORT;
+            }
+            else//子设备
+            {
+                for (uint8_t i = 0;  i < NET_SUB1G_MAX_POINT; i++)
+                {
+                    if ((NET_POINT_ONLINE == reals.net_point_base_Info[i].net_point_online)
+                        &&(RF_OTA_STA_DOING == reals.net_point_ota_Info[i].is_ota))//EOT错误响应
+                    {
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].isOta = RF_OTA_STA_IDLE;
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].pct = xmd_ota_pct;
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].errCode = ERR_FILE_INVALID;
+                    }
+                }
+            }
+
+            set_ota_pct_info(NULL,NULL,NULL,NULL,2,xmd_ota_pct,ERR_DEV_ABORT);
+
+			break;
+		}
+		else if (xmd_state == XMODEM_TRANSMIT_COMPLETE)					// xmodem正常升级完成
+		{
+			uint32_t now_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            ESP_LOGW(TAG, "cc1312 ota success, elapsed: %lu seconds!", (now_time-ota_start_time)/1000);
+			cc1312_ota_state.err_code = ERR_UPGRADE_NORMAL;
+			cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;					// 升级结束状态设置为已完成
+
+            if(cc1312_ota_set.start_flag == 1)//边界路由升级进度
+            {
+                MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+                MicroInv[0].mod_reg00700_OTA.ota_group[0].pct = 100;
+                MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_UPGRADE_NORMAL;
+            }
+            else
+            {
+                for (uint8_t i = 0;  i < NET_SUB1G_MAX_POINT; i++)
+                {
+                    if ((NET_POINT_ONLINE == reals.net_point_base_Info[i].net_point_online)
+                        &&(RF_OTA_STA_DOING == reals.net_point_ota_Info[i].is_ota))
+                    {
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].isOta = RF_OTA_STA_IDLE;
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].pct = 100;
+                        MicroInv[0].mod_reg00700_OTA.ota_group[i].errCode = ERR_UPGRADE_NORMAL;
+                    }
+                }
+            }
+            
+            set_ota_pct_info(NULL,NULL,NULL,NULL,2,100,ERR_UPGRADE_NORMAL);
+            
+			break;
+		}
+        #elif
+
+        break;
+		#endif
+	
+    }
+    
+    if(cc1312_ota_set.file_type == RF)
+    {
+        ESP_LOGW(TAG, "cc1312 ota thread : Sub_Net_Point_Clean!");
+        Sub_Net_Point_Clean();
+    }
+
+__exit:
+	// /* 释放内存资源 */
+	// if (bin_ota_data)
+	// {
+	// 	free(bin_ota_data);
+	// 	bin_ota_data = NULL;
+	// }
+    //esp_log_level_set("[BLE_ENCRYPT]",ESP_LOG_DEBUG );
+    esp_log_level_set("[MODBUS]",ESP_LOG_DEBUG );
+    esp_log_level_set("[md_protocol]",ESP_LOG_DEBUG );//
+    esp_log_level_set("[modbus_slave_data]",ESP_LOG_DEBUG );//
+
+	ota_flag = 0;
+	bin_data_size = 0;
+	vSemaphoreDelete(uart_recv_sem);					// 删除信号量
+	uart_recv_sem = NULL;
+	ESP_LOGW(TAG, "cc1312 ota thread exit!");
+	esp_log_level_set("[MCU_CORE]", ESP_LOG_WARN);
+//	iot_wifi_open(WIFI_MODE_STA); 						// 重新开启WiFi
+	vTaskDelete(NULL);									// 删除lcd升级任务
+}
+
+/**
+ * @brief 创建cc1312升级任务
+ *
+ * @return 0 if successful, otherwise -1
+ */
+static int cc1312_ota_task_create(void)
+{
+	if (xTaskCreatePinnedToCore(cc1312_ota_thread, "cc1312_ota_thread",  1024 * 4, NULL, 4, NULL, 1) != pdPASS)
+	{
+		ESP_LOGE(TAG, "cc1312 ota thread create failed");
+		return -1;
+	}
+
+	return 0;
+}
+
+/**
+ * @brief cc1312升级开始接口
+ * - 当外部模块调用该接口时cc1312升级内核开始运行
+ *
+ * @param ota_set 升级设置参数
+ * @param bin_path 固件路劲
+ * @param bin_data 固件数据指针
+ * - bin_path与bin_data可二选一,如果同时存在则取bin_data作为升级数据源
+ *
+ * @return 成功返回0否则返回-1
+ */
+int cc1312_ota_start(ota_set_t *ota_set, char *bin_path, uint8_t *bin_data)
+{
+	if (ota_flag) return -1;
+	if ((ota_set == NULL) || ((bin_path == NULL) && (bin_data == NULL)))
+	{
+		cc1312_ota_state.err_code = ERR_FILE_INVALID;
+		return -1;
+	}
+
+	memcpy(&cc1312_ota_set, ota_set, sizeof(ota_set_t));
+      
+    ESP_LOGW(TAG, "lxy sub1g debug : Group[%d : %d] type=%u, version=%lu, size=%u",
+    cc1312_ota_set.group.dev_type, cc1312_ota_set.group.dev_id,
+    cc1312_ota_set.file_type,
+    ((uint32_t)(cc1312_ota_set.ver_high << 16) | cc1312_ota_set.ver_low),
+    cc1312_ota_set.file_size);
+    
+//	if (bin_path) {
+//		strncpy(bin_file_name, bin_path, sizeof(bin_file_name));
+//	}
+//	else {
+//		bin_ota_data = bin_data;
+//	}
+
+	memset(&cc1312_ota_state, 0x00, sizeof(ota_state_t));
+	cc1312_ota_state.group = cc1312_ota_set.group;
+	cc1312_ota_state.is_ota = RF_OTA_STA_DOING;			// 正在升级
+	cc1312_ota_state.level = 1;							// iot传递给设备
+	cc1312_ota_state.target_pos = cc1312_ota_set.file_type;	// ota的目标位置
+	cc1312_ota_state.now_pos = cc1312_ota_set.file_type;		// 当前位置
+
+	if (cc1312_ota_task_create() != 0)
+	{
+        cc1312_ota_state.is_ota = RF_OTA_STA_CPLT;                  // 升级结束状态设置为已完成
+		cc1312_ota_state.err_code = ERR_OUT_OF_MEMORY;
+        MicroInv[0].mod_reg00700_OTA.ota_group[0].isOta = RF_OTA_STA_IDLE;
+        MicroInv[0].mod_reg00700_OTA.ota_group[0].errCode = ERR_OUT_OF_MEMORY;
+        set_ota_pct_info(NULL,NULL,NULL,NULL,2,0,ERR_OUT_OF_MEMORY);
+		return -1;
+	}
+
+	ota_flag = 1;
+	ESP_LOGI(TAG, "cc1312 ota start");
+	return 0;
+}
+
+/**
+ * @brief 获取cc1312模块升级状态
+ *
+ * @return 0-未升级, 1-正在升级
+ */
+int cc1312_ota_is_doing(void)
+{
+	return ota_flag;
+}
+
+/**
+ * @brief cc1312升级模块数据接收接口
+ *
+ * @param data 接收到的数据指针
+ * @param len 数据长度
+ *
+ * @return 无
+ */
+void cc1312_ota_recv(uint8_t *data, int len)
+{
+	if (!ota_flag) return;
+
+    MAC_UNION Source_Mac_union;
+    MAC_UNION Target_Mac_union;
+    uint8_t i = 0;
+    uint8_t recv_flag = 0; //汇总上报标志 0：ack   1：nack   2：等待
+    uint8_t is_ota_dev_num = 0;
+    
+    memcpy(&Source_Mac_union.MAC, &data[MESH_FRAME_ADDR_MAC_SOURCE], 8);
+    memcpy(&Target_Mac_union.MAC, &data[MESH_FRAME_ADDR_MAC_TARGET], 8);
+    
+    //边界路由升级/回复
+    if((Source_Mac_union.MAC_64 == Target_Mac_union.MAC_64)
+        ||(data[MESH_FRAME_ADDR_TYPE] == MESH_FRAME_TYPE_WRITE_RTN))
+    {
+    	memcpy(recv_buff, &data[MESH_FRAME_ADDR_MODBUS_HEAD], len-21);
+    	recv_len = len-21;
+        
+    	if (uart_recv_sem) 
+        {
+		    xSemaphoreGive(uart_recv_sem);
+	    }
+    }
+    else
+    {
+        for (i = 0; i < NET_SUB1G_MAX_POINT; i++)
+        {
+            if (Source_Mac_union.MAC_64 == reals.net_point_base_Info[i].mac_union.MAC_64)
+            {
+                reals.net_point_ota_Info[i].packed_rtn = data[MESH_FRAME_ADDR_MODBUS_HEAD];//存储子设备回复信息
+                break;
+            }
+        }
+        
+        for (i = 0; i < NET_SUB1G_MAX_POINT; i++)
+        {
+            if ((NET_POINT_ONLINE == reals.net_point_base_Info[i].net_point_online)
+                &&(RF_OTA_STA_DOING == reals.net_point_ota_Info[i].is_ota))//判断该设备信息是否所需
+            {
+                if(reals.net_point_ota_Info[i].packed_rtn == NACK)//高优先级
+                {
+                    recv_flag = 1;//有设备回复nack
+                }
+                else if((reals.net_point_ota_Info[i].packed_rtn != ACK)&&(recv_flag == 0))
+                {
+                    recv_flag = 2;//有设备仍未回复或非法回复
+                }
+                
+                is_ota_dev_num++;
+            }
+        }
+        
+        ESP_LOGI(TAG, "is_ota_dev_num: %d",is_ota_dev_num);
+        
+        if(is_ota_dev_num == 0)//无设备升级
+        {
+            recv_flag = 2;
+        }
+        
+        switch (recv_flag)
+        {
+            case 0:
+                recv_buff[0] = ACK;
+    	        recv_len = 1;
+                break;
+                
+            case 1:
+                recv_buff[0] = NACK;
+    	        recv_len = 1;
+                break;         
+                
+            default:
+                return;
+        }
+        
+        if (uart_recv_sem) 
+        {
+		    xSemaphoreGive(uart_recv_sem);
+	    }
+    }   
+}
+
+/**
+ * @brief 获取cc1312 beta协议升级状态
+ *
+ * @return 返回状态指针
+ */
+ota_state_t* cc1312_ota_state_get(void)
+{
+	return &cc1312_ota_state;
+}
+
+/**
+ * @brief 清除cc1312 beta协议状态
+ *
+ * @return 无
+ */
+void cc1312_ota_state_clear(void)
+{
+	memset(&cc1312_ota_state, 0x00, sizeof(ota_state_t));
+}

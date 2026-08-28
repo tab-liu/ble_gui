@@ -1,0 +1,31 @@
+dependencies:
+  espressif/qrcode:
+    component_hash: 
+      3b493771bc5d6ad30cbf87c25bf784aada8a08c941504355b55d6b75518ed7bc
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.1.0~2
+  idf:
+    source:
+      type: idf
+    version: 5.2.3
+  joltwallet/littlefs:
+    component_hash: 
+      4943c7f0932795ef722fa5d846a3bbf52467d87c01fdab054d3161853bb5f275
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.10.2
+direct_dependencies:
+- espressif/qrcode
+- idf
+- joltwallet/littlefs
+manifest_hash: 6cddbd4b898a0441e6bd594bbdb0a246ee4fa7aea78ffd1579de19fc39ef7852
+target: esp32s3
+version: 2.0.0

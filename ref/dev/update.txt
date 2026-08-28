@@ -1,0 +1,644 @@
+20240109 基于海洋A100 IDF5.1.2框架，芯片从esp32改为esp32s3
+main yml文件增加如下引用，来支持usb_device
+  usb_device:
+    path: components/usb/usb_device
+    git: https://github.com/espressif/esp-iot-bridge.git
+    rules:
+      - if: "target in [esp32s2, esp32s3]"
+配置使能Mesh lite、microchip KSZ8851SNL(SPI ETH)      
+20240122 编译通过
+复制EMS 的ext_spi_flash目录，添加SPI flash，编译成功
+
+20240123
+添加uart012框架
+复制ems main目录9个文件夹，移植ble/wifi/can/modbus相关核心
+iot_auth_host
+iot_bluetooth
+iot_can
+iot_can_data
+iot_can_ota
+iot_crc
+iot_modbus
+iot_wifi
+iot_xmodem
+low_level_param
+20240124
+menuconfig使能BLE
+删除：app_modbus/app_set目录
+保留：
+app_rtc
+app_uart
+删除：
+                    ./app_wifi/
+                    ./app_espnow/
+                    ./app_mqtt/
+                    ./app_sntp/
+                    ./app_uart/
+                    ./app_crc/
+                    ./app_data/
+                    ./app_iic/
+                    ./app_rtc/
+                    ./app_log/
+                    ./app_energy/
+                    ./app_file/
+                    ./app_xmd/
+                    ./app_flash/
+                    ./app_dsp/
+                    ./app_json/
+                    ./app_http/
+                    ./app_console/
+                    ./ota_manager/
+                    ./app_bat/
+                    ./app_can/
+删减移植后编译成功
+20240125
+移植USB tiny stack  CDC ACM
+使能 configENABLE_BACKWARD_COMPATIBILITY
+实现USB和uart0口都可烧录和打印
+20240126
+同时使能：BLE4.2和5
+enable BLE 4.2 features
+enable BLE 5 features	
+enable PSRAM:SPI RAM config，BSS, WIFI/BLE->PSRAM
+ Partition Table  :disable PARTITION_TABLE_SINGLE_AP->自定义
+0xA000 Offset of partition table
+Flash size (8 MB) 
+
+
+EXT_RAM_ATTR->EXT_RAM_BSS_ATTR
+编译生成的分区表格：
+# ESP-IDF Partition Table
+# Name, Type, SubType, Offset, Size, Flags
+nvs,data,nvs,0xb000,16K,
+otadata,data,ota,0xf000,8K,
+phy_init,data,phy,0x11000,4K,
+app1,app,ota_0,0x20000,2560K,
+app2,app,ota_1,0x2a0000,2560K,
+disk,data,fat,0x520000,2M,
+custom_data,64,0,0x720000,860K,
+ca,64,0,0x7f7000,4K,
+device,64,0,0x7f8000,4K,
+private,64,0,0x7f9000,4K,
+update,64,0,0x7fa000,4K,
+reserved,64,0,0x7fb000,16K,
+20240127
+内置ESP32-S3R8 的模组工作环境温度为–40 ~ 65 °C，其他型号的工作环境温度均
+为–40 ~ 85 °C。请注意，针对R8 系列模组(内置8 线PSRAM)，
+menuconfig配置要配至 octal 8线模式
+由于 WIFI/BLE配置需要 NVS，因此需要初始化initialize_nvs()
+
+使用idf.py flash可正常烧录；但是flash_download_tool.exe烧录后无法正常启动
+20240129
+移植EMS的iic_bus eeprom_24cxx ext_rtc，为实现 RTC/EEPROM,使用GPIO模拟
+添加钟工4G模块代码
+完善uart
+#include "esp_event.h"//EXT_RAM_BSS_ATTR 需要
+20240130
+添加 EEPROM 表格，SNTP同步
+蓝牙APP通讯正常
+20240201
+解决了TCP connnect问题
+调试到STEP_MQTT_LOGIN
+				
+20240205
+MD5Final()名 编译，导致函数不运行，改为其他函数名MD5Final_2() 则运行 MQTTok
+原因：库函数F:\Espressif\frameworks\esp-idf-v5.1.2\components\esp_rom\include\esp32s3\rom\md5_hash.h和 代码 md5.h中的函数重名
+void MD5Final_2 ( MD5_CTX * context, unsigned char * digest)
+void MD5Final(unsigned char digest[16], struct MD5Context *context);
+20240207
+合并MQTT线程，精简RAM：iot_mqtt_client_task() iot_mqtt_announce()
+20240219
+通过WIFI，借用EBOX** SN和服务器调试ok，能在网页后台刷新运维数据信息
+流程总结：
+在MQTT登录账号密码成功之后
+1.esp_transport_write TCP发送绑定信息，并等待响应esp_transport_read
+2.esp_mqtt_client_publish 周期主题上报
+实际上：esp_mqtt_client_publish的底层会调用esp_transport_write
+将BLE/WIFI线程创建函数并列，便于代码分析
+
+#define send(s,dataptr,size,flags)  lwip_send(s,dataptr,size,flags)
+esp_transport_write和send/recv是不同的 TCP操作库函数方法，本质都是TCP发送
+
+AT+GTSET="IPRFMT",0// TCP接收，有0/1/2/5不同模式
+AT+MIPSEND=  //TCP发送，有多种格式，分阶段，或连续一次发出
+20240221
+合并WIFI和4G的发送函数：AT_MQTT_Send_Public_Data，AT_TCP_Send_Data
+20240222
+调通4G AT指令收发验证，待确认MQTT
+经代码确认：设备周期主动上报的MQTT主题和响应服务器订阅modbus查询后返回的主题相同，差异仅是设备发出去的MQTT的主题和服务器Modbus发来的主题不同
+4G ：
+at_mqtt_pub
+at_tcp_send_data
+SendATCmd
+Send4GCmd
+20240301
+移植esp_modem,使能 :
+Enable PPP support
+Enable Notify Phase Callback
+Enable PAP support
+
+20240304
+添加复制自定义component:set(EXTRA_COMPONENT_DIRS "./main/esp_modem")
+编译运行成功
+集成AT指令+ 移植的ppp code联调 MQTT服务器ok
+网络通讯： WIFI和 ppp AT差异：
+20240307
+合并4G+ WIFI 网络通讯正常
+20240311
+成功通过同一WIFI网络，连接我司服务器和第三方MQTT服务器
+问题：相同路由器名称情况下，在密码丢失情况下， 输入无法更新账号和密码
+20240312
+修复EMS 软件bug：WIFI初始化，iot_period_task-》iot_wifi_new_ap和iot_wifi_task-》wifi_config的 WIFI SSID/passwd赋值前后重复，第二次的默认赋值会覆盖第一次的上次掉电保存值
+代码解释：modbus beta变量，同一结构体定义两份，带back/bk表示 写（APP写IOT），不带back/bk表示 读（APP读IOT），即读和写操作分离两个变量， 写的变量要周期给读的变量赋值，如下：
+g_device_data.iot_dev_node.iot_config = g_device_data.bk_iot_dev_node.iot_config 二者关系 
+/* IOT设置区 12000 - 11036 */
+static const reg_array		iot_set_reg[] = {
+/* IOT设置区 12000 - 11036 */
+static const reg_array		backup_iot_set_reg[] = {	
+
+modbus_master_data.c：IOT作为Master,主动向MQTT服务器上报的变量；
+modbus_slave_data.c：IOT作为slave,响应BLE和MQTT查询和写的变量；
+screen_slave_data.c：EMS作为slave,和 LCD MCU交互的变量，
+
+添加modbus 结构体：
+	Frame_bind_info_struct_t frame_bind_info;//21000
+	Net_Server_2RD_struct_t net_server_2rd;//22000
+	
+g_device_data.bk_iot_dev_node.iot_config.net_server_2rd
+
+20240313
+增加公网地址和密码设置，蓝牙控制收发和上位机通讯OK
+使用g_device_data.bk_iot_dev_node.iot_config.net_server_2rd.iot_enable.bits.net_ch切换  ：
+从WIFI到4G： 和从4G到WIFI：反复切换，ok
+
+20240314
+参考A80添加WIFI到uart透传转发
+待后续分析：Modbus_Slave的xSemaphore互斥信号量可能阻碍 BLE和WIFI同时操作
+20240315
+添加完BLE/WIFI到uart透传转发框架完成，待丰富
+20240316
+移植魏工BLE加密
+20240319
+CONFIG_TIMER_TASK_STACK_DEPTH=   2048->4096
+和手机APP能够实现蓝牙加密状态机authenticate_state从2到7的过程变化，但是后续断开待分析
+20240320
+BLE定时器重发导致 公钥计算不匹配
+
+20240321
+[BLE_ENCRYPT] log打印会严重影响 蓝牙交互，导致通讯失败
+需要关闭此log
+4G+WIFI+BLE加密正常
+20240322
+EEPROM RTC ok
+SPI flash 初始化异常:freq_mhz变量未初始化导致
+20240325
+添加net point排序：冒泡法
+20240326
+简化BLE/WIFI转 UART CC1312透传，表格改if，因协议寄存器相同，不需要转换
+20240327
+time():返回1970-1-1, 00:00:00以来经过的秒数
+localtime(): 将时间数值变换成本地时间，考虑到本地时区和夏令时标志
+mktime():将时间转换为1970-1-1, 00:00:00以来经过的秒数
+上级设置参数（可写,backup）的处理-3类区别对待：
+户用储能-CAN转发；
+微逆-UART转发；
+本地设置-本地处理（如时间设置和WIFI配网）
+变量框架：
+1.mobus beta全部只读-协议，主中心变量
+2.协议可写变量，要素：开始地址，结束地址，长度，内容
+可写参数的主变量更新原则：
+1.来自下级的-从CAN/uart获取（首次；写入后立刻回读）；
+2.本地的，立刻赋值
+20240329
+rtc 系统时间异常的原因：localtime需要使用 全局变量参数，而非临时变量  reals.now
+猜测RAM分配异常，呆确认
+参考何工新数据框架，添加modbus_data.c modbus_protocol.c modbus_protocol.h到iot_modbus文件夹
+20240330
+添加iot_crc/util_swap.c
+20240330
+添加 CONFIG_HARDWARE_ATS、CONFIG_HARDWARE_DTU100切换
+20240402
+试验表明，EXT_RAM_BSS_ATTR定义的大块变量，需要在函数中明示赋值，而非定义时候赋值 md_data[]
+menuconfig屏蔽uart0 的console打印，只用USB  serial/JTAG 选项
+20240407
+修复RTC读写和转换，修复BLE转uart异常
+移植汪工网络加密，menuconfig修改
+mbedTLS ext SPIRAM memory
+ESP-TLS:enable
+Allow potentially insecure options
+Skip server certificate verification by default
+20240409
+蓝牙加密代码分离模块化
+20240411
+汪工修复网络加密，交互服务器成功
+
+20240625
+windy基于AC380删减，
+
+20240703
+IOT更新数量为15
+合并wangxiang 代码
+更好IOT源地址：esp_canbus_myself_address()
+
+20240704
+CAN 多字节读取 的 难点少数处理
+active_can_cmd_type： 下级CAN设备的本地历史记录，转存到modbus过程
+AC380屏蔽如下功能
+inv_log_sync_check()
+can_trigger_cmd_read()
+
+添加本地modbus 3000事件记录 GetHistoryLogFromLittlefs()
+待整理变量，添加写入队列，测试
+20240705
+添加历史记录队列存储，防止快速故障变化时候无法全部存储
+AC380 IOT无外置flash/EEPROM，所有配置参数存储在ESP32S3内部，使用littlefs和NVS
+NVS:存储配置参数
+littlefs:存储kwh记录和历史记录
+待代码各项目全部统一ESP 默认出厂值和代码标记，使用 #define MASS_PRODUCTION, #ifdef切换
+已知EMS软件，每次发布（测试发布和生产发布），都使用的是量产服务器配置信息；
+杨嘉俊有工具通过蓝牙入口，手动将量产服务器地址改为测试服务器地址
+从而减少面向客户的人工错误不匹配
+总结：
+could_dns
+.wifi_sta_ssid = "BLUETTI", \
+.wifi_sta_password = "poweroak", \
+.dev_type = "BLUETTI",  \
+.dev_sn = 123456, \
+#define MASS_PRODUCTION_ENV_HOST_URL        "iot.bluettipower.com:18760"//量产bluetti服务器地址
+#define MASS_PRODUCTION_WIFI_STA_SSID		"BLUETTI"//默认wifi SSID
+#define MASS_PRODUCTION_WIFI_STA_PASSWORD	"poweroak"//默认wifi 密码
+
+#define MASS_PRODUCTION_DEFAULT_DEV_TYPE	"BLUETTI"//未标定使用的默认type 
+#define MASS_PRODUCTION_DEFAULT_DEV_SN	123456//未标定使用的默认SN 
+#define MASS_PRODUCTION_SET_DATA_VALID_FLAG	0xAA55//2B 本地存储配置参数区域的有效标志
+
+20240709
+分区使用定义：
+disk,      		data, 	fat,     		,	2M,// littlefs,AC380 use
+custom_data,	0x3A,	0,				,	860K,//http OTA下级
+CAN 初始化：修复，不要接收到自己发出的报文
+ twai_message_t,   queue_msg.pdata->self = 0;//windy
+https://esp32.com/viewtopic.php?t=27678
+
+20240710
+完成多IOT CAN并机排地址功能比自测，增加IOT的心跳帧，暂定周期15s
+与陆文杰约定：
+多AC380 下级的多电池包群组关系，严格遵守 modbus beta协议表格中 汇总信息页面的群组序号序号，即默认固定8套逆变器，每套8个电池包，如果未来扩展，可以更改默认值（双方协商或通过modbus 7004地址修改）
+PACK的 CAN type=0x50部分，只单帧主动上报，不响应多字节读取，且仅单逆变器内的主报ID上报，即只有can ID 地址0x60,0x68,0x70上报
+各逆变器内的多个电池包的状态通过 can type 0x50中 MainPackOnline 电池包在位bit判断，即可能电池包地址不连续
+20240711
+修复 设备 通讯超时判断online 
+Inv_Pack：modbus beta,各pack的单独信息,从 Inv结构体抽离
+合并wx表格
+20240712
+杨嘉俊建议：三个逆变器并机后，屏蔽从机的 BLE/WIFI功能
+设备间IOT 的BLE/WIFI配置信息可能需要共享
+(1 == reals.Addr_can_master))//非主设备部开BLE/WIFI
+将g_self_data结构体内容赋值给Inv[reals.Addr_can_self]，用于modbus beta 结构化统一交互:
+Iot_Self_Data_To_Can_data()
+增加CAN绑定 Struct_IOT_Enable_mix1
+g_self_data.mod_reg12000_IOT_set.bit.IOT_Enable_mix1
+CanListenBus_From_IOT() IOT 主动上报监听
+20240713
+RTC更新策略：
+首次上电从ARM获取；
+周期从网络获取
+接受来自BLE modbus设置时间
+
+IOT参数有效后，周期更新下级ARM时间：>3秒误差，30秒检测周期【不实现，因IOT内RTC可能会跑偏，仅通过BLE /NET更新下级】
+IOT参数有效后，周期从ARM更新IOT时间：>3分钟误差，120秒检测周期
+
+添加下级逆变器参数存储SetData2 到NVS
+
+变量整理：
+CAN INV 转Modbus的变量：
+EXT_RAM_BSS_ATTR MOD_STRUCT_Inv Inv[(INV_MAX_NUM*DEV_MAIN_NODE_MAX)+1];//end元素用于汇总=modbus slave0，需要IOT自身额外拟合
+EXT_RAM_BSS_ATTR MOD_STRUCT_Inv	Inv_WR;//modbus写缓存 [(INV_MAX_NUM*DEV_MAIN_NODE_MAX)]
+EXT_RAM_BSS_ATTR MOD_STRUCT_Pack Inv_Pack[PACK_MAX_NUM*DEV_MAIN_NODE_MAX];//各pack的单独信息,从 Inv结构体抽离
+
+//本IOT相关变量
+EXT_RAM_BSS_ATTR SELF_DATA_STRUCT  g_self_data;//modbus beta
+EXT_RAM_BSS_ATTR SELF_DATA_STRUCT  g_self_data_WR;
+
+//inv set only:Inv_WR->Inv[]，在modbus块回调函数赋值
+MOD_STRUCT_reg02000 mod_reg02000_Inv_base_set; //2000~2067	基础设置项
+MOD_STRUCT_reg02200 mod_reg02200_Inv_advance_set; //2200~2245  每台逆变高级设置区
+MOD_STRUCT_reg02300 mod_reg02300_Inv_set02_struct; //2300~2400	电网认证区
+MOD_STRUCT_reg02400 mod_reg02400_Inv_certification; //2400~2449  认证设置项
+MOD_STRUCT_reg02500 mod_reg02500_Inv_advance_set2; //2500~2544	每台逆变高级设置区2（面向微逆）
+
+//IOT set only:Inv_WR->Inv[]->g_self_data_WR[]->g_self_data[]，在modbus块回调函数赋值
+MOD_STRUCT_reg00000 mod_reg00000; //  6~16, 其他INV内部的IOT
+MOD_STRUCT_reg00700 mod_reg00700_OTA; //700~768  OTA设置区
+MOD_STRUCT_reg03000 mod_reg03000_Inv_history; //3000~3026  每台逆变器历史记录区
+MOD_STRUCT_reg03500 mod_reg03500_Inv_yearX_statistic; //3500~3547    每台逆变器累计年电量区
+MOD_STRUCT_reg03600 mod_reg03600_Inv_year1_statistic; //3600~3658  每台逆变器当年电量区
+MOD_STRUCT_reg11000 mod_reg11000_IOT_info; //11000~11040    IOT信息区（只读，面向客户）
+MOD_STRUCT_reg12000 mod_reg12000_IOT_set; //12000~12999 IOT设置区
+
+修复并机CAN设备 online异常
+20240715
+参考PLP024 ，替换蓝牙模块代码为nimble，启用BLE开关
+测试和BLE上位机交互ok
+实现BLE 开关OK：iot_ble_start/iot_ble_stop
+
+上电蓝牙关闭失败tbd
+20240716
+为解决 多字节块操作，相邻块报文重叠， 增加 can type判断can_type
+重写CAN汇总，tbd测试
+
+20240717
+BLE 开关ok
+合并wx code
+20240718
+修复 vLookupDataTab_Can()参数错误
+CAN type 多字节查询，延时Can_beta_block_send_timeout_Cnt 间隔改为  1.5s(无响应) ,0.3s(有响应)
+更改can 多字节查询 轮询改为非阻塞
+20240719
+data_sum_inv()有未知bug，会导致如下变量周期清零
+Inv_can[num].inv_data[0].inv_base.inv_num
+Inv_can[num].inv_data[0].inv_base.inv_online
+Inv_can[num].inv_data[0].inv_base.inv_power_rang
+更新pack汇总函数：
+pack_announce
+pack_base
+pack_extend
+20240722
+合并yjh COMBOX  网络切换
+
+20240724
+更新esp_canbus_send_task(),仍然和EMS保持一致，放在单独的阻塞任务中，加速OTA的 多帧发送
+20240726
+OTA下载的目标从RAM改为flash，并解决RAM 在升级过程被篡改问题-CAN
+
+20240806
+调试本地历史记录
+添加IOT CAN type 1/2
+20240807
+添加modbus 40000透传CAN区域
+优化广播 modbu can 转发ID函数
+参数（本身IOT和下级INV）存储从NVS改到文件系统，因为多杂，反复写入
+20240809
+增加UDT对CAN下级和本地的透传兼容实现
+udt_pc_interface 、udt_relay_to_terminal、udt_receive、udt_relay_to_device
+20240810
+添加app_param.c 参数CAN同步代码到iot_can_data目录
+本地->can 下级；下级的部分参数范围限制，要回读更新到本地
+can 下级本地->本地
+
+20240813 
+优化 rx CanRx_Parse_Task()解析，解决 队列解析不完全导致 丢帧问题
+遗留 IOT  type=2 发送长度 CRC错误问题
+
+20240814
+can beta协议 的多字节读和写 协议限制最大块字节数：255*6=1530
+截断 iot set CAN type 0x2的尾部，解决CRC错误
+20240815
+优化CAN set多字节写广播，优化本地CAN set存储逻辑
+
+20240819
+陆文杰：
+INV CAN RTC实时数据，有INV主动上报帧，周期2s，0x1811xxxx；
+set rtc的反向读取仅仅是set变量，不是实时值
+
+20240820
+修复thunder_ctrl_t变量 1字节导致 modbus 12000 set偏移错误
+修复绑定 set响应待测试
+20240821
+修复第二服务器断开问题：server2_config_info_update 屏蔽，被覆盖导致
+20240822
+基于lxy historic_data_bias_read()实现数据通道服务器读取，本地循环覆盖，获取最新
+
+20240826
+合并wangxiang 0823代码
+
+20240909
+优化 CAN fast slow函数，使用三维mqtt参考框架
+iot_mqtt_announce()周期上报改为单循环只发一帧
+合并熊工代码
+20240910
+合并汪工代码
+20240912
+WiFi 无密码连接功能修复
+该功能需要app有更改ESP32S3的wifi连接模式的功能才能正常使用
+
+
+更改CAN主动多字节查询统一到can_data_poll_all()函数
+待调整ACHUB DCHUB结构体
+20240913
+将ACHUB 结构体 移到Inv_can_mix，便于未来扩展设备
+
+
+20240918
+故障历史记录增加年份的上报
+OTA升级部分，升级状态固定为1：IOT发送给设备，且每同一种类型升级升完后全部设备状态要清零
+
+2024.11.15
+data_sum_inv_base函数新增电网单相功率的汇总处理
+
+2024.11.19
+data_sum_inv_base函数新增AC单相总功率的汇总处理
+data_sum_inv_dc_hub_info函数新增DC-hub中TYPEC、USB-A、点烟器等节点的各项信息的汇总处理
+
+2024.11.20
+新增CAN_SetAlarmStateFromAcHub函数，用于将将ACHUB的报警状态汇总到故障表中。
+
+2024.11.21
+1.将IOT广播所有S1的负载功率的使用ID由0x08FAFF改为0x1901xxyy, XX为0xFF
+
+2024.11.26
+1.SetData增加Addr_can_self变量用于记忆并机排序后的本机的MON CAN地址编号，同时real的Addr_can_Buff变量也在初始化后赋值该Addr_can_self变量，防止排序后本机的CAN地址编号由于和Addr_can_Buff不同而被覆盖
+2.reals.Step_can_dev_parallel初始化为STEP_CAN_PARALLEL_AFTER ，取消上电就触发一次重排的情况
+
+2024.11.29
+增加并机汇总电量记忆功能。新增iot_kwh_sum_status_check函数和iot_kwh_sum_data_update函数，电量文件写入设置为汇总电量后缀为0_00 单机电量后缀为0_01
+
+2024.12.4
+Modbus_callback_03000函数中读取的一页告警历史做倒序处理，并新增GetHistoryLogFromLittlefsReversal函数用于读取告警历史文件，读取顺序为倒序，时间戳最新的一页在最前面
+
+2024.12.5
+CanRx_Parse_Task函数中	while(handl_count < 100)改为	while(handl_count !=0)  ，handl_count初始化为100，在循环中自减，防止没有接收到100帧会跳不出循环
+
+1.增加并机汇总电量记忆功能。新增iot_kwh_sum_status_check函数和iot_kwh_sum_data_update函数，电量文件写入设置为汇总电量后缀为0_00 单机电量后缀为0_01
+2.修改告警历史无法存储和删除问题
+3.Modbus_callback_03000函数中读取的一页告警历史做倒序处理，并新增GetHistoryLogFromLittlefsReversal函数用于读取告警历史文件，读取顺序为倒序，时间戳最新的一页在最前面
+4.CanRx_Parse_Task函数中	while(handl_count < 100)改为	while(handl_count !=0)  ，handl_count初始化为100，在循环中自减，防止没有接收到100帧会跳不出循环
+
+
+2024.12.16
+Inv_Pack_First_online_Index_Check函数中的reals.online_X_inv_index变量判断逻辑做修改，只取第一个在线的设备序号，之前逻辑判断会导致	后续在线的设备序号覆盖第一个设备序号
+
+2024.12.20
+1.Modbus_21000_3_Net_Point_Frame函数更新，判断的固件升级类型采用app下发的g_self_data.mod_reg00700_OTA.ota_cmd.type变量
+2.增加Device_Can_Address_Parallel_SetTriger函数用于设置reals.Step_can_dev_parallel变量为STEP_CAN_GROUP_PARALLEL_TRIGER，触发重新排序，该方法每次上电只能设置3次，设置间隔当前为10秒。Can_ID_Check函数中相同IOT源地址触发重排判断方式更新
+3.CanNodeOfflineCheck函数增加判断限制，升级时停止设备超时断线判断，防止一键升级时间过长，出现误判掉线问题
+4.CanOtaSender函数中第5阶段读取升级固件数据时，增加ota_status->pblock_buf是否不为NULL判断，防止读取出问题，导致ota_status数据都被乱码覆盖。CanOtaStruct结构体pblock_buf变量和pblock_len变量移到结构体最后
+5.Modbus_ReadRegs_Bind_Ack_Frame函数中21000段寄存器数据采用Inv变量的mod_reg21000_bind成员
+6.触发 IOT地址重复(reals.MonSnSame)、IOT和IOT ARM数量不一致报警时reals.Addr_can_Attr变量|上新增Can_Addr_Parallel_SameAlarm枚举报警位，在CAN_SetAlarmStateFromAcHub函数中将该报警位或到现有逆变器的 “地址重复告警bit”位上
+
+
+2024.12.24
+添加drv_ble_get_ConnectEvent函数，用于获取蓝牙连接事件状态（仅当接收到蓝牙连接事件BLE_GAP_EVENT_CONNECT时状态置1）
+CanVerifyData函数增加判断，当接收到逆变器的1A区报文时，直接将Inv_can_WR.bk_inv_dev_set.inv_set00.ctrl_chg_mode;获取到的充电模式变量赋值给(*node->invs_info)[INV_MAX_NUM].inv_set00.ctrl_chg_mode ，保证充电模式状态变化的快速响应
+
+2024.12.28
+
+iot_link_status_check函数中 g_self_data.mod_reg11000_IOT_info.link.all的连接状态判断中同步增加reals.ota_happen的判断，只有当reals.ota_happen不为1时才可广播发送IOT_TYPE_INFO_01H写入帧，防止在升级时出现60写入帧的发送，其他从机会有写入帧的应答，有概率出现覆盖一帧74数据帧的情况
+
+Device_Can_Address_Parallel_Step函数中的Iot_Heartbeat_frame_Send函数执行同样增加reals.ota_happen的判断，防止升级过程中心跳帧的发送，当前有概率影响升级帧的通讯
+
+2025.1.01
+mod_reg00100_AppPage1.alarm和fault分别增加配件工作异常报警类型和控制器过温故障类型的记录和上报，在CAN_SetAlarmStateFromAcHub函数中
+
+
+2025.1.06
+2.增加电池包重构信息功能，代码在can_pack.c文件中
+3.增加21000段寄存器数据，用于上报各项设备节点的节点信息，包含从机地址、设备SN码等，上传功能函数Modbus_Bind_Ask_Ble在dev_discovery.c文件中。增加ble_ff03_report_task函数用于上报
+
+
+2025.1.13
+single_pack_information函数中屏蔽通过01 02 03 从机地址存入7200寄存器数据的操作
+
+2025.1.14
+1.修改21000段SN码、设备机型序号与协议不一致以及电池包等数量和实际数量不一致问题。
+2.新增pack_bmsinfos_summary函数 用于进行内置电池包等数据的记录上报， Modbus_21000_1_Net_Point_Frame函数中增加逆变器从机地址的分配，更新逻辑：无并机时AP300为主机地址分配从机地址00，并机时ACHUB识别为主机分配从机地址00，
+
+2025.1.15
+1.合并杨工S1智能插座相关代码
+2.21000段绑定帧上报功能更新:
+a.根据节点设备变化做主动上报。函数：update_online_counts
+b.添加MQTT主动上报，函数：Modbus_Self_21000_Report_MQTT
+c.在pack_bmsinfos_summary和pack_infos_summary中增加单电池包soc值上报
+
+2025.1.16
+1.reals.Step_can_dev_parallel=STEP_CAN_GROUP_PARALLEL_TRIGER 操作屏蔽，AC380内部 IOT屏蔽一切本机主动地址重排动作，完全接收INV ARM触发排序过程
+2.Can_Tx_single_binding_triger函数发送的绑定帧Binding_Triger，该帧的data[2]赋值0x55 表明该帧为生产标定用，ARM需要返回Binding_SN_MainReport 帧，最后data[7]需赋值0x55 （表明是生产标定帧）
+3.增加Can_Tx_single_binding_Check函数发送绑定帧Binding_Triger，该帧的data[2]赋值0xAA 表明该帧为获取绑定SN检测用帧，ARM需要返回Binding_SN_MainReport 帧，最后data[7]需赋值0xAA （表明是获取主排序设备的各CAN源地址和SN关系）
+4.Device_Can_Address_Parallel_Bind函数增加Binding_SN_MainReport 帧data[7]的判断，0x55为生产绑定帧，用于绑定上传的SN码， 0xAA为检测帧，用于和绑定的SN码比较是否为与本IOT绑定的ARM的帧
+
+2025.1.18
+1.pack_infos_summary函数整合pack_Extinfos_summary和pack_bmsinfos_summary函数，放到CanTimerout_Cb函数前，实时追踪内置外置电池包数据的更新，防止主动上报的电池包从机地址有错
+2.CanNodeOfflineCheck函数中电池包掉线逻辑变更，需要等到掉线时间到了判断掉线了，Inv_can[node].pack_data[i].online才能置0
+3.single_pack_information函数屏蔽使用
+4.并机排序功能更新，当同一逆变器内部ARM和IOT CAN源地址排序错位时主动下发查询，获取当前源地址
+5.调试21000段并机上传功能，a.修改21000段寄存器dchub上传无数据问题 b。并机电池包不页面无法进入原因为，并机进入时app不会主动下发命令，当前通过插拔电池包触发主动上报后可以进入电池包信息页面
+6.调试21000段云端上传功能，当前如果只根据节点设备变化发送21000段信息，会存在APP上节点信息刷新慢或不刷新问题，需要持续上传21000段信息才能正常刷新，且如果电池包在线数超过9个，电池包信息页面会不停刷第10个电池包
+
+2025.1.22
+1.基于最新的21000段寄存器上报方案，每个逆变器的PV信息放入自己从机地址对应的1200段寄存器中，APP根据从机来获取目标PV信息。data_sum_inv_pv函数修改，仅用来检查PV数量是否正确
+
+2025.02.05
+1.增加 pack_procte_convert(const pack_base_struct* packbase)函数，用于实现单电池包的保护状态的转换和上报。
+
+2025.02.06
+1.https_ota_state_to_host(image_info->recordId, HTTPS_OTA_SUCCESS, ""); 调用取消if (where == 2)判断条件
+
+2025.02.11
+1.pv_detail_struct结构体删除3个uint16_t变量 revd【3】,不然会导致获取到的CAN数据出现了偏移，使INV_CAN记忆的PV数据都是错误的
+
+2025.02.12
+1.增加inv_achub_fault_check函数和Inv_AcHub变量，用于单独记录ACHUB的报警数据
+
+2025.02.13
+1.Time_ARM_to_IOT函数增加app_sntp_set_timezone(SetData.dev_info_t.SetTimeZone.hour, SetData.dev_info_t.SetTimeZone.min);的调用，设置为上电时先设置之前存储记忆的时区，保证ARM的本地时间和SNTP服务器的UTC时间戳转换的本地时间一致
+
+
+2025.02.18
+1.CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中，当change_flag不为0时，执行蓝牙名切换，同时增加wifi数据的重新初始化（基于change_flag的值），并重新登录MQTT
+//============================
+		if(change_flag==1)
+		{
+			// ACHUB不在线则走单机，一代IOT登录逻辑
+			ESP_LOGI(TAG, "ACHUB offline, use single mode");
+			ESP_LOGI(TAG, "HUANGJI AAA type:%s -%llu -%llu",iot_factory.iot_type,  iot_factory.iot_sn, iot_factory.safe_code);
+			iot_wifi_new_iot(iot_factory.iot_type, iot_factory.iot_sn, iot_factory.safe_code);
+			// iot_wifi_new_dev(iot_factory.iot_type,  iot_factory.iot_sn); // mqtt主题使用iot的类型与sn,不再使用底层设备的类型和sn //testwx		
+			iot_wifi_new_dev(SetData.dev_info_t.INV_dev_type,  SetData.dev_info_t.INV_dev_sn);
+		}
+		else if(change_flag==2)
+		{
+			// ACHUB在线则走并机，二代IOT登录逻辑
+			ESP_LOGI(TAG, "ACHUB online, use parallel mode");
+			ESP_LOGI(TAG, "HUANGJI AAA type:%s -%llu -%llu",SetData.dev_info_t.Parallel_dev_type,  SetData.dev_info_t.Parallel_dev_sn, SetData.dev_info_t.Parallel_dev_safetycode);
+			iot_wifi_new_iot(SetData.dev_info_t.Parallel_dev_type, SetData.dev_info_t.Parallel_dev_sn, SetData.dev_info_t.Parallel_dev_safetycode);		
+			iot_wifi_new_dev(SetData.dev_info_t.Parallel_dev_type,  SetData.dev_info_t.Parallel_dev_sn);
+		}
+
+		iot_bind_clean();
+		iot_mqtt_delete(NETIF_TYPE_WIFI_STA); /* 删除MQTT */
+		//iot_mqtt2_delete(NETIF_TYPE_WIFI_STA);
+		iot_mqtt_start(NETIF_TYPE_WIFI_STA);
+
+//============================
+
+
+2025.02.19
+1.修改Dchub空载，接入AP300后功率电压值显示错误的问题 原因：下面的复制处理中，Inv_can[num].dc_hub_data[numpack].dc_hub_info后面没有加成员input_current 导致复制的起点错了，直接从dc_hub_type成员开始复制
+memcpy((uint8_t *)&Inv[num*DC_HUB_MAX_NUM +numpack].mod_reg15700_Dc_Hub_info + offsetof(MOD_STRUCT_reg15700,input_current), (uint8_t *)&Inv_can[num].dc_hub_data[numpack].dc_hub_info.input_current,(offsetof(dc_hub_info_struct,rw_cmd) - offsetof(dc_hub_info_struct,input_current)));// 15712~15749
+2.修改dchub接入从机后DC开关在并机页面切换到从机界面后，无dc开关显示问题
+
+
+2025.02.20
+reals.fast_to_Can_poll_index变量改为reals.fast_to_Can_poll_index[2]，支持同时设置对can协议中两个区消息的读取。
+
+2025.02.25
+1.增加CanInvSnCheck函数，用于判断是否有在线逆变器设备未获取到SN码
+2.iot_sync_host_time函数修改逻辑：sock_fd和iot_type、iot_sn分开判断，sock_fd《0 直接return 0;  iot_type、iot_sn为空则 close(sock_fd);shutdown(sock_fd,SHUT_RDWR); 再return 0；
+
+
+2025.02.26
+调试并机工况
+1.设备进入并机
+A.
+前置条件：首次作为从机进入
+
+问题：设备接入，CanListenBus函数接收到了achub的CAN报文， 但并没有获取到achub的SN码，直接调用iot_wifi_new_iot和iot_wifi_new_dev设置了空的login_info结构，刚好使得单机设备重新登录MQTT服务器，后续iot_cfg_check函数种检测到reals.Addr_can_master为0，会停止WiFi连接，使得单机不再做联网和登录mqtt操作，从机不会主动轮询设备信息，不会获取到achub的SN码。该方式存在问题，从机接收到0xef（achub）的广播报文，会覆盖自己的login_info，但又不会重新登录，等到变为单机时，不会再初始化自己的login_info参数，导致登录失败
+
+修改后逻辑：设备接入，在iot_cfg_check函数中断开wifi连接，通过esp_wifi_scan_start函数搜索主机WiFi做连接，但不会主动登录MQTT服务器，且在BLE_ON_OFF_check函数中判断自身为从机执行iot_ble_stop关闭蓝牙，不会在CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中更改自身蓝牙名，也不会更改MQTT登录参数。防止之后变为主机或单机时造成干扰，同时由于reals.wifi_mesh_root已置0，即使再连接wifi也不会触发mqtt登录流程。
+
+B.
+前置条件：主机变为从机，有更高优先级的设备接入，变为从机。
+修改后逻辑：reals.Addr_can_master置1，在BLE_ON_OFF_check函数中执行iot_ble_stop关闭蓝牙连接，在iot_cfg_check函数中断开WiFi连接退出mqtt服务器并扫描其他主机设备的WiFi，此时不会清除自己记忆的Parallel_dev_type和Parallel_dev_sn，同时由于reals.wifi_mesh_root已置0，即使再连接wifi也不会触发mqtt登录流程。
+
+C.
+前置条件：首次作为主机接入。
+问题：设备在CanListenBus函数中会触发一次mqtt登录参数初始化，此时会为空值，但在CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中会重新触发Parallel_dev_type和Parallel_dev_sn参数赋值，所以刚好规避了问题
+修改：作为主机接入，首先在CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中切换蓝牙名，reals.mqttChange_flag置2，后续在iot_mqtt_update函数中根据reals.mqttChange_flag值设置IOTSN码为mqtt登录参数重新登录，不需要在iot_cfg_check函数中重新设置WiFi参数
+
+D.
+前置条件：从机变为主机 
+a.
+前置条件：已经并机的工况，从机接入, 此时不会记忆achub的SN码。
+修改后逻辑：当主机脱离，从机变为主机，iot_cfg_check函数中reals.wifi_mesh_root置1，执行iot_wifi_new_ap进行wifi_config赋值，后续开始主动查询achub的0x42区信息获取achub sn码，在CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中切换蓝牙广播名，reals.mqttChange_flag做赋值处理，在iot_mqtt_update函数中根据reals.mqttChange_flag值判断设置IOT SN码还是HA1 SN码作为MQTT登录参数。
+
+b.
+前置条件：从机之前作为主机存在过。
+修改后逻辑：设备已经记忆过achub的SN码，且一直连接achub，记录的achub SN码不会清零，此时再变回为主机，在iot_cfg_check函数中，设置WiFi参数，连接路由器WiFi， 在BLE_ON_OFF_check函数中执行iot_ble_start打开蓝牙广播，之后在iot_wifi_task函数中。判断reals.wifi_eventgroup & WIFI_STA_CONNECTED_AP/* wifi 连接网络 */为真，执行iot_mqtt_start函数进行mqtt登录
+
+
+2.设备变为单机
+A.从机变为单机
+a.
+前置条件：从机已记忆achub的SN码
+问题：脱离并机后，会触发CAN_DEV_INV_ACHUB_SN_Get_to_Save函数，清除achubSN码，广播AP300蓝牙名，同时会调用iot_wifi_new_iot和iot_wifi_new_dev设置IOT_SN码，但还未在iot_cfg_check函数中基于reals.Addr_can_master为1进行iot_wifi_new_ap调用以及reals.wifi_mesh_root的重新置1操作，导致login_step在设置为STEP_MQTT_RESTART后又变为STEP_MQTT_EXIT，导致登录流程中断
+修改后逻辑：
+
+b.
+前置条件：从机未记忆achub的SN码
+脱离并机后，不会触发CAN_DEV_INV_ACHUB_SN_Get_to_Save函数，不会覆盖MQTT的登录参数，会等待转为主机并连接WiFi后重新开始登录MQTT服务器。
+
+
+B。主机变为单机
+修改后逻辑：主机脱离并机，首先在CAN_DEV_INV_ACHUB_SN_Get_to_Save函数中清除achubSN码，切换AP300蓝牙名进行广播，reals.mqttChange_flag置1，后续在iot_mqtt_update函数中根据reals.mqttChange_flag值设置IOTSN码为mqtt登录参数，不需要在iot_cfg_check函数中重新设置WiFi参数
+
+2025.05.07
+1.增加d400s_infos_summary函数用于支持D400S设备的数据汇总处理，支持该类设备同类型数据的从机地址存储。
+2.Modbus_21000_3_Net_Point_Frame函数增加D400S设备的升级进度上报
+
+2025.05.21
+1.CanVerifyCmd函数增加 if(READ_DATA_CMD==RxcanId.bit.funcode)的判断，处理逻辑：IOT从机接收到主机IOT的读取指令，在CanLookupTypePosition函数中提取自身设备源地址对应的IOT信息做应答
+2.iot_node_struct结构体在iot_can_11000变量前增加setdata_valid变量成员
+
+2025.07.15
+1.增加D400S的长短线设置功能
+2.协议更新电网角度寄存器获取，增加208V电网输入下的电网总功率换算处理
