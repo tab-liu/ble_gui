@@ -1,0 +1,163 @@
+//! 蓝牙 UI 状态（主线程读取，worker 写入）。
+
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone, Debug)]
+pub struct BleScanEntry {
+    pub name: String,
+    pub address: String,
+    /// 当前信号强度，随广播实时更新。
+    pub rssi: i32,
+    /// 首次发现时的信号强度，用于稳定排序。
+    pub initial_rssi: i32,
+    /// 广播中包含 FF00 服务，判定为目标 BLUETTI 设备。
+    pub is_target: bool,
+}
+
+impl BleScanEntry {
+    pub fn rssi_text(&self) -> String {
+        format!("{} dBm", self.rssi)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkPhase {
+    Idle,
+    Scanning,
+    Connecting,
+    GattReady,
+    Handshake,
+    Encrypted,
+}
+
+#[derive(Clone, Debug)]
+pub struct BleSnapshot {
+    pub connected: bool,
+    pub scanning: bool,
+    pub connecting: bool,
+    pub status_text: String,
+    pub device_name: String,
+    pub rssi_text: String,
+    pub action_text: String,
+    pub scan_devices: Vec<BleScanEntry>,
+    pub scan_list_generation: u64,
+    pub link_phase: LinkPhase,
+    pub status_detail: String,
+}
+
+pub struct BleInner {
+    pub phase: LinkPhase,
+    pub device_name: String,
+    pub device_address: String,
+    pub rssi: i32,
+    pub scan_devices: Vec<BleScanEntry>,
+    pub scan_list_generation: u64,
+    pub status_detail: String,
+    pub encryption_ready: bool,
+}
+
+impl Default for BleInner {
+    fn default() -> Self {
+        Self {
+            phase: LinkPhase::Idle,
+            device_name: String::new(),
+            device_address: String::new(),
+            rssi: 0,
+            scan_devices: Vec::new(),
+            scan_list_generation: 0,
+            status_detail: String::new(),
+            encryption_ready: false,
+        }
+    }
+}
+
+impl BleInner {
+    pub fn upsert_advertisement(&mut self, name: &str, address: &str, rssi: i32, is_target: bool) {
+        if !is_target {
+            return;
+        }
+        let name = name.trim();
+        if let Some(existing) = self
+            .scan_devices
+            .iter_mut()
+            .find(|d| d.address == address)
+        {
+            existing.rssi = rssi;
+            if is_target {
+                existing.is_target = true;
+            }
+            if !name.is_empty() && existing.name != name {
+                existing.name = name.to_string();
+                self.scan_list_generation += 1;
+            }
+        } else {
+            let display_name = if !name.is_empty() {
+                name.to_string()
+            } else {
+                placeholder_name(address)
+            };
+            self.scan_devices.push(BleScanEntry {
+                name: display_name,
+                address: address.to_string(),
+                rssi,
+                initial_rssi: rssi,
+                is_target,
+            });
+            self.scan_list_generation += 1;
+        }
+    }
+
+    pub fn snapshot(&self) -> BleSnapshot {
+        let scanning = self.phase == LinkPhase::Scanning;
+        let connecting = self.phase == LinkPhase::Connecting;
+        let connected = matches!(
+            self.phase,
+            LinkPhase::GattReady | LinkPhase::Handshake | LinkPhase::Encrypted
+        );
+
+        let status_text = match self.phase {
+            LinkPhase::Idle if connected => "已连接".into(),
+            LinkPhase::Idle if self.status_detail.starts_with("连接失败") => {
+                self.status_detail.clone()
+            }
+            LinkPhase::Idle => "未连接".into(),
+            LinkPhase::Scanning => "扫描中".into(),
+            LinkPhase::Connecting => "连接中".into(),
+            LinkPhase::GattReady => "已连接".into(),
+            LinkPhase::Handshake => "鉴权中".into(),
+            LinkPhase::Encrypted => "已连接（加密）".into(),
+        };
+
+        BleSnapshot {
+            connected,
+            scanning,
+            connecting,
+            status_text,
+            device_name: self.device_name.clone(),
+            rssi_text: if connected {
+                format!("{} dBm", self.rssi)
+            } else {
+                String::new()
+            },
+            action_text: if connected {
+                "断开".into()
+            } else if connecting {
+                "连接中".into()
+            } else if scanning {
+                "结束扫描".into()
+            } else {
+                "扫描设备".into()
+            },
+            scan_devices: self.scan_devices.clone(),
+            scan_list_generation: self.scan_list_generation,
+            link_phase: self.phase.clone(),
+            status_detail: self.status_detail.clone(),
+        }
+    }
+}
+
+pub type SharedBleState = Arc<Mutex<BleInner>>;
+
+fn placeholder_name(address: &str) -> String {
+    format!("BLUETTI ({address})")
+}

@@ -39,6 +39,9 @@ export component MainWindow inherits Window {
     in-out property <[BleScanDevice]> scan-devices;
     in-out property <int> scan-device-total;
     in-out property <bool> scanning;
+    in-out property <bool> ble-connecting;
+    in-out property <string> scan-empty-message: "";
+    in-out property <string> selected-scan-address: "";
     in-out property <string> ble-scan-filter: "";
     in-out property <bool> ble-scan-rssi-filter-enabled: false;
     in-out property <string> ble-scan-rssi-min: "-70";
@@ -71,7 +74,8 @@ export component MainWindow inherits Window {
 
     callback navigate(int);
     callback ble-action-clicked();
-    callback connect-device(string);
+    callback select-scan-device(string);
+    callback connect-selected-clicked();
     callback ble-scan-filters-changed();
     callback add-modbus-tab-request();
     callback remove-modbus-tab(int);
@@ -109,6 +113,8 @@ export component MainWindow inherits Window {
 
         BleStatusBar {
             connected: root.device-connected;
+            scanning: root.scanning;
+            connecting: root.ble-connecting;
             status-text: root.ble-status-text;
             device-name: root.ble-device-name;
             rssi-text: root.ble-rssi-text;
@@ -146,16 +152,21 @@ export component MainWindow inherits Window {
 
                         if root.current-page == 0: DashboardPage {
                             device-connected: root.device-connected;
-                            scanning: root.scanning;
+                            ble-connecting: root.ble-connecting;
                             scan-devices: root.scan-devices;
                             scan-device-total: root.scan-device-total;
+                            scan-empty-message: root.scan-empty-message;
+                            selected-scan-address <=> root.selected-scan-address;
                             scan-filter <=> root.ble-scan-filter;
                             scan-rssi-filter-enabled <=> root.ble-scan-rssi-filter-enabled;
                             scan-rssi-min <=> root.ble-scan-rssi-min;
                             metrics: root.metrics;
                             dashboard-summary: root.dashboard-summary;
-                            connect-device(address) => {
-                                root.connect-device(address);
+                            select-scan-device(address) => {
+                                root.select-scan-device(address);
+                            }
+                            connect-selected-clicked => {
+                                root.connect-selected-clicked();
                             }
                             scan-filters-changed => {
                                 root.ble-scan-filters-changed();

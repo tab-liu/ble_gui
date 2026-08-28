@@ -28,23 +28,46 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             if ui.get_current_page() == PAGE_MODBUS || ui.get_current_page() == PAGE_FIRMWARE {
                 ui.set_current_page(PAGE_DASHBOARD);
             }
+            refresh(&ui, &ctx_ble);
+        } else if ctx_ble.ble.is_connecting() {
+            // 连接过程中忽略顶部操作，避免重复发起扫描/连接。
+        } else if ctx_ble.ble.is_scanning() {
+            ctx_ble.ble.stop_scan();
+            refresh_ble(&ui, &ctx_ble.ble.snapshot());
         } else {
             ctx_ble.ble.start_scan();
+            ui.set_ble_scan_filter("".into());
+            ui.set_ble_scan_rssi_filter_enabled(false);
+            ui.set_selected_scan_address("".into());
             if ui.get_current_page() != PAGE_DASHBOARD {
                 ui.set_current_page(PAGE_DASHBOARD);
             }
+            refresh_ble(&ui, &ctx_ble.ble.snapshot());
         }
-        refresh_ble(&ui, &ctx_ble.ble.snapshot());
-        refresh(&ui, &ctx_ble);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_select = ctx.clone();
+    ui.on_select_scan_device(move |address| {
+        let ui = ui_weak.unwrap();
+        if ctx_select.ble.is_connecting() || ctx_select.ble.is_connected() {
+            return;
+        }
+        ui.set_selected_scan_address(address);
     });
 
     let ui_weak = ui.as_weak();
     let ctx_connect = ctx.clone();
-    ui.on_connect_device(move |address| {
+    ui.on_connect_selected_clicked(move || {
         let ui = ui_weak.unwrap();
-        if ctx_connect.ble.connect(&address.to_string()) {
-            refresh(&ui, &ctx_connect);
+        if ctx_connect.ble.is_connecting() || ctx_connect.ble.is_connected() {
+            return;
         }
+        let address = ui.get_selected_scan_address().to_string();
+        if address.is_empty() {
+            return;
+        }
+        ctx_connect.ble.connect(&address);
     });
 
     let ui_weak = ui.as_weak();

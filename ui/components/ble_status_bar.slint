@@ -4,11 +4,13 @@ import { Theme } from "../theme.slint";
 component StatusBarButton inherits Rectangle {
     in property <string> label;
     in property <bool> emphasized: false;
+    in property <bool> enabled: true;
     callback clicked();
 
     min-width: 96px;
     height: 28px;
     border-radius: 6px;
+    opacity: root.enabled ? 1 : 0.45;
     background: root.emphasized ? Theme.accent : Theme.bg-panel;
     border-width: 1px;
     border-color: root.emphasized ? Theme.accent : Theme.border;
@@ -16,8 +18,11 @@ component StatusBarButton inherits Rectangle {
     TouchArea {
         width: 100%;
         height: 100%;
+        enabled: root.enabled;
         clicked => {
-            root.clicked();
+            if (root.enabled) {
+                root.clicked();
+            }
         }
 
         Text {
@@ -32,6 +37,8 @@ component StatusBarButton inherits Rectangle {
 
 export component BleStatusBar inherits Rectangle {
     in property <bool> connected;
+    in property <bool> scanning;
+    in property <bool> connecting;
     in property <string> status-text;
     in property <string> device-name;
     in property <string> rssi-text;
@@ -84,7 +91,8 @@ export component BleStatusBar inherits Rectangle {
 
         StatusBarButton {
             label: root.action-text;
-            emphasized: !root.connected;
+            emphasized: !root.connected && !root.scanning && !root.connecting;
+            enabled: !root.connecting;
             clicked => {
                 root.action-clicked();
             }

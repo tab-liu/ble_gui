@@ -1,17 +1,31 @@
 //! 应用组装：创建 UI、注入各页面回调、运行事件循环。
 
-use slint::SharedString;
+use std::sync::Arc;
+use std::time::Duration;
 
-use slint::ComponentHandle;
+use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 
 use crate::pages;
 use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD};
 use crate::ui::MainWindow;
-use crate::ui::bindings::{self, refresh_all};
+use crate::ui::bindings::{self, refresh_all, refresh_ble};
 
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     let ctx = AppContext::new();
+
+    let ui_weak = ui.as_weak();
+    let ble_state = ctx.ble.shared_state();
+    ctx.ble.set_ui_refresh_hook(Arc::new(move || {
+        let ui_weak = ui_weak.clone();
+        let ble_state = ble_state.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = ui_weak.upgrade() {
+                let snap = ble_state.lock().expect("ble state lock").snapshot();
+                refresh_ble(&ui, &snap);
+            }
+        });
+    }));
 
     ui.set_current_page(PAGE_DASHBOARD);
     ui.set_dialog_kind(DIALOG_NONE);
@@ -21,6 +35,17 @@ pub fn run() -> Result<(), slint::PlatformError> {
     refresh_all(&ui, &ctx);
 
     pages::wire_all(&ui, &ctx);
+
+    let ui_weak = ui.as_weak();
+    let ctx_poll = ctx.clone();
+    Timer::default().start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let _ = ctx_poll.ble.drain_events();
+        if ctx_poll.ble.is_connected() {
+            if let Some(ui) = ui_weak.upgrade() {
+                refresh_all(&ui, &ctx_poll);
+            }
+        }
+    });
 
     ui.run()
 }

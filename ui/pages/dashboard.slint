@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, ScrollView, LineEdit, CheckBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView, LineEdit, CheckBox, Button } from "std-widgets.slint";
 import { DashboardMetric, BleScanDevice } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { MetricCard } from "../components/metric_card.slint";
@@ -6,15 +6,18 @@ import { ScanDeviceRow } from "../components/scan_device_row.slint";
 
 export component DashboardPage inherits VerticalBox {
     in property <bool> device-connected;
-    in property <bool> scanning;
+    in property <bool> ble-connecting;
     in property <[BleScanDevice]> scan-devices;
     in property <int> scan-device-total;
+    in property <string> scan-empty-message;
     in property <[DashboardMetric]> metrics;
     in property <[string]> dashboard-summary;
     in-out property <string> scan-filter;
     in-out property <bool> scan-rssi-filter-enabled;
     in-out property <string> scan-rssi-min;
-    callback connect-device(string);
+    in-out property <string> selected-scan-address: "";
+    callback select-scan-device(string);
+    callback connect-selected-clicked();
     callback scan-filters-changed();
 
     spacing: 16px;
@@ -34,6 +37,7 @@ export component DashboardPage inherits VerticalBox {
         LineEdit {
             text <=> root.scan-filter;
             placeholder-text: "按名称过滤（不区分大小写）";
+            enabled: !root.ble-connecting;
             edited => {
                 root.scan-filters-changed();
             }
@@ -46,6 +50,7 @@ export component DashboardPage inherits VerticalBox {
             CheckBox {
                 text: "按信号强度过滤";
                 checked <=> root.scan-rssi-filter-enabled;
+                enabled: !root.ble-connecting;
                 toggled => {
                     root.scan-filters-changed();
                 }
@@ -53,7 +58,7 @@ export component DashboardPage inherits VerticalBox {
 
             LineEdit {
                 width: 100px;
-                enabled: root.scan-rssi-filter-enabled;
+                enabled: root.scan-rssi-filter-enabled && !root.ble-connecting;
                 text <=> root.scan-rssi-min;
                 placeholder-text: "-70";
                 edited => {
@@ -69,6 +74,32 @@ export component DashboardPage inherits VerticalBox {
             }
         }
 
+        HorizontalBox {
+            spacing: 12px;
+            alignment: start;
+
+            Button {
+                text: root.ble-connecting ? "连接中…" : "连接所选设备";
+                primary: true;
+                min-width: 120px;
+                enabled: !root.ble-connecting && root.selected-scan-address != "";
+                clicked => {
+                    root.connect-selected-clicked();
+                }
+            }
+
+            Text {
+                text: root.ble-connecting
+                    ? "正在连接，请稍候…"
+                    : (root.selected-scan-address != ""
+                        ? ("已选: " + root.selected-scan-address)
+                        : "在列表中点击选择要连接的设备");
+                color: Theme.text-secondary;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
         ScrollView {
             vertical-stretch: 1;
 
@@ -79,17 +110,17 @@ export component DashboardPage inherits VerticalBox {
                     name: dev.name;
                     address: dev.address;
                     rssi: dev.rssi;
-                    connect-clicked => {
-                        root.connect-device(dev.address);
+                    selected: dev.address == root.selected-scan-address;
+                    enabled: !root.ble-connecting;
+                    clicked => {
+                        root.select-scan-device(dev.address);
                     }
                 }
 
-                if root.scan-devices.length == 0: Rectangle {
+                if root.scan-device-total == 0: Rectangle {
                     height: 120px;
                     Text {
-                        text: root.scan-device-total == 0
-                            ? "暂无设备，请点击顶部扫描"
-                            : "无符合当前过滤条件的设备";
+                        text: root.scan-empty-message;
                         color: Theme.text-dim;
                         font-size: 13px;
                         horizontal-alignment: center;
