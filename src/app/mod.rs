@@ -49,7 +49,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     set_app_page(&ui, &ctx, PAGE_DASHBOARD);
     ui.set_dialog_kind(DIALOG_NONE);
-    ui.set_active_modbus_tab(0);
+    ui.set_active_modbus_tab(ctx.initial_modbus_tab);
     ctx.bind_modbus_tabs(&ui);
     ctx.theme.apply(&ui);
     refresh_all(&ui, &ctx);

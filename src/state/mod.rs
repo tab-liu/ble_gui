@@ -9,6 +9,7 @@ use crate::pages::modbus_query::ModbusQueryState;
 use crate::services::ble::BleService;
 use crate::services::firmware::FirmwareService;
 use crate::services::modbus::ModbusService;
+use crate::services::modbus_query_store;
 use crate::services::theme::ThemeService;
 use crate::ui::MainWindow;
 
@@ -32,6 +33,8 @@ pub struct AppContext {
     pub modbus: ModbusService,
     pub firmware: FirmwareService,
     pub theme: ThemeService,
+    /// 启动时恢复的 Modbus 标签页索引（来自持久化配置）。
+    pub initial_modbus_tab: i32,
 }
 
 impl AppContext {
@@ -40,16 +43,27 @@ impl AppContext {
         let modbus_live = modbus.shared_live();
         let query_live = modbus.shared_query_live();
         let query_generation = modbus.shared_query_poll_generation();
+
+        let (tabs, initial_modbus_tab) = match modbus_query_store::load() {
+            Some(loaded) => (loaded.tabs, loaded.active_tab),
+            None => (
+                Rc::new(VecModel::from(vec![ModbusQueryState::default_tab(
+                    "默认分组",
+                    false,
+                )])),
+                0,
+            ),
+        };
+
         Self {
             state: Rc::new(RefCell::new(AppState {
-                modbus_query: ModbusQueryState::new(Rc::new(VecModel::from(vec![
-                    ModbusQueryState::default_tab("默认分组", false),
-                ]))),
+                modbus_query: ModbusQueryState::new(tabs),
             })),
             ble: BleService::new(modbus_live, query_live, query_generation),
             modbus,
             firmware: FirmwareService::new(),
             theme: ThemeService::new(),
+            initial_modbus_tab,
         }
     }
 

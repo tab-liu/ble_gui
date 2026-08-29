@@ -662,6 +662,8 @@ dependencies = [
  "md-5",
  "p256",
  "rand 0.8.8",
+ "serde",
+ "serde_json",
  "sha2",
  "slint",
  "slint-build",

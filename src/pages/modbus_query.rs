@@ -8,6 +8,7 @@ use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecMode
 
 use crate::app::{close_dialog, open_dialog};
 use crate::services::ble::modbus::{parse_register_count, parse_scale, value_type_from_index};
+use crate::services::modbus_query_store;
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
 use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
@@ -304,6 +305,17 @@ fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
     }
 }
 
+fn persist_modbus_query(ctx: &AppContext, ui: &MainWindow) {
+    let tabs = ctx.state.borrow().modbus_query.tabs.clone();
+    let active_tab = ui.get_active_modbus_tab();
+    if let Err(e) = modbus_query_store::save(&tabs, active_tab) {
+        warn!(
+            target: "ble_gui::query_store",
+            "保存 Modbus 查询配置失败: {e}",
+        );
+    }
+}
+
 fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
     enrich_query_item(ModbusQueryItem {
         name: source.name.clone(),
@@ -394,6 +406,7 @@ fn update_tab_items(ctx: &AppContext, ui: &MainWindow, tab_index: usize, items: 
     sync_selection_ui(ctx, ui);
     sync_active_query_items_from_tabs(ui, &tabs);
     touch_poll_policy(ui, ctx);
+    persist_modbus_query(ctx, ui);
 }
 
 fn reorder_modbus_query(
@@ -498,6 +511,7 @@ fn copy_queries_to_tab(ctx: &AppContext, ui: &MainWindow, target_tab: usize) {
     clear_selection(ctx, ui);
     sync_query_layout(ui, ctx);
     sync_active_query_items_to_ui(ui, ctx);
+    persist_modbus_query(ctx, ui);
 }
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
@@ -603,6 +617,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         sync_query_layout(&ui, &ctx_rm);
         sync_active_tab_slave_id(&ui, &ctx_rm);
         touch_poll_policy(&ui, &ctx_rm);
+        persist_modbus_query(&ctx_rm, &ui);
     });
 
     let ui_weak = ui.as_weak();
@@ -617,6 +632,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         sync_active_tab_slave_id(&ui, &ctx_switch);
         sync_active_query_items_to_ui(&ui, &ctx_switch);
         touch_poll_policy(&ui, &ctx_switch);
+        persist_modbus_query(&ctx_switch, &ui);
     });
 
     let ui_weak = ui.as_weak();
@@ -660,6 +676,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
                 items,
             },
         );
+        persist_modbus_query(&ctx_commit, &ui);
     });
 
     let ui_weak = ui.as_weak();
@@ -694,6 +711,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             },
         );
         touch_poll_policy(&ui, &ctx_slave);
+        persist_modbus_query(&ctx_slave, &ui);
     });
 
     let ui_weak = ui.as_weak();
@@ -843,6 +861,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         sync_query_layout(&ui, &ctx_confirm);
         sync_active_tab_slave_id(&ui, &ctx_confirm);
         touch_poll_policy(&ui, &ctx_confirm);
+        persist_modbus_query(&ctx_confirm, &ui);
     });
 
     let ui_weak = ui.as_weak();
