@@ -1,0 +1,44 @@
+PROJECT_NAME           = LS_SDK_API
+
+INPUT                  = hal_driver/api/ls_hal_flash.h \
+                         hal_driver/api/ls_hal_adc.h \
+                         hal_driver/api/ls_hal_ecc.h \
+                         hal_driver/api/ls_hal_dmac.h \
+                         hal_driver/api/ls_hal_crypt.h \
+                         hal_driver/api/ls_hal_sm4.h \
+                         hal_driver/api/ls_hal_ssi.h \
+                         hal_driver/api/ls_hal_pdm.h \
+                         hal_driver/api/ls_hal_rtc.h \
+                         hal_driver/api/ls_hal_uart.h \
+                         hal_driver/api/ls_hal_spi_i2s.h \
+                         hal_driver/api/ls_hal_i2c.h \
+                         hal_driver/api/ls_hal_trng.h \
+                         hal_driver/api/ls_hal_iwdg.h \
+                         hal_driver/api/ls_hal_timer.h \
+                         hal_driver/api/ls_hal_touchkey.h \
+                         hal_driver/api/ls_hal_pis.h \
+                         hal_driver/api/ls_ll_i2c.h \
+                         hal_driver/api/ls_ll_spi.h \
+                         hal_driver/api/ls_ll_ssi.h \
+                         hal_driver/api/ls_ll_uart.h \
+                         module/ble/ls_ble.h \
+                         module/ble/ls_mesh.h \
+                         module/ble/ls_sig_mesh.h \
+                         module/ble/ls_sig_mesh_provisioner.h \
+                         module/ble/prf/prf_hid.h \
+
+GENERATE_XML           = YES
+
+XML_OUTPUT             = _build/doxyxml
+
+GENERATE_HTML          = YES
+
+HTML_OUTPUT            = _build/doxyhtml
+
+GENERATE_LATEX         = NO
+
+WARN_IF_UNDOCUMENTED   = NO
+
+OPTIMIZE_OUTPUT_FOR_C  = YES
+
+WARN_AS_ERROR          = FAIL_ON_WARNINGS

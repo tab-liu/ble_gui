@@ -1,0 +1,309 @@
+# ESP-IDF 多模块编译烧录移植指南
+
+本文档说明如何将自定义 ESP-IDF 命令系统移植到其他项目，支持 N8R2 (2MB PSRAM) 和 N8R8 (8MB PSRAM) 两种模块的独立编译和烧录。
+
+## 文件结构
+
+```
+项目根目录/
+├── .vscode/
+│   └── tasks.json              # VS Code 任务配置
+├── self-idf-cmd/
+│   ├── config.bat              # 配置文件
+│   ├── build.bat               # 通用编译脚本
+│   ├── flash.bat               # 通用烧录脚本
+│   └── 移植文档说明.txt         # 本文档
+├── sdkconfig                   # 当前生效配置
+├── sdkconfig_esp32s3_n8r2     # N8R2完整配置
+├── sdkconfig_esp32s3_n8r8     # N8R8完整配置
+└── build/                     # 构建输出目录
+    ├── esp32s3_n8r2/          # N8R2构建目录
+    └── esp32s3_n8r8/          # N8R8构建目录
+```
+
+## 1. 配置文件 (config.bat)
+
+```batch
+@echo off
+:: 项目配置
+set PROJECT_DIR=<项目根目录>
+set IDF_PATH=<ESP-IDF 安装路径>
+set DEFAULT_PORT=COM3
+```
+
+| 参数 | 说明 | 示例 |
+|------|------|------|
+| PROJECT_DIR | 项目根目录 | D:\dlmh\ESP32S3_IOT\IoT_Module_Project_ESP32S3 |
+| IDF_PATH | ESP-IDF 安装路径 | D:\Espressif\frameworks\esp-idf-v5.5.3 |
+| DEFAULT_PORT | 默认串口 | COM3 |
+
+## 2. 编译脚本 (build.bat)
+
+```batch
+@echo off
+:: 加载配置
+call "%~dp0config.bat"
+
+:: 初始化ESP-IDF
+cd /d %PROJECT_DIR%
+call %IDF_PATH%\export.bat
+
+:: 参数覆盖
+set MODEL=%1
+
+:: 构建目录映射
+if "%MODEL%"=="" (
+    idf.py build
+    exit /b 1
+) 
+
+set BUILD_DIR=build/%MODEL%
+echo Cmd: idf.py -B %BUILD_DIR% -D SDKCONFIG=./sdkconfig_%MODEL% build
+idf.py -B %BUILD_DIR% -D SDKCONFIG=./sdkconfig_%MODEL% build
+```
+
+**参数说明**:
+- %1: 模块类型 (esp32s3_n8r2 / esp32s3_n8r8 / 空)
+
+**调用逻辑**:
+| 参数 | 构建命令 | 构建目录 |
+|------|----------|----------|
+| (空) | `idf.py build` (默认) | build |
+| esp32s3_n8r2 | `idf.py -B build\esp32s3_n8r2 ...` | build\esp32s3_n8r2 |
+| esp32s3_n8r8 | `idf.py -B build\esp32s3_n8r8 ...` | build\esp32s3_n8r8 |
+
+## 3. 烧录脚本 (flash.bat)
+
+```batch
+@echo off
+:: 加载配置
+call "%~dp0config.bat"
+
+:: 初始化ESP-IDF
+cd /d %PROJECT_DIR%
+call %IDF_PATH%\export.bat
+
+:: 参数覆盖
+set MODEL=%1
+set PORT=%2
+if "%PORT%"=="" set PORT=%DEFAULT_PORT%
+
+:: 构建目录映射
+if "%MODEL%"=="" (
+    set BUILD_DIR=build
+) else (
+    set BUILD_DIR=build\%MODEL%
+)
+
+:: 烧录
+cd %PROJECT_DIR%\%BUILD_DIR%
+if errorlevel 1 (
+    echo 错误：无法切换到构建目录 %PROJECT_DIR%\%BUILD_DIR%
+    exit /b 1
+)
+python -m esptool --chip esp32s3 -p %PORT% -b 460800 --before default_reset --after hard_reset write_flash "@flash_args"
+```
+
+**参数说明**:
+- %1: 模块类型 (esp32s3_n8r2 / esp32s3_n8r8 / 空)
+- %2: 串口 (可选，默认 DEFAULT_PORT)
+
+**调用逻辑**:
+| 参数1 | 参数2 | 构建目录 | 串口 |
+|-------|-------|----------|------|
+| (空) | (空) | build | DEFAULT_PORT |
+| (空) | COM3 | build | COM3 |
+| esp32s3_n8r2 | (空) | build\esp32s3_n8r2 | DEFAULT_PORT |
+| esp32s3_n8r2 | COM5 | build\esp32s3_n8r2 | COM5 |
+| esp32s3_n8r8 | (空) | build\esp32s3_n8r8 | DEFAULT_PORT |
+| esp32s3_n8r8 | COM7 | build\esp32s3_n8r8 | COM7 |
+
+## 4. VS Code 任务配置 (tasks.json)
+
+```json
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "⚡ Flash (通用)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\flash.bat "" ${config:idf.portWin}",
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "🔨 Build (通用)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\build.bat """,
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "⚡ Flash esp32s3_n8r2",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\flash.bat esp32s3_n8r2 ${config:idf.portWin}",
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "🔨 Build esp32s3_n8r2",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\build.bat esp32s3_n8r2",
+            "problemMatcher": ["$esp-idf"]
+        }
+    ]
+}
+```
+
+**任务说明**:
+
+| 任务 | 功能 | 构建目录 | 参数 |
+|------|------|----------|------|
+| ⚡ Flash esp32s3_n8r2 | 烧录N8R2 | build\esp32s3_n8r2 | MODEL=esp32s3_n8r2, PORT=配置值 |
+| ⚡ Flash esp32s3_n8r8 | 烧录N8R8 | build\esp32s3_n8r8 | MODEL=esp32s3_n8r8, PORT=配置值 |
+| ⚡ Flash (通用) | 烧录默认 | build | MODEL=空, PORT=配置值 |
+| 🔨 Build esp32s3_n8r2 | 编译N8R2 | build\esp32s3_n8r2 | MODEL=esp32s3_n8r2 |
+| 🔨 Build esp32s3_n8r8 | 编译N8R8 | build\esp32s3_n8r8 | MODEL=esp32s3_n8r8 |
+| 🔨 Build (通用) | 编译默认 | build | MODEL=空 |
+
+**变量说明**:
+
+| 变量 | 说明 |
+|------|------|
+| ${workspaceFolder} | VS Code 工作区根目录 |
+| ${config:idf.portWin} | settings.json 中的串口配置 |
+| "" | 空字符串占位符，用于区分参数位置 |
+
+## 5. 模块配置文件
+
+### 文件说明
+
+| 文件 | 说明 | 内容 |
+|------|------|------|
+| sdkconfig.esp32s3_n8r2 | N8R2完整配置 | 完整的芯片配置 (SOC_*) |
+
+### sdkconfig.esp32s3_n8r2 (完整配置示例)
+
+```
+#
+# Automatically generated file. DO NOT EDIT.
+# Espressif IoT Development Framework (ESP-IDF) 5.5.3 Project Configuration
+#
+CONFIG_SOC_ADC_SUPPORTED=y
+CONFIG_SOC_UART_SUPPORTED=y
+CONFIG_SOC_WIFI_SUPPORTED=y
+... (完整芯片配置)
+```
+
+## 6. 移植步骤
+
+### 步骤 1: 创建目录结构
+
+```
+your-project/
+├── self-idf-cmd/
+│   ├── config.bat
+│   ├── build.bat
+│   ├── flash.bat
+│   └── 移植文档说明.txt
+├── sdkconfig_esp32s3_n8r2      # N8R2完整配置
+├── sdkconfig_esp32s3_n8r8      # N8R8完整配置
+└── .vscode/
+    └── tasks.json
+```
+
+### 步骤 2: 修改 config.bat
+
+修改以下配置:
+
+```batch
+set PROJECT_DIR=<你的项目路径>
+set IDF_PATH=<你的 ESP-IDF 路径>
+set DEFAULT_PORT=<默认串口>
+```
+
+### 步骤 3: 准备 sdkconfig 文件
+
+| 文件 | 作用 | 必需 |
+|------|------|------|
+| sdkconfig_esp32s3_n8r2 | 完整芯片配置 (N8R2) | ✅ |
+| sdkconfig_esp32s3_n8r8 | 完整芯片配置 (N8R8) | ✅ |
+
+**配置说明**:
+- esp32s3_n8r2: `CONFIG_SPIRAM_MODE_QUAD=y` (Quad SPI)
+- esp32s3_n8r8: `CONFIG_SPIRAM_MODE_OCT=y` (Octal SPI)
+
+### 步骤 4: 创建构建目录
+
+首次编译前确保构建目录存在:
+
+```bash
+mkdir build\esp32s3_n8r2
+mkdir build\esp32s3_n8r8
+```
+
+### 步骤 5: 配置 VS Code
+
+在 settings.json 中设置串口:
+
+```json
+{
+    "idf.portWin": "COM3"
+}
+```
+
+## 7. 使用方法
+
+### 通过 VS Code
+
+1. Ctrl + P → 输入 task  → 选择任务
+2. 或使用快捷键 Ctrl + Shift + B
+
+### 通过命令行
+
+```bash
+# 编译 N8R2
+self-idf-cmd\build.bat esp32s3_n8r2
+
+# 烧录 N8R2
+self-idf-cmd\flash.bat esp32s3_n8r2 COM3
+```
+
+## 8. 注意事项
+
+1. PSRAM 模式匹配: 确保模块配置与硬件匹配
+   - N8R2 → Quad SPI (sdkconfig.esp32s3_n8r2)
+   - N8R8 → Octal SPI (sdkconfig.esp32s3_n8r2)
+
+2. 串口权限: 确保串口未被其他程序占用
+
+3. ESP-IDF 环境: 确保 ESP-IDF 已正确安装
+
+4. 驱动安装: 确保 CH340/CH341 驱动已安装
+
+## 9. 故障排除
+
+| 错误 | 解决方案 |
+|------|----------|
+| idf.py 找不到 | 确保已调用 export.bat 初始化环境 |
+| esptool 错误 | 检查 Python 环境是否正确配置 |
+| 串口占用 | 关闭其他串口调试工具 |
+| 编译失败 | 检查 sdkconfig 配置是否正确 |
+
+## 10. 文件清单
+
+| 文件 | 说明 | 必需 |
+|------|------|------|
+| self-idf-cmd\config.bat | 路径和串口配置 | ✅ |
+| self-idf-cmd\build.bat | 通用编译脚本 | ✅ |
+| self-idf-cmd\flash.bat | 通用烧录脚本 | ✅ |
+| self-idf-cmd\移植文档说明.txt | 本文档 | 可选 |
+| .vscode\tasks.json | VS Code 任务定义 | ✅ |
+| sdkconfig_esp32s3_n8r2 | N8R2完整配置 | ✅ |
+
+## 11. 常见问题
+
+### Q1: 如何添加新的模块类型?
+修改 tasks.json，添加新的模块任务。
+
+### Q4: 构建失败怎么办?
+1. 检查 sdkconfig 文件是否存在
+2. 确认 ESP-IDF 环境已正确初始化
+3. 查看 build 目录下的编译日志

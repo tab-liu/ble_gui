@@ -1,0 +1,5 @@
+1.指定编译为N8R8版本
+idf.py -B build/n8r8 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.n8r8" -D SDKCONFIG=./build/n8r8/sdkconfig build
+
+2.指定编译为N8R2版本
+idf.py -B build/n8r2 -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.n8r2" -D SDKCONFIG=./build/n8r2/sdkconfig build

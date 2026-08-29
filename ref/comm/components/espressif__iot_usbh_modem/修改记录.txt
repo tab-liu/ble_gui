@@ -1,0 +1,47 @@
+本文档内记录对于本官方库文档的私人自定义修改，便于后续维护及版本替换。
+
+基于“espressif/iot_usbh_modem: ^1.2.0”二次开发
+
+/* ================================================================ */
+
+usbh_modem_board.c
+
+修改内容：
+1. _修改位置：modem_daemon_task
+修改点：modem_board_force_reset调用位置增加了MODEM_POWER_GPIO的非零判断，修改后符合SDK描述【Modem reset control gpio, set 0 if not use】
+2.  修改位置：my_recov
+修改点：对于power_up、power_down、reset的调用增加了MODEM_GPIO的非零判断，修改后符合SDK描述【Modem control gpio, set 0 if not use】
+3.  修改位置：_modem_daemon_task
+修改点：retry from start执行前，检查状态再决定是否重试
+4.  修改位置： modem_board_get_sim_cart_state
+修改点：禁用esp_modem_dce_set_pin逻辑
+修改点：return esp_modem_dce_read_pin(s_dce, NULL, &if_ready)处的“&if_ready”应改为“if_ready”【功能错误】
+5.  修改位置： 新增modem_info_t结构体
+修改点：增加本地信息，以供读取
+6.  修改位置： 新增STAGE_DEV_INIT、STAGE_DEV_ID_GET状态及其相关函数
+修改点：用以执行4G模块初始化及其唯一标识获取流程
+7. 修改位置：新增函数modem_board_get_imsi_number，modem_board_get_iccid_number，modem_board_get_operator_state，_check_imei_number，_check_imsi_iccid_number，__check_dev_config
+8. 修改位置：新增函数modem_board_send_at_cmd
+修改点：实现通用AT指令下发/参数获取
+9. 修改位置：新增函数modem_board_periodic_poll
+修改点：实现PPP模式下借用辅助AT端口刷新信号强度、GPS数据等信息；
+10.修改位置：新增函数modem_board_apn_init
+修改点：实现外部初始化APN
+
+/* ================================================================ */
+
+esp_modem_dce_common_commands.c
+
+1. _修改位置：新增函数esp_modem_dce_get_iccid_number
+修改点：用以实现获取SIM卡识别号码
+2.  修改位置： 新增函数esp_modem_dce_common_send_at_cmd
+修改点：实现通用AT指令下发/参数获取
+
+/* ================================================================ */
+
+esp_modem_usb_dte.c
+
+1. _修改位置：esp_modem_dte_new
+修改点：cdc_driver_config结构体内skip_init_usb_host_driver由false改为true，usb_host_driver改到外部
+
+/* ================================================================ */

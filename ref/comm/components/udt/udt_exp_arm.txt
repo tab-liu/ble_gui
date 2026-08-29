@@ -1,0 +1,238 @@
+/**
+ * 历史数据传输模块示例: 本示例为ARM节点功能
+ *
+ * 示例通信包括三个节点IOT、ARM、PACK,其通信架构如下所示:
+ *		┌───────┐
+ *	IOT	│  485  │
+ *		└───┬───┘
+ *			│
+ *		┌───┴───┐
+ *		│  485  │
+ *	ARM	│       │
+ *		│  CAN  │
+ *		└───┬───┘
+ *			│
+ *		┌───┴───┐
+ *	PACK│  CAN  │
+ *		└───────┘
+ *
+ * IOT通过485与ARM通信,ARM通过CAN与PACK通信,IOT节点地址0,ARM节点地址1,PACK节点地址41
+ * 对IOT来说,其上级设备是云服务器或PC端,下级设备是ARM
+ * 对ARM来说,其上级设备是IOT或PC端,下级设备是PACK
+ * 对PACK来说,其上级设备是ARM或PC端,无下级设备
+ *
+ * UDT(通用数据传输)模块包含三个功能:
+ * 1、通用数据中继功能函数
+ * - udt_relay_to_terminal: 将下级设备上报数据转发到终端(上级设备)
+ * - udt_relay_to_device: 将终端(上级设备)下发的数据转发到下级设备
+ * 2、通用数据收发功能函数
+ * - udt_transmit: 上报本机数据到终端(上级设备)
+ * - udt_receive: 接收终端(上级设备)下发给本机的数据
+ * 3、PC端接口功能函数
+ * - udt_pc_interface: 处理与PC端的通信
+ *
+ *
+ * IOT节点功能:
+ * - 实现历史记录通用数据中继:
+ * - 接收到终端获取ARM/PACK的历史数据时,转发终端下发的指令
+ * - 接收到ARM/PACK上报的历史数据时,转发ARM/PACK上报的数据
+ *
+ * ARM节点功能:
+ * 1、实现历史记录通用数据收发,即接收终端下发的指令,根据指令将本地历史数据发送到终端
+ * 2、实现历史记录通用数据中继:
+ * - 接收到终端获取PACK的历史数据时,转发终端下发的指令
+ * - 接收到PACK上报的历史数据时,转发PACK上报的数据
+ *
+ * PACK节点功能:
+ * - 实现历史记录通用数据收发,即接收终端下发的指令,根据指令将本地历史数据发送到终端
+ * - PACK节点无中继功能
+ */
+
+#include "udt_transfer.h"
+#include "udt_port.h"
+#include <string.h>
+
+#define IOT_NODE_ADDR		0	// IOT节点地址
+#define ARM_NODE_ADDR		1 	// ARM节点地址
+#define PACK_NODE_ADDR		41 	// PACK节点地址
+
+static const char fname[] = "\0alarm\0\0\0\0,";	// 目录结构/alarm
+
+void uart_send_data(uint8_t *data, int size)
+{
+	// 串口发送
+}
+
+void get_data_from_storage(uint32_t offset, uint8_t *data, int *size)
+{
+	// 从存储器中获取数据
+}
+
+void can_send_data(uint8_t addr, uint8_t *data, int size)
+{
+	#define LOCAK_CAN_ADDR			0x10	// 本机CAN地址
+	#define PACK_CAN_BASE_ADDR		0x60	// PACK CAN基地址
+	#define MD_PACK_ADDR_START 		41		// PACK起始地址
+	#define PACK_GROUP_SIZE 		8 		// PACK分组大小
+	#define PACK_ADDR_TO_IDX(addr) 	((addr - MD_PACK_ADDR_START) % PACK_GROUP_SIZE) 	// PACK地址转索引
+	uint8_t index = PACK_ADDR_TO_IDX(addr);
+	uint8_t pack_addr = PACK_CAN_BASE_ADDR + index;	// PACK实际地址
+
+	// 通过can多字节写将数据发送到下级PACK设备
+}
+
+/**
+ * @brief 处理IOT下发的数据
+ *
+ * @param data 数据指针
+ * @param size 数大小
+ * @return 无
+ */
+void iot_data_handler(uint8_t *data, int size)
+{
+	/* 中继终端下发给下级设备的数据 */
+	if (udt_relay_to_device(data, size) == 0) return;
+
+	/* 接收终端发给本机的数据 */
+	udt_receive(data, size);
+}
+
+/**
+ * @brief 处理PACK设备上报的数据
+ *
+ * @param data 数据指针
+ * @param size 数大小
+ * @return 无
+ */
+void pack_data_handler(uint8_t *data, int size)
+{
+	/* 中继下级设备上报给终端的数据 */
+	udt_relay_to_terminal(data, size);
+}
+
+/**
+ * @brief 查询文件响应
+ *
+ * @param evt 终端事件
+ * @return 无
+ */
+static void udt_resp_query_file(udt_event_t *evt)
+{
+	udt_tx_data_t tx_data;
+	tx_data.funcode = UDT_FUNCODE_QUERY_FILE_RTN;
+	tx_data.pkg_idx = 1;
+	tx_data.pkg_total = 1;
+	tx_data.start_pos = 0;
+	tx_data.data_size = sizeof(fname) - 1;
+	tx_data.data = (uint8_t*)fname;
+	udt_transmit(&tx_data);
+}
+
+/**
+ * @brief 查询文件内容响应
+ *
+ * @param evt 终端事件
+ * @return 无
+ */
+static void udt_resp_query_content(udt_event_t *evt)
+{
+	/* 判断读取的文件名是否有效 */
+	if (memcmp(evt->param.qry_cont.fname, fname, 10) != 0) return;
+
+	uint8_t *pdata = NULL;
+	int len = 0;
+	get_data_from_storage(evt->param.qry_cont.start_pos, pdata, &len);	// 从存储器中获取历史数据
+
+	int offset = 0;
+	int total = len / UDT_ONCE_TX_MAX_SIZE;		// 计算传输的总包数
+	if (len % UDT_ONCE_TX_MAX_SIZE) {
+		total += 1;
+	}
+
+	/* 分包传输 */
+	for (int i = 0; i < total; i++)
+	{
+		udt_tx_data_t tx_data;
+		tx_data.funcode = UDT_FUNCODE_QUERY_CONTENT_RTN;	// 功能码
+		tx_data.pkg_idx = i + 1;							// 包索引
+		tx_data.pkg_total = total;							// 总包数
+		tx_data.start_pos = offset;							// 数据偏移
+		tx_data.data_size = (len > UDT_ONCE_TX_MAX_SIZE) ? (UDT_ONCE_TX_MAX_SIZE) : (len);	// 数据长度
+		tx_data.data = &pdata[offset];						// 数据
+		udt_transmit(&tx_data);								// 发送数据到终端端
+
+		offset += tx_data.data_size;						// 计算下次数据偏移
+		len -= tx_data.data_size;							// 计算剩余发送数据大小
+		// 发送完成后视情况延时(至少需要等待上级设备将数据中继完成)
+	}
+}
+
+/**
+ * @brief 事件处理
+ *
+ * @param evt 终端事件
+ * @return 无
+ */
+static void udt_evt_process(udt_event_t *evt)
+{
+	switch (evt->funcode)
+	{
+	case UDT_FUNCODE_QUERY_FILE:					// 终端查询文件
+		udt_resp_query_file(evt);
+		break;
+
+	case UDT_FUNCODE_QUERY_CONTENT:					// 终端查询文件内容
+		udt_resp_query_content(evt);
+		break;
+
+	case UDT_FUNCODE_QUERY_CONTENT_SVC_ACK:			// 终端响应本次查询事件
+		// 本次历史数据传输完成处理
+		break;
+
+	default:
+		return;
+	}
+}
+
+/**
+ * @brief 事件回调函数
+ *
+ * @param evt 终端事件
+ * @return 无
+ */
+static int udt_evt_callback(udt_event_t *evt)
+{
+	udt_evt_process(evt);
+	return 0;
+}
+
+/**
+ * @brief 通用数据协议配置
+ *
+ * @return 无
+ */
+void udt_configuration(void)
+{
+	/* 本示例中ARM节点既有收发功能,也有中继功能
+	 * 配置中继列表, 当接收到终端的指令时,如果指令中包含的地址在该
+	 * 配置的地址范围内,则调用相应的发送函数中继终端的数据
+	 * 当接收到终端发给本机的指令时,通过回调函数udt_evt_callback通知终端事件 */
+	udt_relay_t relay;
+	relay.nums = 1;
+	relay.list[0].addr1 = PACK_NODE_ADDR;
+	relay.list[0].addr2 = PACK_NODE_ADDR;
+	relay.list[0].transfer = udt_transfer_to_pack;
+
+	/* 设置传输函数 */
+	udt_transfer_t transfer;
+	transfer.to_server = udt_transfer_to_iot;		// 传输到服务端
+	transfer.to_pc = NULL;							// 传输到PC端
+	udt_init(ARM_NODE_ADDR, &transfer, &relay, udt_evt_callback);
+}
+
+int main_entry(void)
+{
+	udt_configuration();
+
+	while(1){};
+}

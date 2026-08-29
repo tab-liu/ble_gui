@@ -1,0 +1,24 @@
+本文档内记录对于本官方库文档的私人自定义修改，便于后续维护及版本替换。
+
+基于“espressif/iot_usbh_cdc: ^2.0.1”二次开发
+
+/* ================================================================ */
+
+iot_usbh_cdc.c
+
+修改内容：
+1. 修改位置：新增函数_cdc_check_user（usb_event_cb内调用）
+修改点：增加检查自定义表函数调用find_usbh_cdc_user_info，便于识别不同4G模块及同一4G模块的不同模式，分配Modem接口及SecondAT接口；
+2. 修改位置：新增函数_cdc_reset（usb_event_cb内调用）
+修改点：实现_cdc_open失败后的重置cdc结构体信息到默认值
+3. 修改位置：结构体usbh_cdc_t
+修改点：新增结构体成员const usbh_cdc_user_info_t *user_self_config，实现需求
+4. 修改位置：usbh_cdc_create函数
+修改点：_cdc_find_and_open_usb_device查找成功但打开失败后继续执行，本次初始化不报错
+5. 修改位置：_cdc_find_and_open_usb_device函数
+修改点：return ESP_OK前先执行检查_cdc_check_user
+
+/* ================================================================ */
+
+usbh_cdc_user_common.c 【新增文件】
+usbh_cdc_user_common.h 【新增文件】

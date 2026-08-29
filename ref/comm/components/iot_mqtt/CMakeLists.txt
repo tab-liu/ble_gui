@@ -1,0 +1,29 @@
+idf_component_register(
+    SRCS 
+        iot_mqtt.c 
+        mqtt_payload_tlv.c
+        open_mqtt.c
+        mqtt_log.c
+    INCLUDE_DIRS 
+        "."
+    PRIV_REQUIRES
+    REQUIRES 
+        iot_common 
+        filesystem 
+        iot_wifi 
+        parameters 
+        utilities 
+        json 
+        security 
+        iot_can 
+        json_cmd 
+        mqtt 
+        esp_rom 
+        http_client_ota 
+        iot_xmodem 
+        esp_http_client 
+        storm_warning 
+        usb_host
+        disater_simple
+        iot_cloud_sync
+)

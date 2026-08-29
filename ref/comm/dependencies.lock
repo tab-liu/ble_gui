@@ -1,0 +1,74 @@
+dependencies:
+  espressif/cmake_utilities:
+    component_hash: 
+      351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.5.3
+  espressif/iot_usbh_cdc:
+    dependencies: []
+    source:
+      path: D:\work\0-ESP32S3_COMM\components\espressif__iot_usbh_cdc
+      type: local
+    version: '*'
+  espressif/iot_usbh_modem:
+    dependencies: []
+    source:
+      path: D:\work\0-ESP32S3_COMM\components\espressif__iot_usbh_modem
+      type: local
+    version: 1.2.0
+  espressif/usb_host_hid:
+    component_hash: 
+      a6c5366f9b6d80b0d5f56d085d62941464512e0968b96c5877e76a80fcc23f13
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    - name: espressif/usb
+      registry_url: https://components.espressif.com
+      require: public
+      rules:
+      - if: idf_version >=6.0
+      - if: target not in ["linux"]
+      version: ^1.0.0
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    - esp32h4
+    - esp32s31
+    - linux
+    version: 1.2.0
+  idf:
+    source:
+      type: idf
+    version: 5.2.3
+  joltwallet/littlefs:
+    component_hash: 
+      4943c7f0932795ef722fa5d846a3bbf52467d87c01fdab054d3161853bb5f275
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.3'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.10.2
+direct_dependencies:
+- espressif/cmake_utilities
+- espressif/iot_usbh_cdc
+- espressif/iot_usbh_modem
+- espressif/usb_host_hid
+- idf
+- joltwallet/littlefs
+manifest_hash: 06f04400bb39bfb093e6509e6bc9bd9649f403d332babe6b8e3982546c9dfbfe
+target: esp32s3
+version: 2.0.0

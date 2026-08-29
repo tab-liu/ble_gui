@@ -1,0 +1,222 @@
+# depslib dependency file v1.0
+1668130121 source:d:\c_language_test\edch\main.c
+	<stdio.h>
+	<stdlib.h>
+	"micro-ecc/uECC.h"
+	"sha256.h"
+
+1668073938 source:d:\c_language_test\edch\micro-ecc\uecc.c
+	"uECC.h"
+	"uECC_vli.h"
+	"platform-specific.inc"
+	"asm_arm.inc"
+	"asm_avr.inc"
+	"curve-specific.inc"
+
+1668073930 d:\c_language_test\edch\micro-ecc\uecc.h
+	<stdint.h>
+
+1668073937 d:\c_language_test\edch\micro-ecc\uecc_vli.h
+	"uECC.h"
+	"types.h"
+
+1668073930 d:\c_language_test\edch\micro-ecc\types.h
+
+1668073930 d:\c_language_test\edch\micro-ecc\platform-specific.inc
+	"types.h"
+	<windows.h>
+	<wincrypt.h>
+	<sys/types.h>
+	<fcntl.h>
+	<unistd.h>
+	<random.h>
+	"app_error.h"
+	"nrf_crypto_rng.h"
+
+1668073937 d:\c_language_test\edch\micro-ecc\asm_arm.inc
+	"asm_arm_mult_square_umaal.inc"
+	"asm_arm_mult_square.inc"
+
+1668073938 d:\c_language_test\edch\micro-ecc\asm_arm_mult_square_umaal.inc
+
+1668073947 d:\c_language_test\edch\micro-ecc\asm_arm_mult_square.inc
+
+1668073938 d:\c_language_test\edch\micro-ecc\asm_avr.inc
+	"asm_avr_mult_square.inc"
+
+1668073937 d:\c_language_test\edch\micro-ecc\asm_avr_mult_square.inc
+
+1668073930 d:\c_language_test\edch\micro-ecc\curve-specific.inc
+
+1668078767 d:\c_language_test\edch\sha256.h
+	<stddef.h>
+	<stdint.h>
+
+1668078806 source:d:\c_language_test\edch\sha256.c
+	"sha256.h"
+	"constants.h"
+	"utils.h"
+
+1668078681 d:\c_language_test\edch\constants.h
+	<stdbool.h>
+
+1668078734 d:\c_language_test\edch\utils.h
+	<stdint.h>
+	<stddef.h>
+	<string.h>
+
+1668079475 source:d:\c_language_test\edch\utils.c
+	"utils.h"
+	"constants.h"
+	<string.h>
+
+1668415217 source:d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\main.c
+	<stdio.h>
+	<stdlib.h>
+	"micro-ecc/uECC.h"
+	"sha256.h"
+
+1668073930 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\uecc.h
+	<stdint.h>
+
+1668078767 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\sha256.h
+	<stddef.h>
+	<stdint.h>
+
+1668078806 source:d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\sha256.c
+	"sha256.h"
+	"constants.h"
+	"utils.h"
+
+1668078681 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\constants.h
+	<stdbool.h>
+
+1668078734 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\utils.h
+	<stdint.h>
+	<stddef.h>
+	<string.h>
+
+1668079475 source:d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\utils.c
+	"utils.h"
+	"constants.h"
+	<string.h>
+
+1668073938 source:d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\uecc.c
+	"uECC.h"
+	"uECC_vli.h"
+	"platform-specific.inc"
+	"asm_arm.inc"
+	"asm_avr.inc"
+	"curve-specific.inc"
+
+1668073937 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\uecc_vli.h
+	"uECC.h"
+	"types.h"
+
+1668073930 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\types.h
+
+1668073930 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\platform-specific.inc
+	"types.h"
+	<windows.h>
+	<wincrypt.h>
+	<sys/types.h>
+	<fcntl.h>
+	<unistd.h>
+	<random.h>
+	"app_error.h"
+	"nrf_crypto_rng.h"
+
+1668073937 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\asm_arm.inc
+	"asm_arm_mult_square_umaal.inc"
+	"asm_arm_mult_square.inc"
+
+1668073938 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\asm_arm_mult_square_umaal.inc
+
+1668073947 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\asm_arm_mult_square.inc
+
+1668073938 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\asm_avr.inc
+	"asm_avr_mult_square.inc"
+
+1668073937 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\asm_avr_mult_square.inc
+
+1668073930 d:\mywechat\wechat files\wxid_5i44ustepfuj22\filestorage\file\2022-11\edch\edch\micro-ecc\curve-specific.inc
+
+1669776908 source:d:\ls_sdk-release-v1.0\tools\edch\main.c
+	<stdio.h>
+	<stdlib.h>
+	"micro-ecc/uECC.h"
+	"sha256.h"
+
+1668073930 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\uecc.h
+	<stdint.h>
+
+1668078767 d:\ls_sdk-release-v1.0\tools\edch\sha256.h
+	<stddef.h>
+	<stdint.h>
+
+1668073938 source:d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\uecc.c
+	"uECC.h"
+	"uECC_vli.h"
+	"platform-specific.inc"
+	"asm_arm.inc"
+	"asm_avr.inc"
+	"curve-specific.inc"
+
+1668073937 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\uecc_vli.h
+	"uECC.h"
+	"types.h"
+
+1668073930 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\types.h
+
+1668073930 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\platform-specific.inc
+	"types.h"
+	<windows.h>
+	<wincrypt.h>
+	<sys/types.h>
+	<fcntl.h>
+	<unistd.h>
+	<random.h>
+	"app_error.h"
+	"nrf_crypto_rng.h"
+
+1668073937 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\asm_arm.inc
+	"asm_arm_mult_square_umaal.inc"
+	"asm_arm_mult_square.inc"
+
+1668073938 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\asm_arm_mult_square_umaal.inc
+
+1668073947 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\asm_arm_mult_square.inc
+
+1668073938 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\asm_avr.inc
+	"asm_avr_mult_square.inc"
+
+1668073937 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\asm_avr_mult_square.inc
+
+1668073930 d:\ls_sdk-release-v1.0\tools\edch\micro-ecc\curve-specific.inc
+
+1668078806 source:d:\ls_sdk-release-v1.0\tools\edch\sha256.c
+	"sha256.h"
+	"constants.h"
+	"utils.h"
+
+1668078681 d:\ls_sdk-release-v1.0\tools\edch\constants.h
+	<stdbool.h>
+
+1668078734 d:\ls_sdk-release-v1.0\tools\edch\utils.h
+	<stdint.h>
+	<stddef.h>
+	<string.h>
+
+1668079475 source:d:\ls_sdk-release-v1.0\tools\edch\utils.c
+	"utils.h"
+	"constants.h"
+	<string.h>
+
+1669778481 source:d:\le501x_904601_cbc\tools\edch\main.c
+
+1678066053 source:d:\le501x_904601_cbc\tools\edch\micro-ecc\uecc.c
+
+1668078806 source:d:\le501x_904601_cbc\tools\edch\sha256.c
+
+1668079475 source:d:\le501x_904601_cbc\tools\edch\utils.c
+

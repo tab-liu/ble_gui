@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "⚡ Flash (通用)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\flash.bat "" ${config:idf.portWin}",
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "🔨 Build (通用)",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\build.bat """,
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "⚡ Flash esp32s3_n8r2",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\flash.bat esp32s3_n8r2 ${config:idf.portWin}",
+            "problemMatcher": ["$esp-idf"]
+        },
+        {
+            "label": "🔨 Build esp32s3_n8r2",
+            "type": "shell",
+            "command": "${workspaceFolder}\\self-idf-cmd\\build.bat esp32s3_n8r2",
+            "problemMatcher": ["$esp-idf"]
+        }
+    ]
+}

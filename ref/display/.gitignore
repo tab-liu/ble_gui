@@ -1,0 +1,10 @@
+.sconsign.dblite
+*__pycache__/
+build/
+_build/
+*UVBuild/
+*.lst
+*.uvguix.*
+*.map
+*__info_array.c
+JLinkLog.txt

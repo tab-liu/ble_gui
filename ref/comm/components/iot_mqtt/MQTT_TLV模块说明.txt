@@ -1,0 +1,379 @@
+# MQTT TLV 协议实现说明文档
+
+## 一、概述
+
+**文件路径**: `components/iot_mqtt/mqtt_payload_tlv.c`
+
+**功能描述**: 本模块实现了 MQTT 载荷中传输 TLV（Type-Length-Value）报文格式的编码和解码功能。参考协议文档：`https://192.168.102.10/svn/TecCenter/文件中心/技术资料/德兰明海总线协议/物联网载荷协议/IoT物联网载荷协议 `
+
+**设计目标**: 
+- 提供灵活的数据传输格式
+- 支持多种数据类型（整数、浮点、字符串等）
+- 确保数据传输的完整性和安全性（CRC校验）
+
+---
+
+## 二、TLV 协议格式
+
+### 2.1 TLV 结构定义
+
+```
+┌────────┬────────┬──────────────────┬──────────────────┐
+│   T    │   L    │       F          │        V         │
+│ (1B)   │ (2B)   │    (变长)        │    (变长)        │
+└────────┴────────┴──────────────────┴──────────────────┘
+  类型     长度     字段名称          字段值
+```
+
+**字段说明**:
+- **T (Type)**: 1字节，字段类型标识
+- **L (Length)**: 2字节，整个TLV块长度（大端序）
+- **F (Field)**: 变长，字段名称字符串
+- **V (Value)**: 变长，字段值数据
+
+**计算公式**: `L = 4 + F_len + V_len`
+
+### 2.2 支持的数据类型
+
+| 编码类型 | 对应类型 | 说明 |
+|---------|---------|------|
+| `TLV_ENCODE_BOOL` | bool | 布尔值 |
+| `TLV_ENCODE_TINY` | int8_t | 有符号8位整数 |
+| `TLV_ENCODE_UTINY` | uint8_t | 无符号8位整数 |
+| `TLV_ENCODE_SHORT` | int16_t | 有符号16位整数 |
+| `TLV_ENCODE_USHORT` | uint16_t | 无符号16位整数 |
+| `TLV_ENCODE_INT` | int32_t | 有符号32位整数 |
+| `TLV_ENCODE_UINT` | uint32_t | 无符号32位整数 |
+| `TLV_ENCODE_LONG` | int64_t | 有符号64位整数 |
+| `TLV_ENCODE_ULONG` | uint64_t | 无符号64位整数 |
+| `TLV_ENCODE_FLOAT` | float | 32位浮点数 |
+| `TLV_ENCODE_DOUBLE` | double | 64位浮点数 |
+| `TLV_ENCODE_ASCII_STRING` | char[] | ASCII字符串 |
+| `TLV_ENCODE_UTF8_STRING` | char[] | UTF-8字符串 |
+
+### 2.3 数据类型标识
+
+| data_type | 说明 |
+|----------|------|
+| 0 | 原始类型（数值、字符串等） |
+| 1 | 变长类型（字符串等） |
+
+| logic_type | 说明 |
+|-----------|------|
+| `TLV_LOGIC_EQ` | 等于操作（字段名=值） |
+
+---
+
+## 三、协议帧格式
+
+### 3.1 帧头结构
+
+```
+┌──────────────────────────────────────────────────────┐
+│ frame_type │ protocol_ver │ scene │ payload_len │ ... │
+│   (1B)     │    (1B)      │ (1B)  │   (2B)      │     │
+└──────────────────────────────────────────────────────┘
+```
+
+**字段说明**:
+- `frame_type`: 帧类型标识（固定值 `MQTT_TLV_MARK`）
+- `protocol_ver`: 协议版本
+  - `MQTT_TLV_TAG_FLAG`: Tag模式
+  - `MQTT_TLV_FIELD_FLAG`: Field模式（当前使用）
+- `scene`: 场景类型
+  - `MQTT_FUNC_SET_AND_RTN`: 设置并返回
+  - `MQTT_FUNC_HTTP_REQUEST`: HTTP请求
+  - `MQTT_FUNC_PERIOD`: 周期性上报
+  - `MQTT_FUNC_EVEVT`: 事件上报
+- `payload_len`: 载荷长度（大端序）
+- `flag.op_type`: 操作类型
+  - `MQTT_TLV_OP_SET`: 设置操作
+  - `MQTT_TLV_OP_GET`: 获取操作
+  - `MQTT_TLV_OP_DELETE`: 删除操作
+- `flag.resp_type`: 响应类型
+  - `MQTT_TLV_RESP_VOID`: 无响应
+  - `MQTT_TLV_RESP_ASYNC`: 异步响应
+  - `MQTT_TLV_RESP_SYNC`: 同步响应
+- `flag.compress`: 压缩类型
+  - `MQTT_TLV_COMPRESS_NONE`: 不压缩（当前使用）
+- `flag.tag_type`: 标签类型
+- `request_id`: 请求ID（异步请求时使用）
+- `slaveaddress`: 从机地址
+
+### 3.2 CRC校验
+
+帧末尾附加 2 字节 CRC16-Modbus 校验码（小端序）
+
+---
+
+## 四、主要功能模块
+
+### 4.1 初始化
+
+**函数**: `mqtt_tlv_init(void)`
+
+**功能**: 创建任务队列，用于缓存待上报的TLV数据
+
+**队列配置**:
+- 队列长度: 16
+- 每个元素大小: `mqtt_tlv_report_data_t`
+
+### 4.2 报文检查
+
+**函数**: `mqtt_tlv_payload_check(uint8_t *data, int size)`
+
+**检查项**:
+1. 空指针和长度检查
+2. 协议头部字段验证
+3. 载荷长度验证
+4. CRC16校验
+
+**返回值**: 成功返回 0，失败返回 -1
+
+### 4.3 TLV字段解析
+
+**函数**: `mqtt_tlv_field_unit_process(uint8_t *data, int size, field_handler_t *field_handler_table)`
+
+**处理流程**:
+1. 解析TLV头部（T、L、F）
+2. 根据字段名查表
+3. 找到对应的处理函数
+4. 执行处理函数
+5. 跳转到下一个TLV块
+
+**查表机制**:
+```c
+static const field_handler_t void_set_field_handler[] = {
+    {"heartbeat",   field_heartbeat_handle},
+    {NULL,          NULL}
+};
+```
+
+### 4.4 SET操作处理
+
+**函数**: `mqtt_tlv_field_set_handle(uint8_t *data, int size)`
+
+**处理场景**:
+- `MQTT_TLV_OP_SET` + `MQTT_TLV_RESP_VOID`: 处理无响应的SET操作
+  - 心跳设置
+  - DST时间设置
+
+**返回值**: 成功返回 0，失败返回 -1
+
+### 4.5 HTTP请求处理
+
+**函数**: `mqtt_tlv_field_http_handle(uint8_t *data, int size)`
+
+**处理流程**:
+1. 解析协议头
+2. 检查 `@code` 字段
+   - `@code=0`: 响应成功
+   - `@code!=0`: 响应失败
+3. 根据 `request_id` 查表
+4. 执行对应的处理函数
+
+**支持的请求**:
+- 请求服务器域名及时间
+- 时间同步
+- 时区设置
+
+**返回值**: 成功返回 0，失败返回 -1
+
+### 4.6 协议主处理
+
+**函数**: `mqtt_tlv_protocol_handle(uint8_t *data, int size)`
+
+**处理流程**:
+1. 报文检查
+2. 解析协议头
+3. 根据协议版本分发
+4. 根据场景类型分发
+
+**返回值**: 成功返回 0，失败返回 -1
+
+---
+
+## 五、API接口
+
+### 5.1 上报4G信息
+
+**函数**: `mqtt_tlv_report_4g_info(const char *imei, const char *imsi, const char *iccid)`
+
+**功能**: 组帧并上报4G物联网卡信息（IMEI、IMSI、ICCID）
+
+**参数**:
+- `imei`: IMEI字符串
+- `imsi`: IMSI字符串
+- `iccid`: ICCID字符串
+
+**返回值**: 0成功，-1失败
+
+**TLV字段**:
+- `@id`: API标识（`MQTT_TLV_HTTP_API1`）
+- `imei`: IMEI（ASCII字符串，最大20字节）
+- `imsi`: IMSI（ASCII字符串，最大20字节）
+- `iccid`: ICCID（ASCII字符串，最大20字节）
+
+### 5.2 请求服务器信息
+
+**函数**: `mqtt_tlv_request_server_and_dst(int latitude, int longitude)`
+
+**功能**: 组帧并请求服务器域名及时间
+
+**参数**:
+- `latitude`: 纬度
+- `longitude`: 经度
+
+**返回值**: 0成功，-1失败
+
+**TLV字段**:
+- `@id`: API标识（`MQTT_TLV_HTTP_API2`）
+- `lat`: 纬度（32位整数，大端序）
+- `lng`: 经度（32位整数，大端序）
+
+**注意**: 坐标值使用 `htonl()` 转换为大端序
+
+### 5.3 上报到云端
+
+**函数**: `mqtt_tlv_protocol_report_to_cloud(void)`
+
+**功能**: 从队列获取数据并发送到MQTT服务器
+
+**返回值**: 1成功，0失败（队列为空）
+
+---
+
+## 六、编码示例
+
+### 6.1 编码整数字段
+
+```c
+// 组帧接口ID
+tlv_tag.data_type = 0;
+tlv_tag.logic_type = TLV_LOGIC_EQ;
+tlv_tag.encode_type = TLV_ENCODE_INT;
+field_len = strlen("@id");
+value_len = 4;
+
+// T
+tlv_data[data_len++] = tlv_tag.value;
+tlv_data[data_len++] = field_len;
+
+// L (大端序)
+tlv_len = htons(field_len + value_len + 4);
+memcpy(&tlv_data[data_len], &tlv_len, 2);
+data_len += 2;
+
+// F
+memcpy(&tlv_data[data_len], "@id", field_len);
+data_len += field_len;
+
+// V (大端序)
+uint32_t id = htonl(MQTT_TLV_HTTP_API1);
+memcpy(&tlv_data[data_len], &id, value_len);
+data_len += value_len;
+```
+
+### 6.2 编码字符串字段
+
+```c
+// 组帧IMEI
+tlv_tag.data_type = 1;
+tlv_tag.logic_type = TLV_LOGIC_EQ;
+tlv_tag.encode_type = TLV_ENCODE_ASCII_STRING;
+field_len = strlen("imei");
+value_len = 20;
+
+// T
+tlv_data[data_len++] = tlv_tag.value;
+tlv_data[data_len++] = field_len;
+
+// L
+tlv_len = htons(field_len + value_len + 4);
+memcpy(&tlv_data[data_len], &tlv_len, 2);
+data_len += 2;
+
+// F
+memcpy(&tlv_data[data_len], "imei", field_len);
+data_len += field_len;
+
+// V
+memcpy(&tlv_data[data_len], imei, imei_len);
+data_len += value_len;  // 填充到固定长度
+```
+
+---
+
+## 七、注意事项
+
+### 7.1 大端序处理
+
+所有多字节数值类型（int、uint、float、double）在编码时使用 `htonl()`、`htons()` 等函数转换为大端序；在解码时使用 `ntohl()`、`ntohs()` 等函数转换回本地字节序。
+
+### 7.2 CRC校验
+
+使用 CRC16-Modbus 算法计算校验码，附加在帧末尾（小端序）。
+
+### 7.3 队列机制
+
+待上报数据通过 FreeRTOS 队列缓存，避免阻塞主任务。
+
+### 7.4 字符串填充
+
+字符串类型字段使用固定长度填充（如IMEI固定20字节），不足部分填充0。
+
+---
+
+## 八、扩展开发指南
+
+### 8.1 添加新的字段处理
+
+1. 在对应的 `field_handler_table` 中添加条目：
+```c
+{"field_name", field_handler_function}
+```
+
+2. 实现 `field_handler_function`：
+```c
+static bool field_handler_function(const tlv_type_t *tlv_tag, const void *value_data, uint16_t value_len) {
+    // 检查类型匹配
+    if (tlv_tag->data_type != 0 || tlv_tag->logic_type != TLV_LOGIC_EQ) {
+        return false;
+    }
+    
+    // 处理字段值
+    uint32_t value = ntohl(*(uint32_t *)value_data);
+    // ... 业务逻辑
+    
+    return true;
+}
+```
+
+### 8.2 添加新的API接口
+
+1. 实现组帧函数
+2. 在对应的 `field_handler_table` 中添加条目
+3. 调用 `mqtt_tlv_protocol_report_to_cloud()` 发送
+
+---
+
+## 九、相关文件
+
+- **头文件**: `components/iot_mqtt/mqtt_payload_tlv.h`
+- **MQTT模块**: `components/iot_mqtt/iot_mqtt.c`
+- **工具函数**: `components/utilities/utils.c`
+- **CRC计算**: `components/utilities/crc.c`
+
+---
+
+## 十、版本历史
+
+| 日期 | 版本 | 作者 | 说明 |
+|------|------|------|------|
+| 2026/6/10 | 1.0 | lixingyu | 初始版本 |
+
+---
+
+**文档生成时间**: 2026/06/10
+
+**适用对象**: 系统集成工程师、嵌入式开发工程师

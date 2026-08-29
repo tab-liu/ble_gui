@@ -1,0 +1,16 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Note: Firmware partition offset needs to be 64K aligned, initial 36K (9 sectors) are reserved for bootloader and partition table
+
+otadata,        data, ota,     0xB000,   0x2000
+phy_init,       data, phy,            ,   0x1000,
+reserved,       data,  6,   		  ,   52K,
+#nvs1,           data, nvs,      	  ,   48K
+app1,           app,  ota_0,   0x20000,   0x280000,
+app2,           app,  ota_1,          ,   0x280000,
+disk,      		data, 	fat,     	,	2M,
+custom_data,    data, fat,		  	  ,	  860K,
+nvs,           data, nvs,      	  ,   16K
+#reserved2,       data,  6,   		  ,   20K
+
+#1882K=1D6800;200K=0x32000;48K=0xC000;4K=0x1000
+#ESP_PARTITION_SUBTYPE_DATA_UNDEFINED = 0x06

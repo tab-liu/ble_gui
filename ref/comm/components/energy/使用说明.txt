@@ -1,0 +1,9 @@
+1.该模块为独立模块，不依赖外部其他文件及变量；
+模块包含：energy_process.c、energy_process.h
+
+2.具体接口函数的使用说明，参考h文件内函数头注释；
+
+其他问题联系李星谕15191774249
+
+parse_energy_unit_file.py：	服务器导出能量节点数据txt文件的 excell转换工具
+parse_energy_year_record.py： 服务器导出长期能量数据txt文件的 excell转换工具
