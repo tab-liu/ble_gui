@@ -37,7 +37,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             // 连接过程中忽略顶部操作，避免重复发起扫描/连接。
         } else if ctx_ble.ble.is_scanning() {
             ctx_ble.ble.stop_scan();
-            refresh_ble(&ui, &ctx_ble.ble.snapshot());
+            refresh_ble(&ui, &ctx_ble.ble.snapshot(), None);
         } else {
             ctx_ble.ble.start_scan();
             ui.set_ble_scan_filter("".into());
@@ -46,7 +46,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
                 set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
             }
-            refresh_ble(&ui, &ctx_ble.ble.snapshot());
+            refresh_ble(&ui, &ctx_ble.ble.snapshot(), None);
         }
     });
 
@@ -79,7 +79,15 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_filter = ctx.clone();
     ui.on_ble_scan_filters_changed(move || {
         let ui = ui_weak.unwrap();
-        refresh_ble_scan_filter(&ui, &ctx_filter.ble.snapshot());
+        refresh_ble_scan_filter(
+            &ui,
+            &ctx_filter.ble.snapshot(),
+            if ctx_filter.ble.is_connected() {
+                Some(ctx_filter.modbus.read_mode())
+            } else {
+                None
+            },
+        );
     });
 
     let ui_weak = ui.as_weak();

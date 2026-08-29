@@ -6,6 +6,24 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModbusReadMode {
+    #[default]
+    Unknown,
+    Standard,
+    Tlv,
+}
+
+impl ModbusReadMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Unknown => "检测中",
+            Self::Standard => "常规",
+            Self::Tlv => "TLV",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct DashboardData {
     pub soc: i32,
@@ -25,6 +43,8 @@ pub struct ModbusLive {
     pub output_busy: bool,
     pub slave_id: u8,
     pub modbus_online: bool,
+    pub read_mode: ModbusReadMode,
+    pub capabilities_probed: bool,
 }
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
@@ -118,6 +138,8 @@ impl ModbusService {
             live.dashboard = DashboardData::default();
             live.output_busy = false;
             live.modbus_online = false;
+            live.read_mode = ModbusReadMode::Unknown;
+            live.capabilities_probed = false;
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();
@@ -131,6 +153,15 @@ impl ModbusService {
             .live
             .lock()
             .map(|l| l.dashboard.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn read_mode(&self) -> ModbusReadMode {
+        self.inner
+            .borrow()
+            .live
+            .lock()
+            .map(|l| l.read_mode)
             .unwrap_or_default()
     }
 

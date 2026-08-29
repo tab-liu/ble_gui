@@ -4,19 +4,241 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
-use crate::services::modbus::{DashboardData, SharedModbusLive};
+use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
-    build_read_holding, build_write_single, merge_control_states, parse_dashboard_registers,
-    parse_read_holding, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_AC_OUTPUT,
-    REG_DASHBOARD_COUNT, REG_DASHBOARD_START,
+    build_read_holding, build_write_single, iot_status_supports_tlv, is_fc10_write_ack,
+    merge_control_states, parse_dashboard_registers, parse_read_holding, parse_tlv_response_packet,
+    parse_tlv_read_units, describe_tlv_units, tlv_data_to_u16, tlv_register_values, TlReadSpec, TlvPacketCollector,
+    DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT, REG_DASHBOARD_COUNT,
+    REG_DASHBOARD_START, REG_IOT_STATUS,
 };
+
+const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
+
+fn hex_preview(data: &[u8], max: usize) -> String {
+    let take = data.len().min(max);
+    let head = hex::encode(&data[..take]);
+    if data.len() > max {
+        format!("{head}…(+{}B)", data.len() - take)
+    } else {
+        head
+    }
+}
+
+fn log_unrecognized_tlv_frame(frame: &[u8]) {
+    if frame.len() < 3 {
+        warn!(
+            target: "ble_gui::poll",
+            "TLV 收到无法识别的短帧 len={} hex={}",
+            frame.len(),
+            hex_preview(frame, 48),
+        );
+        return;
+    }
+    let detail = if frame[1] == 0x10 && frame.len() >= 4 {
+        let start = u16::from_be_bytes([frame[2], frame[3]]);
+        if start == REG_21000 {
+            let func = if frame.len() >= 9 {
+                Some(u16::from_be_bytes([frame[7], frame[8]]))
+            } else {
+                None
+            };
+            format!("FC10 start={start} func={func:?} byte_count={}", frame.get(6).copied().unwrap_or(0))
+        } else {
+            format!("FC10 start={start}")
+        }
+    } else {
+        format!("func=0x{:02X}", frame[1])
+    };
+    warn!(
+        target: "ble_gui::poll",
+        "TLV 收到无法识别的 Modbus 帧 len={} {detail} hex={}",
+        frame.len(),
+        hex_preview(frame, 64),
+    );
+}
 use super::protocol::ProtocolSession;
 
 /// Modbus 请求串行锁（对齐 C# `_sendLock`）。
 pub type ModbusGate = Arc<tokio::sync::Mutex<()>>;
+
+/// 连接后读寄存器 3 bit3（仅执行一次），确定常规读或 TLV 批量读。
+pub async fn probe_modbus_capabilities(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    live: &SharedModbusLive,
+) -> bool {
+    {
+        let inner = live.lock().expect("modbus live lock");
+        if inner.capabilities_probed {
+            return true;
+        }
+    }
+
+    let slave_id = live.lock().expect("modbus live lock").slave_id;
+
+    let mode = match modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, REG_IOT_STATUS, 1),
+        slave_id,
+        1,
+    )
+    .await
+    {
+        Ok(regs) => {
+            if iot_status_supports_tlv(regs[0]) {
+                info!(target: "ble_gui::poll", "设备支持 Modbus TLV 读（寄存器 3 bit3=1）");
+                ModbusReadMode::Tlv
+            } else {
+                info!(target: "ble_gui::poll", "设备不支持 Modbus TLV，使用常规读");
+                ModbusReadMode::Standard
+            }
+        }
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+        Err(err) => {
+            warn!(
+                target: "ble_gui::poll",
+                "探测 Modbus TLV 能力失败（寄存器 3）: {err}，回退常规读",
+            );
+            ModbusReadMode::Standard
+        }
+    };
+
+    {
+        let mut inner = live.lock().expect("modbus live lock");
+        inner.read_mode = mode;
+        inner.capabilities_probed = true;
+    }
+    true
+}
+
+/// TLV 组合读：一次写 21000，经 FF03 收齐多包后解析。
+pub(crate) async fn modbus_tlv_read(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    tl_items: &[TlReadSpec],
+) -> io::Result<Vec<super::modbus::TlvReadResult>> {
+    if tl_items.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request = super::modbus::build_tlv_read_request(tl_items);
+    info!(
+        target: "ble_gui::poll",
+        "TLV 读请求 {} 项 plain={} hex={}",
+        tl_items.len(),
+        request.len(),
+        hex_preview(&request, 80),
+    );
+    for (idx, item) in tl_items.iter().enumerate() {
+        debug!(
+            target: "ble_gui::poll",
+            "  TL[{idx}] slave={} reg={} bytes={}",
+            item.slave_addr,
+            item.reg_addr,
+            item.byte_len,
+        );
+    }
+
+    let ready = protocol.lock().expect("protocol lock").modbus_ready();
+    if !ready {
+        return Err(io::Error::new(
+            io::ErrorKind::NotConnected,
+            "Modbus 链路未就绪",
+        ));
+    }
+
+    let air = {
+        let mut session = protocol.lock().expect("protocol lock");
+        session.clear_modbus_responses();
+        session.wrap_modbus_request(&request)?
+    };
+
+    write_tx
+        .send(air)
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "写通道已关闭"))?;
+
+    let deadline =
+        tokio::time::Instant::now() + Duration::from_millis(MODBUS_TLV_TIMEOUT_MS);
+    let mut collector = TlvPacketCollector::default();
+    let mut got_ack = false;
+    let mut rx_frames = 0u32;
+
+    loop {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        loop {
+            let resp = protocol
+                .lock()
+                .expect("protocol lock")
+                .pop_modbus_response();
+            let Some(resp) = resp else {
+                break;
+            };
+            rx_frames += 1;
+            if is_fc10_write_ack(&resp) {
+                got_ack = true;
+                debug!(
+                    target: "ble_gui::poll",
+                    "TLV 收到 FC10 写应答 hex={}",
+                    hex_preview(&resp, 16),
+                );
+                continue;
+            }
+            if let Some(packet) = parse_tlv_response_packet(&resp) {
+                info!(
+                    target: "ble_gui::poll",
+                    "TLV 数据包 {}/{} payload={}B frame={}B hex={}",
+                    packet.curr_index,
+                    packet.total_index,
+                    packet.payload.len(),
+                    resp.len(),
+                    hex_preview(&resp, 64),
+                );
+                collector.insert(packet)?;
+                continue;
+            }
+            log_unrecognized_tlv_frame(&resp);
+        }
+        if collector.is_complete() {
+            let assembled = collector.assembled();
+            let units = parse_tlv_read_units(&assembled);
+            info!(
+                target: "ble_gui::poll",
+                "TLV 收包完成 ack={got_ack} frames={rx_frames} assembled={}B units={} [{}] hex={}",
+                assembled.len(),
+                units.len(),
+                describe_tlv_units(&units),
+                hex_preview(&assembled, 96),
+            );
+            if units.is_empty() && !assembled.is_empty() {
+                warn!(
+                    target: "ble_gui::poll",
+                    "TLV assembled 有 {}B 数据但未解析出有效单元，请检查 TL 格式",
+                    assembled.len(),
+                );
+            }
+            return Ok(units);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            warn!(
+                target: "ble_gui::poll",
+                "TLV 响应超时 ({}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B",
+                MODBUS_TLV_TIMEOUT_MS,
+                collector.received_count(),
+                collector.expected_total().unwrap_or(0),
+                collector.assembled().len(),
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "TLV 响应超时",
+            ));
+        }
+    }
+}
 
 /// 执行一次仪表板轮询（串行：先读 100～149，再读 2011～2012）。
 pub async fn poll_dashboard(
@@ -26,7 +248,14 @@ pub async fn poll_dashboard(
     gate: &ModbusGate,
 ) -> bool {
     let _guard = gate.lock().await;
-    let slave_id = live.lock().expect("modbus live lock").slave_id;
+    let (slave_id, use_tlv) = {
+        let inner = live.lock().expect("modbus live lock");
+        (inner.slave_id, inner.read_mode == ModbusReadMode::Tlv)
+    };
+
+    if use_tlv {
+        return poll_dashboard_tlv(protocol, write_tx, live, slave_id).await;
+    }
 
     info!(
         target: "ble_gui::poll",
@@ -92,6 +321,85 @@ pub async fn poll_dashboard(
     info!(
         target: "ble_gui::poll",
         "主页轮询结果 soc={}% ac_out={}W dc_out={}W ac_on={} dc_on={}",
+        dashboard.soc,
+        dashboard.ac_output_w,
+        dashboard.dc_output_w,
+        dashboard.ac_output_on,
+        dashboard.dc_output_on,
+    );
+    true
+}
+
+async fn poll_dashboard_tlv(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    live: &SharedModbusLive,
+    slave_id: u8,
+) -> bool {
+    info!(
+        target: "ble_gui::poll",
+        "主页 TLV 轮询 slave_id={slave_id} 寄存器 100～149, 2011～2012",
+    );
+
+    let tl_items = [
+        TlReadSpec::from_register(slave_id, REG_DASHBOARD_START, REG_DASHBOARD_COUNT),
+        TlReadSpec::from_register(slave_id, REG_AC_OUTPUT, 2),
+    ];
+
+    let results = match modbus_tlv_read(protocol, write_tx, &tl_items).await {
+        Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "主页 TLV 读失败: {err}");
+            return false;
+        }
+    };
+
+    let mut dashboard = match tlv_register_values(&results, slave_id, REG_DASHBOARD_START) {
+        Ok(regs) => {
+            info!(
+                target: "ble_gui::poll",
+                "TLV 100～149 原始 {} 个寄存器",
+                regs.len(),
+            );
+            parse_dashboard_registers(&regs)
+        }
+        Err(err) => {
+            warn!(
+                target: "ble_gui::poll",
+                "TLV 缺少 100～149 数据: {err}；已收到 [{}]",
+                describe_tlv_units(&results),
+            );
+            None
+        }
+    };
+
+    let mut dashboard = match dashboard {
+        Some(d) => d,
+        None => {
+            warn!(
+                target: "ble_gui::poll",
+                "TLV 解析 100～149 数据失败（需要 ≥48 寄存器）；已收到 [{}]",
+                describe_tlv_units(&results),
+            );
+            return false;
+        }
+    };
+
+    if let Ok(states) = tlv_register_values(&results, slave_id, REG_AC_OUTPUT) {
+        let ac_on = states.first().is_some_and(|v| *v != 0);
+        let dc_on = states.get(1).is_some_and(|v| *v != 0);
+        merge_control_states(&mut dashboard, ac_on, dc_on);
+    }
+
+    {
+        let mut inner = live.lock().expect("modbus live lock");
+        inner.dashboard = dashboard.clone();
+        inner.modbus_online = true;
+    }
+    info!(
+        target: "ble_gui::poll",
+        "主页 TLV 轮询结果 soc={}% ac_out={}W dc_out={}W ac_on={} dc_on={}",
         dashboard.soc,
         dashboard.ac_output_w,
         dashboard.dc_output_w,
@@ -228,6 +536,8 @@ pub fn init_live_on_connect(live: &SharedModbusLive) {
     inner.output_busy = false;
     inner.slave_id = DEFAULT_SLAVE_ID;
     inner.modbus_online = false;
+    inner.read_mode = ModbusReadMode::Unknown;
+    inner.capabilities_probed = false;
 }
 
 pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
@@ -235,6 +545,8 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.dashboard = DashboardData::default();
     inner.output_busy = false;
     inner.modbus_online = false;
+    inner.read_mode = ModbusReadMode::Unknown;
+    inner.capabilities_probed = false;
 }
 
 /// 加密/明文 Modbus 就绪后立即拉一次数据。

@@ -31,7 +31,12 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let snap = ble_state.lock().expect("ble state lock").snapshot();
-                refresh_ble(&ui, &snap);
+                let read_mode = if snap.connected {
+                    modbus_live.lock().ok().map(|l| l.read_mode)
+                } else {
+                    None
+                };
+                refresh_ble(&ui, &snap, read_mode);
                 if snap.connected {
                     ensure_dashboard_poll_if_idle(&poll_policy);
                     if ui.get_current_page() == PAGE_DASHBOARD {

@@ -5,10 +5,13 @@ use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
 
-use crate::services::modbus::{QueryItemPollResult, SharedModbusLive, SharedQueryPollLive};
+use crate::services::modbus::{ModbusReadMode, QueryItemPollResult, SharedModbusLive, SharedQueryPollLive};
 
-use super::modbus::{build_read_holding, format_query_value};
-use super::poll::{modbus_read, poll_dashboard, ModbusGate};
+use super::modbus::{
+    build_read_holding, chunk_tl_batches, format_query_value, tlv_batch_start_index,
+    tlv_item_batch_index, tlv_register_values, TlReadSpec,
+};
+use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, probe_modbus_capabilities, ModbusGate};
 use super::poll_policy::{describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
 use super::protocol::ProtocolSession;
 
@@ -70,6 +73,13 @@ pub async fn poll_foreground(
     if write_tx.is_closed() {
         return false;
     }
+    if !modbus_live
+        .lock()
+        .map(|l| l.capabilities_probed)
+        .unwrap_or(false)
+    {
+        return false;
+    }
     ensure_dashboard_poll_if_idle(policy);
     let foreground = effective_foreground(policy);
     match &foreground {
@@ -88,6 +98,7 @@ pub async fn poll_foreground(
             poll_modbus_query(
                 protocol,
                 write_tx,
+                modbus_live,
                 query_live,
                 query_generation,
                 gate,
@@ -104,6 +115,7 @@ pub async fn poll_foreground(
 pub async fn poll_modbus_query(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    modbus_live: &SharedModbusLive,
     query_live: &SharedQueryPollLive,
     query_generation: &Arc<AtomicU64>,
     gate: &ModbusGate,
@@ -112,7 +124,10 @@ pub async fn poll_modbus_query(
     items: &[super::poll_policy::QueryPollItemSpec],
 ) -> bool {
     let _guard = gate.lock().await;
-    let mut any_ok = false;
+    let use_tlv = modbus_live
+        .lock()
+        .map(|l| l.read_mode == ModbusReadMode::Tlv)
+        .unwrap_or(false);
 
     if items.is_empty() {
         info!(
@@ -121,6 +136,21 @@ pub async fn poll_modbus_query(
         );
         return false;
     }
+
+    if use_tlv {
+        return poll_modbus_query_tlv(
+            protocol,
+            write_tx,
+            query_live,
+            query_generation,
+            tab_index,
+            slave_id,
+            items,
+        )
+        .await;
+    }
+
+    let mut any_ok = false;
 
     for item in items {
         let poll_result = match item.protocol_address {
@@ -217,7 +247,137 @@ pub async fn poll_modbus_query(
     any_ok || !items.is_empty()
 }
 
-/// Modbus 链路就绪后按策略立即拉一次（替代固定 dashboard 首次轮询）。
+async fn poll_modbus_query_tlv(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    query_live: &SharedQueryPollLive,
+    query_generation: &Arc<AtomicU64>,
+    tab_index: usize,
+    slave_id: u8,
+    items: &[super::poll_policy::QueryPollItemSpec],
+) -> bool {
+    let mut tl_items = Vec::new();
+    let mut valid_items = Vec::new();
+
+    for item in items {
+        match item.protocol_address {
+            None => {
+                let poll_result = QueryItemPollResult {
+                    item_index: item.item_index,
+                    status: "地址无效".into(),
+                    result: item.register_text.clone(),
+                    ok: false,
+                };
+                publish_query_item(query_live, query_generation, tab_index, &poll_result);
+            }
+            Some(address) => {
+                let count = item.register_count.max(1);
+                tl_items.push(TlReadSpec::from_register(slave_id, address, count));
+                valid_items.push((item, address, count));
+            }
+        }
+    }
+
+    if tl_items.is_empty() {
+        return false;
+    }
+
+    let batches = chunk_tl_batches(&tl_items);
+    info!(
+        target: "ble_gui::poll",
+        "开始 Modbus TLV 查询 标签={tab_index} 从站={slave_id} {} 项分 {} 批",
+        tl_items.len(),
+        batches.len(),
+    );
+
+    let mut batch_failed = vec![false; batches.len()];
+
+    let mut all_results = Vec::new();
+    for (batch_idx, batch) in batches.iter().enumerate() {
+        info!(
+            target: "ble_gui::poll",
+            "Modbus TLV 查询 标签={tab_index} 批次 {}/{} ({} 项)",
+            batch_idx + 1,
+            batches.len(),
+            batch.len(),
+        );
+        match modbus_tlv_read(protocol, write_tx, batch).await {
+            Ok(mut chunk) => all_results.append(&mut chunk),
+            Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => return false,
+            Err(err) => {
+                batch_failed[batch_idx] = true;
+                let err_text = err.to_string();
+                warn!(
+                    target: "ble_gui::poll",
+                    "Modbus TLV 查询 标签={tab_index} 批次 {} 失败: {err_text}",
+                    batch_idx + 1,
+                );
+                let start = tlv_batch_start_index(batch_idx);
+                let end = start + batch.len();
+                for (item, _, _) in &valid_items[start..end] {
+                    let poll_result = QueryItemPollResult {
+                        item_index: item.item_index,
+                        status: "失败".into(),
+                        result: err_text.clone(),
+                        ok: false,
+                    };
+                    publish_query_item(query_live, query_generation, tab_index, &poll_result);
+                }
+            }
+        }
+    }
+
+    let mut any_ok = false;
+    for (idx, (item, address, count)) in valid_items.iter().enumerate() {
+        let batch_idx = tlv_item_batch_index(idx);
+        if batch_failed.get(batch_idx).copied().unwrap_or(false) {
+            continue;
+        }
+        let poll_result = match tlv_register_values(&all_results, slave_id, *address) {
+            Ok(values) => match format_query_value(&values, item.value_type, item.scale) {
+                Ok(result) => {
+                    any_ok = true;
+                    info!(
+                        target: "ble_gui::poll",
+                        "TLV 查询 标签={tab_index} 从站={slave_id} [#{}] 寄存器 {} (协议 {address}×{count}) → {result}",
+                        item.item_index,
+                        item.register_text,
+                    );
+                    QueryItemPollResult {
+                        item_index: item.item_index,
+                        status: "正常".into(),
+                        result,
+                        ok: true,
+                    }
+                }
+                Err(err) => QueryItemPollResult {
+                    item_index: item.item_index,
+                    status: "解析失败".into(),
+                    result: err,
+                    ok: false,
+                },
+            },
+            Err(err) => QueryItemPollResult {
+                item_index: item.item_index,
+                status: "失败".into(),
+                result: err.to_string(),
+                ok: false,
+            },
+        };
+        publish_query_item(query_live, query_generation, tab_index, &poll_result);
+    }
+
+    info!(
+        target: "ble_gui::poll",
+        "Modbus TLV 查询完成 标签={tab_index} 从站={slave_id} 共 {} 项 ({} 批)",
+        items.len(),
+        batches.len(),
+    );
+
+    any_ok || !items.is_empty()
+}
+
+/// Modbus 链路就绪后：探测 TLV 能力（仅一次）并立即拉一次数据。
 pub async fn poll_foreground_once(
     policy: &SharedPollPolicy,
     protocol: &Arc<Mutex<ProtocolSession>>,
@@ -229,6 +389,9 @@ pub async fn poll_foreground_once(
 ) {
     let ready = protocol.lock().expect("protocol lock").modbus_ready();
     if !ready {
+        return;
+    }
+    if !probe_modbus_capabilities(protocol, write_tx, modbus_live).await {
         return;
     }
     ensure_dashboard_poll_if_idle(policy);

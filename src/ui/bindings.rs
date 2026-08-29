@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::services::ble::{BleScanEntry, BleSnapshot};
+use crate::services::modbus::ModbusReadMode;
 use crate::services::firmware::FirmwareSnapshot;
 use crate::services::modbus::DashboardData;
 use crate::services::poll_sync::sync_poll_policy;
@@ -104,9 +105,18 @@ fn mark_scan_list_refreshed(ui: &MainWindow, snap: &BleSnapshot) {
     });
 }
 
-fn refresh_ble_status(ui: &MainWindow, snap: &BleSnapshot) {
+fn refresh_ble_status(ui: &MainWindow, snap: &BleSnapshot, read_mode: Option<ModbusReadMode>) {
     ui.set_device_connected(snap.connected);
-    ui.set_ble_status_text(snap.status_text.clone().into());
+    let status_text = if snap.connected {
+        match read_mode {
+            Some(ModbusReadMode::Tlv) => format!("{} · Modbus TLV", snap.status_text),
+            Some(ModbusReadMode::Unknown) => format!("{} · Modbus 检测中", snap.status_text),
+            _ => snap.status_text.clone(),
+        }
+    } else {
+        snap.status_text.clone()
+    };
+    ui.set_ble_status_text(status_text.into());
     ui.set_ble_device_name(snap.device_name.clone().into());
     ui.set_ble_rssi_text(snap.rssi_text.clone().into());
     ui.set_ble_action_text(snap.action_text.clone().into());
@@ -190,7 +200,12 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
         sync_poll_policy(ui, ctx);
     }
     let page = ctx.ble.ui_page();
-    refresh_ble(ui, &ctx.ble.snapshot());
+    let read_mode = if connected {
+        Some(ctx.modbus.read_mode())
+    } else {
+        None
+    };
+    refresh_ble(ui, &ctx.ble.snapshot(), read_mode);
     if connected {
         ctx.modbus.on_connected();
     } else {
@@ -217,16 +232,20 @@ pub fn refresh_modbus_dashboard_from_live(
     refresh_dashboard(ui, &dash, busy);
 }
 
-pub fn refresh_ble(ui: &MainWindow, snap: &BleSnapshot) {
+pub fn refresh_ble(ui: &MainWindow, snap: &BleSnapshot, read_mode: Option<ModbusReadMode>) {
     if should_refresh_scan_list(ui, snap) {
         refresh_ble_scan_list(ui, snap);
     }
-    refresh_ble_status(ui, snap);
+    refresh_ble_status(ui, snap, read_mode);
 }
 
-pub fn refresh_ble_scan_filter(ui: &MainWindow, snap: &BleSnapshot) {
+pub fn refresh_ble_scan_filter(
+    ui: &MainWindow,
+    snap: &BleSnapshot,
+    read_mode: Option<ModbusReadMode>,
+) {
     refresh_ble_scan_list(ui, snap);
-    refresh_ble_status(ui, snap);
+    refresh_ble_status(ui, snap, read_mode);
 }
 
 pub fn refresh_dashboard(ui: &MainWindow, dash: &DashboardData, output_busy: bool) {

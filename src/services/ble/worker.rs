@@ -11,7 +11,7 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::StreamExt;
-use log::warn;
+use log::{info, warn};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -666,17 +666,38 @@ async fn connect_device(
         .cloned()
         .ok_or_else(|| "未发现 FF02 写特征".to_string())?;
 
-    let notify_char = characteristics
+    let notify_char_ff01 = characteristics
         .iter()
         .find(|c| c.uuid == notify_id)
-        .cloned()
-        .or_else(|| characteristics.iter().find(|c| c.uuid == notify_ff03).cloned())
+        .cloned();
+    let notify_char_ff03 = characteristics
+        .iter()
+        .find(|c| c.uuid == notify_ff03)
+        .cloned();
+
+    let notify_char = notify_char_ff01
+        .clone()
+        .or_else(|| notify_char_ff03.clone())
         .ok_or_else(|| "未发现 FF01/FF03 通知特征".to_string())?;
 
     peripheral
         .subscribe(&notify_char)
         .await
         .map_err(|e| format!("订阅通知失败：{e}"))?;
+
+    if let Some(ff03) = notify_char_ff03 {
+        if notify_char_ff01.is_some() && ff03.uuid != notify_char.uuid {
+            peripheral
+                .subscribe(&ff03)
+                .await
+                .map_err(|e| format!("订阅 FF03 通知失败：{e}"))?;
+            info!(target: "ble_gui::worker", "已订阅 FF01 + FF03（TLV 异步数据走 FF03）");
+        } else {
+            info!(target: "ble_gui::worker", "已订阅 FF03（无 FF01，TLV/通知均走 FF03）");
+        }
+    } else if notify_char_ff01.is_some() {
+        info!(target: "ble_gui::worker", "已订阅 FF01（设备无 FF03 特征）");
+    }
 
     let props = peripheral.properties().await.ok().flatten();
     let device_name = props

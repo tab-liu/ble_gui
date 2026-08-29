@@ -124,7 +124,20 @@ pub fn plain_modbus_frame_length(data: &[u8]) -> Option<usize> {
             }
             Some(3 + data[2] as usize + 2)
         }
-        0x06 | 0x10 => Some(8),
+        0x06 => Some(8),
+        0x10 => {
+            if data.len() < 8 {
+                return Some(0);
+            }
+            if data.len() >= 4 {
+                let start = u16::from_be_bytes([data[2], data[3]]);
+                if start == super::tlv::REG_21000 && data.len() >= 7 {
+                    let byte_count = data[6] as usize;
+                    return Some(7 + byte_count + 2);
+                }
+            }
+            Some(8)
+        }
         _ => None,
     }
 }
