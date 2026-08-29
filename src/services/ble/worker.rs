@@ -1,6 +1,7 @@
 //! BLE 异步 worker：扫描、连接、GATT 与协议通知处理。
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -15,14 +16,15 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::poll::{
-    clear_live_on_disconnect, init_live_on_connect, poll_dashboard, poll_dashboard_once,
-    write_control_register, ModbusGate,
+    clear_live_on_disconnect, init_live_on_connect, write_control_register, ModbusGate,
 };
+use super::poll_executor::{poll_foreground, poll_foreground_once};
+use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
 use super::protocol::{HandshakePhase, ProtocolSession};
 use super::state::{LinkPhase, SharedBleState};
 use super::target::{is_target_manufacturer_data, is_target_properties, matches_ff00};
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
-use crate::services::modbus::SharedModbusLive;
+use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
@@ -41,8 +43,26 @@ type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
 
 struct ActiveSession {
     notify_task: tokio::task::JoinHandle<()>,
+    poll_task: tokio::task::JoinHandle<()>,
     peripheral: Peripheral,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
+}
+
+fn abort_session(active: &ActiveSession) {
+    active.poll_task.abort();
+    active.notify_task.abort();
+}
+
+fn stop_polling(poll_policy: &SharedPollPolicy) {
+    let mut policy = poll_policy.lock().expect("poll policy lock");
+    if policy.foreground != PollForeground::None {
+        log::info!(
+            target: "ble_gui::poll",
+            "轮询策略: {} → 无（停止轮询）",
+            describe_poll_foreground(&policy.foreground),
+        );
+        policy.foreground = PollForeground::None;
+    }
 }
 
 fn set_phase(state: &SharedBleState, phase: LinkPhase, detail: impl Into<String>) {
@@ -99,6 +119,9 @@ pub async fn worker_main(
     event_tx: std::sync::mpsc::Sender<()>,
     ui_refresh: super::UiRefreshSlot,
     modbus_live: SharedModbusLive,
+    query_live: SharedQueryPollLive,
+    query_generation: Arc<AtomicU64>,
+    poll_policy: SharedPollPolicy,
 ) {
     let manager = match Manager::new().await {
         Ok(m) => m,
@@ -144,8 +167,10 @@ pub async fn worker_main(
                     continue;
                 }
                 if let Some(active) = session.take() {
-                    active.notify_task.abort();
+                    abort_session(&active);
                     let _ = active.peripheral.disconnect().await;
+                    stop_polling(&poll_policy);
+                    clear_live_on_disconnect(&modbus_live);
                 }
                 if let Some(task) = scan_task.take() {
                     task.abort();
@@ -219,8 +244,10 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
 
                 if let Some(active) = session.take() {
-                    active.notify_task.abort();
+                    abort_session(&active);
                     let _ = active.peripheral.disconnect().await;
+                    stop_polling(&poll_policy);
+                    clear_live_on_disconnect(&modbus_live);
                 }
 
                 match connect_device(
@@ -231,6 +258,9 @@ pub async fn worker_main(
                     &address,
                     &known,
                     &modbus_live,
+                    &query_live,
+                    &query_generation,
+                    &poll_policy,
                 )
                 .await {
                     Ok(active) => session = Some(active),
@@ -243,9 +273,10 @@ pub async fn worker_main(
             }
             BleCommand::Disconnect => {
                 if let Some(active) = session.take() {
-                    active.notify_task.abort();
+                    abort_session(&active);
                     let _ = active.peripheral.disconnect().await;
                 }
+                stop_polling(&poll_policy);
                 clear_live_on_disconnect(&modbus_live);
                 {
                     let mut inner = state.lock().expect("ble state lock");
@@ -604,6 +635,9 @@ async fn connect_device(
     address_text: &str,
     known: &KnownMap,
     modbus_live: &SharedModbusLive,
+    query_live: &SharedQueryPollLive,
+    query_generation: &Arc<AtomicU64>,
+    poll_policy: &SharedPollPolicy,
 ) -> Result<ActiveSession, String> {
     let target_addr = parse_address(address_text).ok_or_else(|| "MAC 地址格式无效".to_string())?;
 
@@ -666,6 +700,7 @@ async fn connect_device(
     notify_ui_force(ui_refresh, true);
 
     init_live_on_connect(modbus_live);
+    ensure_dashboard_poll_if_idle(poll_policy);
 
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (session_cmd_tx, mut session_cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
@@ -682,6 +717,12 @@ async fn connect_device(
     let ui_refresh_for_notify = ui_refresh.clone();
     let modbus_live_poll = modbus_live.clone();
     let modbus_live_write = modbus_live.clone();
+    let query_live_poll = query_live.clone();
+    let query_live_write = query_live.clone();
+    let query_gen_poll = query_generation.clone();
+    let query_gen_write = query_generation.clone();
+    let poll_policy_task = poll_policy.clone();
+    let poll_policy_notify = poll_policy.clone();
     let write_tx_poll = write_tx.clone();
 
     let modbus_gate: ModbusGate = Arc::new(tokio::sync::Mutex::new(()));
@@ -702,10 +743,13 @@ async fn connect_device(
             if !ready {
                 continue;
             }
-            let _ok = poll_dashboard(
+            let _ok = poll_foreground(
+                &poll_policy_task,
                 &protocol_for_poll_task,
                 &write_tx_poll,
                 &modbus_live_poll,
+                &query_live_poll,
+                &query_gen_poll,
                 &gate_for_poll,
             )
             .await;
@@ -714,12 +758,13 @@ async fn connect_device(
         }
     });
 
+    let poll_abort = poll_task.abort_handle();
     let peripheral_for_session = peripheral.clone();
     let notify_task = tokio::spawn(async move {
         let mut notifications = match peripheral.notifications().await {
             Ok(stream) => stream,
             Err(_) => {
-                poll_task.abort();
+                poll_abort.abort();
                 return;
             }
         };
@@ -743,12 +788,15 @@ async fn connect_device(
                         let p = protocol_for_notify.clone();
                         let w = write_tx.clone();
                         let l = modbus_live_write.clone();
+                        let q = query_live_write.clone();
+                        let poll_gen = query_gen_write.clone();
+                        let pol = poll_policy_notify.clone();
                         let g = gate_for_write.clone();
                         let ui = ui_refresh_for_notify.clone();
                         let ev = event_for_notify.clone();
                         tokio::spawn(async move {
                             tokio::time::sleep(Duration::from_millis(300)).await;
-                            poll_dashboard_once(&p, &w, &l, &g).await;
+                            poll_foreground_once(&pol, &p, &w, &l, &q, &poll_gen, &g).await;
                             notify_ui_force(&ui, true);
                             let _ = ev.send(());
                         });
@@ -770,6 +818,9 @@ async fn connect_device(
                             let protocol_poll = protocol.clone();
                             let write_tx_poll = write_tx.clone();
                             let live_poll = modbus_live_write.clone();
+                            let query_poll = query_live_write.clone();
+                            let query_gen = query_gen_write.clone();
+                            let policy_poll = poll_policy_notify.clone();
                             let gate_poll = gate_for_write.clone();
                             tokio::spawn(async move {
                                 let result = write_control_register(
@@ -792,10 +843,13 @@ async fn connect_device(
                                     }
                                 }
                                 if result.is_ok() {
-                                    poll_dashboard_once(
+                                    poll_foreground_once(
+                                        &policy_poll,
                                         &protocol_poll,
                                         &write_tx_poll,
                                         &live_poll,
+                                        &query_poll,
+                                        &query_gen,
                                         &gate_poll,
                                     )
                                     .await;
@@ -805,7 +859,7 @@ async fn connect_device(
                             });
                         }
                         None => {
-                            poll_task.abort();
+                            poll_abort.abort();
                             break;
                         }
                     }
@@ -824,7 +878,7 @@ async fn connect_device(
                             }
                         }
                         None => {
-                            poll_task.abort();
+                            poll_abort.abort();
                             break;
                         }
                     }
@@ -873,12 +927,15 @@ async fn connect_device(
                                 let p = protocol_for_notify.clone();
                                 let w = write_tx.clone();
                                 let l = modbus_live_write.clone();
+                                let q = query_live_write.clone();
+                                let poll_gen = query_gen_write.clone();
+                                let pol = poll_policy_notify.clone();
                                 let g = gate_for_write.clone();
                                 let ui = ui_refresh_for_notify.clone();
                                 let ev = event_for_notify.clone();
                                 tokio::spawn(async move {
                                     tokio::time::sleep(Duration::from_millis(900)).await;
-                                    poll_dashboard_once(&p, &w, &l, &g).await;
+                                    poll_foreground_once(&pol, &p, &w, &l, &q, &poll_gen, &g).await;
                                     notify_ui_force(&ui, true);
                                     let _ = ev.send(());
                                 });
@@ -893,7 +950,7 @@ async fn connect_device(
                             }
                         }
                         None => {
-                            poll_task.abort();
+                            poll_abort.abort();
                             break;
                         }
                     }
@@ -904,6 +961,7 @@ async fn connect_device(
 
     Ok(ActiveSession {
         notify_task,
+        poll_task,
         peripheral: peripheral_for_session,
         cmd_tx: session_cmd_tx,
     })

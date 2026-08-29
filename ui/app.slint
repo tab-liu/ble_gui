@@ -56,6 +56,7 @@ export component MainWindow inherits Window {
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
+    in-out property <[ModbusQueryItem]> active-query-items;
     in-out property <[ModbusQueryLayoutRow]> modbus-query-layout-rows;
 
     in-out property <string> firmware-current-version;
@@ -197,6 +198,7 @@ export component MainWindow inherits Window {
                             device-connected: root.device-connected;
                             modbus-tabs: root.modbus-tabs;
                             active-modbus-tab: root.active-modbus-tab;
+                            active-query-items: root.active-query-items;
                             query-layout-rows: root.modbus-query-layout-rows;
                             show-add-query-form: root.show-add-query-form;
                             query-form-name <=> root.query-form-name;

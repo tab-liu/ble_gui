@@ -2,11 +2,13 @@
 
 use std::rc::Rc;
 
+use log::{debug, info, warn};
 use slint::language::{DragAction, DropEvent};
 use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecModel};
 
 use crate::app::{close_dialog, open_dialog};
-use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB};
+use crate::services::poll_sync::sync_poll_policy;
+use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
 use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
 
 const CARD_WIDTH: f32 = 180.0;
@@ -141,6 +143,139 @@ fn enrich_query_items(items: Vec<ModbusQueryItem>) -> Vec<ModbusQueryItem> {
     items.into_iter().map(enrich_query_item).collect()
 }
 
+/// 将当前激活标签的查询项推到 Slint（卡片直接绑定此属性，避免嵌套 model 不刷新）。
+pub fn sync_active_query_items_to_ui(ui: &MainWindow, ctx: &AppContext) {
+    let tabs = ctx.state.borrow().modbus_query.tabs.clone();
+    sync_active_query_items_from_tabs(ui, &tabs);
+}
+
+fn sync_active_query_items_from_tabs(ui: &MainWindow, tabs: &Rc<VecModel<ModbusTab>>) {
+    let active = ui.get_active_modbus_tab() as usize;
+    let items = tabs
+        .row_data(active)
+        .map(|tab| {
+            (0..tab.items.row_count())
+                .filter_map(|i| tab.items.row_data(i))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let summary: Vec<String> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| format!("#{i} {}={}", it.register, it.result))
+        .collect();
+    debug!(
+        target: "ble_gui::query_ui",
+        "sync_active_query_items 标签={active} 共 {} 项 → UI: [{}]",
+        items.len(),
+        summary.join(", "),
+    );
+    ui.set_active_query_items(ModelRc::new(VecModel::from(items.clone())));
+    let ui_count = ui.get_active_query_items().row_count();
+    if ui_count != items.len() {
+        warn!(
+            target: "ble_gui::query_ui",
+            "active-query-items 写入后 row_count 不一致: 期望 {} 实际 {ui_count}",
+            items.len(),
+        );
+    }
+}
+
+/// 将 worker 轮询结果合并到当前激活标签的查询卡片（仅在有新数据时更新 UI）。
+pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
+    let ui_page = ctx.ble.ui_page();
+    let slint_page = ui.get_current_page();
+    if ui_page != slint_page {
+        warn!(
+            target: "ble_gui::query_ui",
+            "页面状态不一致: ble.ui_page={ui_page} slint.current_page={slint_page}",
+        );
+    }
+
+    let tabs = ctx.state.borrow().modbus_query.tabs.clone();
+    let snapshot = ctx
+        .modbus
+        .shared_query_live()
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+
+    let active = ui.get_active_modbus_tab() as usize;
+
+    if snapshot.items.is_empty() {
+        return;
+    }
+
+    if snapshot.tab_index != active {
+        debug!(
+            target: "ble_gui::query_ui",
+            "apply 跳过: 快照标签 {} != 当前标签 {active}",
+            snapshot.tab_index,
+        );
+        return;
+    }
+
+    let Some(tab) = tabs.row_data(active) else {
+        return;
+    };
+
+    let items_model = tab.items.clone();
+    let mut items_vec: Vec<ModbusQueryItem> = (0..items_model.row_count())
+        .filter_map(|i| items_model.row_data(i))
+        .collect();
+
+    let mut changed = false;
+    for r in &snapshot.items {
+        let Some(item) = items_vec.get_mut(r.item_index) else {
+            warn!(
+                target: "ble_gui::query_ui",
+                "apply 跳过快照项 [#{}]: item_index 超出卡片范围 (len={})",
+                r.item_index,
+                items_vec.len(),
+            );
+            continue;
+        };
+        let new_status: SharedString = r.status.clone().into();
+        let new_result: SharedString = r.result.clone().into();
+        if item.status != new_status || item.result != new_result {
+            info!(
+                target: "ble_gui::query_ui",
+                "卡片更新 [#{}] 寄存器 {} → {} ({})",
+                r.item_index,
+                item.register,
+                new_result,
+                r.status,
+            );
+            item.status = new_status;
+            item.result = new_result;
+            let display = item.result.to_string();
+            item.result_font_size = result_font_size(display.chars().count());
+            item.result_display = display.into();
+            changed = true;
+        }
+    }
+
+    if !changed {
+        return;
+    }
+
+    tabs.set_row_data(
+        active,
+        ModbusTab {
+            title: tab.title,
+            slave_id: tab.slave_id,
+            items: ModelRc::new(VecModel::from(items_vec)),
+        },
+    );
+    sync_active_query_items_from_tabs(ui, &tabs);
+}
+
+fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
+    if ctx.ble.ui_page() == PAGE_MODBUS {
+        sync_poll_policy(ui, ctx);
+    }
+}
+
 fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
     enrich_query_item(ModbusQueryItem {
         name: source.name.clone(),
@@ -214,7 +349,9 @@ fn update_tab_items(ctx: &AppContext, ui: &MainWindow, tab_index: usize, items: 
         return;
     }
     let tab = st.modbus_query.tabs.row_data(tab_index).unwrap();
-    st.modbus_query.tabs.set_row_data(
+    let tabs = st.modbus_query.tabs.clone();
+    drop(st);
+    tabs.set_row_data(
         tab_index,
         ModbusTab {
             title: tab.title,
@@ -224,6 +361,8 @@ fn update_tab_items(ctx: &AppContext, ui: &MainWindow, tab_index: usize, items: 
     );
     sync_query_layout(ui, ctx);
     sync_selection_ui(ctx, ui);
+    sync_active_query_items_from_tabs(ui, &tabs);
+    touch_poll_policy(ui, ctx);
 }
 
 fn reorder_modbus_query(
@@ -327,6 +466,7 @@ fn copy_queries_to_tab(ctx: &AppContext, ui: &MainWindow, target_tab: usize) {
     close_dialog(ui);
     clear_selection(ctx, ui);
     sync_query_layout(ui, ctx);
+    sync_active_query_items_to_ui(ui, ctx);
 }
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
@@ -396,6 +536,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     sync_query_layout(ui, ctx);
     sync_active_tab_slave_id(ui, ctx);
     sync_selection_ui(ctx, ui);
+    sync_active_query_items_to_ui(ui, ctx);
+    touch_poll_policy(ui, ctx);
 
     ui.on_add_modbus_tab_request({
         let ui_weak = ui.as_weak();
@@ -429,6 +571,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ui.set_active_modbus_tab(new_active as i32);
         sync_query_layout(&ui, &ctx_rm);
         sync_active_tab_slave_id(&ui, &ctx_rm);
+        touch_poll_policy(&ui, &ctx_rm);
     });
 
     let ui_weak = ui.as_weak();
@@ -441,6 +584,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ui.set_active_modbus_tab(index);
         sync_query_layout(&ui, &ctx_switch);
         sync_active_tab_slave_id(&ui, &ctx_switch);
+        sync_active_query_items_to_ui(&ui, &ctx_switch);
+        touch_poll_policy(&ui, &ctx_switch);
     });
 
     let ui_weak = ui.as_weak();
@@ -517,6 +662,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
                 items,
             },
         );
+        touch_poll_policy(&ui, &ctx_slave);
     });
 
     let ui_weak = ui.as_weak();
@@ -662,6 +808,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ui.set_active_modbus_tab(st.modbus_query.tabs.row_count() as i32 - 1);
         sync_query_layout(&ui, &ctx_confirm);
         sync_active_tab_slave_id(&ui, &ctx_confirm);
+        touch_poll_policy(&ui, &ctx_confirm);
     });
 
     let ui_weak = ui.as_weak();

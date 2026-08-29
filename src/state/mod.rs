@@ -38,13 +38,15 @@ impl AppContext {
     pub fn new() -> Self {
         let modbus = ModbusService::new();
         let modbus_live = modbus.shared_live();
+        let query_live = modbus.shared_query_live();
+        let query_generation = modbus.shared_query_poll_generation();
         Self {
             state: Rc::new(RefCell::new(AppState {
                 modbus_query: ModbusQueryState::new(Rc::new(VecModel::from(vec![
-                    ModbusQueryState::default_tab("默认分组", true),
+                    ModbusQueryState::default_tab("默认分组", false),
                 ]))),
             })),
-            ble: BleService::new(modbus_live),
+            ble: BleService::new(modbus_live, query_live, query_generation),
             modbus,
             firmware: FirmwareService::new(),
             theme: ThemeService::new(),

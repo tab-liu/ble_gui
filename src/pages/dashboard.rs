@@ -4,6 +4,7 @@ use slint::ComponentHandle;
 
 use crate::app::refresh;
 use crate::services::ble::{REG_AC_OUTPUT, REG_DC_OUTPUT};
+use crate::services::poll_sync::{set_app_page, sync_poll_policy};
 use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
@@ -16,7 +17,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if (page == PAGE_MODBUS || page == PAGE_FIRMWARE) && !ctx_nav.ble.is_connected() {
             return;
         }
-        ui.set_current_page(page);
+        set_app_page(&ui, &ctx_nav, page);
     });
 
     let ui_weak = ui.as_weak();
@@ -25,8 +26,11 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         if ctx_ble.ble.is_connected() {
             ctx_ble.ble.disconnect();
-            if ui.get_current_page() == PAGE_MODBUS || ui.get_current_page() == PAGE_FIRMWARE {
-                ui.set_current_page(PAGE_DASHBOARD);
+            let page = ctx_ble.ble.ui_page();
+            if page == PAGE_MODBUS || page == PAGE_FIRMWARE {
+                set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
+            } else {
+                sync_poll_policy(&ui, &ctx_ble);
             }
             refresh(&ui, &ctx_ble);
         } else if ctx_ble.ble.is_connecting() {
@@ -39,8 +43,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             ui.set_ble_scan_filter("".into());
             ui.set_ble_scan_rssi_filter_enabled(false);
             ui.set_selected_scan_address("".into());
-            if ui.get_current_page() != PAGE_DASHBOARD {
-                ui.set_current_page(PAGE_DASHBOARD);
+            if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
+                set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
             }
             refresh_ble(&ui, &ctx_ble.ble.snapshot());
         }
@@ -68,6 +72,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             return;
         }
         ctx_connect.ble.connect(&address);
+        // 连接异步完成；轮询策略在 UI refresh hook（connected=true）时同步。
     });
 
     let ui_weak = ui.as_weak();

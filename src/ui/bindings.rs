@@ -5,7 +5,8 @@ use std::rc::Rc;
 use crate::services::ble::{BleScanEntry, BleSnapshot};
 use crate::services::firmware::FirmwareSnapshot;
 use crate::services::modbus::DashboardData;
-use crate::state::AppContext;
+use crate::services::poll_sync::sync_poll_policy;
+use crate::state::{AppContext, PAGE_DASHBOARD};
 use crate::ui::BleScanDevice;
 use crate::ui::MainWindow;
 
@@ -185,13 +186,19 @@ fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot) {
 /// 将各服务状态同步到 Slint UI。
 pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     let connected = ctx.ble.is_connected();
+    if connected {
+        sync_poll_policy(ui, ctx);
+    }
+    let page = ctx.ble.ui_page();
     refresh_ble(ui, &ctx.ble.snapshot());
     if connected {
         ctx.modbus.on_connected();
     } else {
         ctx.modbus.on_disconnected();
     }
-    refresh_modbus_dashboard(ui, &ctx.modbus);
+    if connected && page == PAGE_DASHBOARD {
+        refresh_modbus_dashboard(ui, &ctx.modbus);
+    }
     refresh_firmware(ui, &ctx.firmware.snapshot());
 }
 

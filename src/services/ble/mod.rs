@@ -1,8 +1,10 @@
 //! 蓝牙连接服务：同步 UI 接口 + Tokio/btleplug 后台 worker。
 
 mod crypto;
-mod modbus;
+pub mod modbus;
 mod poll;
+mod poll_executor;
+mod poll_policy;
 mod protocol;
 mod runtime;
 mod state;
@@ -12,12 +14,13 @@ mod uuids;
 mod worker;
 mod win_name;
 
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, mpsc};
 use std::rc::Rc;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::services::modbus::SharedModbusLive;
+use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 
 use runtime::TokioRuntime;
 use state::{BleInner, LinkPhase, SharedBleState};
@@ -25,6 +28,10 @@ use worker::{BleCommand, worker_main};
 
 pub use modbus::{REG_AC_OUTPUT, REG_DC_OUTPUT};
 pub use poll::{clear_live_on_disconnect, init_live_on_connect};
+pub use poll_policy::{
+    describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, PollPolicy,
+    QueryPollItemSpec, SharedPollPolicy, UI_PAGE_DASHBOARD,
+};
 pub use state::{BleScanEntry, BleSnapshot};
 
 /// Worker 线程回调：通过 `slint::invoke_from_event_loop` 在主线程刷新 UI。
@@ -37,6 +44,8 @@ struct BleServiceInner {
     event_rx: Mutex<mpsc::Receiver<()>>,
     ui_refresh: UiRefreshSlot,
     modbus_live: SharedModbusLive,
+    query_live: SharedQueryPollLive,
+    poll_policy: poll_policy::SharedPollPolicy,
 }
 
 #[derive(Clone)]
@@ -45,8 +54,13 @@ pub struct BleService {
 }
 
 impl BleService {
-    pub fn new(modbus_live: SharedModbusLive) -> Self {
+    pub fn new(
+        modbus_live: SharedModbusLive,
+        query_live: SharedQueryPollLive,
+        query_generation: Arc<AtomicU64>,
+    ) -> Self {
         let state: SharedBleState = Arc::new(Mutex::new(BleInner::default()));
+        let poll_policy = poll_policy::PollPolicy::new_shared();
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel();
         let ui_refresh: UiRefreshSlot = Arc::new(Mutex::new(None));
@@ -55,8 +69,21 @@ impl BleService {
         let worker_state = state.clone();
         let worker_ui_refresh = ui_refresh.clone();
         let worker_live = modbus_live.clone();
+        let worker_query = query_live.clone();
+        let worker_query_gen = query_generation.clone();
+        let worker_policy = poll_policy.clone();
         runtime.spawn(async move {
-            worker_main(cmd_rx, worker_state, event_tx, worker_ui_refresh, worker_live).await;
+            worker_main(
+                cmd_rx,
+                worker_state,
+                event_tx,
+                worker_ui_refresh,
+                worker_live,
+                worker_query,
+                worker_query_gen,
+                worker_policy,
+            )
+            .await;
         });
 
         Self {
@@ -66,8 +93,37 @@ impl BleService {
                 event_rx: Mutex::new(event_rx),
                 ui_refresh,
                 modbus_live,
+                query_live,
+                poll_policy,
             }),
         }
+    }
+
+    /// 更新前台轮询目标（由 UI 在页面/标签切换时调用）。
+    pub fn set_poll_foreground(&self, foreground: poll_policy::PollForeground) {
+        let mut policy = self.inner.poll_policy.lock().expect("poll policy lock");
+        if policy.foreground != foreground {
+            log::info!(
+                target: "ble_gui::poll",
+                "轮询策略: {} → {}",
+                poll_policy::describe_poll_foreground(&policy.foreground),
+                poll_policy::describe_poll_foreground(&foreground),
+            );
+            policy.foreground = foreground;
+        }
+    }
+
+    /// 记录 UI 当前页面（worker 连接就绪时用于默认轮询目标）。
+    pub fn set_ui_page(&self, page: i32) {
+        self.inner.poll_policy.lock().expect("poll policy lock").ui_page = page;
+    }
+
+    pub fn ui_page(&self) -> i32 {
+        self.inner.poll_policy.lock().expect("poll policy lock").ui_page
+    }
+
+    pub fn shared_poll_policy(&self) -> poll_policy::SharedPollPolicy {
+        self.inner.poll_policy.clone()
     }
 
     /// 注册 UI 刷新钩子（须在 `MainWindow` 创建后调用）。

@@ -4,7 +4,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use log::warn;
+use log::{info, warn};
 
 use crate::services::modbus::{DashboardData, SharedModbusLive};
 
@@ -28,6 +28,11 @@ pub async fn poll_dashboard(
     let _guard = gate.lock().await;
     let slave_id = live.lock().expect("modbus live lock").slave_id;
 
+    info!(
+        target: "ble_gui::poll",
+        "主页轮询 slave_id={slave_id} 寄存器 100～149, 2011～2012",
+    );
+
     let regs = match modbus_read(
         protocol,
         write_tx,
@@ -38,6 +43,7 @@ pub async fn poll_dashboard(
     .await
     {
         Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
         Err(err) => {
             warn!(target: "ble_gui::poll", "读寄存器 100～149 失败: {err}");
             return false;
@@ -80,9 +86,18 @@ pub async fn poll_dashboard(
 
     {
         let mut inner = live.lock().expect("modbus live lock");
-        inner.dashboard = dashboard;
+        inner.dashboard = dashboard.clone();
         inner.modbus_online = true;
     }
+    info!(
+        target: "ble_gui::poll",
+        "主页轮询结果 soc={}% ac_out={}W dc_out={}W ac_on={} dc_on={}",
+        dashboard.soc,
+        dashboard.ac_output_w,
+        dashboard.dc_output_w,
+        dashboard.ac_output_on,
+        dashboard.dc_output_on,
+    );
     true
 }
 
@@ -145,7 +160,7 @@ pub async fn write_control_register(
     Ok(())
 }
 
-async fn modbus_read(
+pub(crate) async fn modbus_read(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     request: Vec<u8>,

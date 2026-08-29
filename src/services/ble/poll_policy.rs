@@ -1,0 +1,114 @@
+//! 前台轮询策略：worker 只轮询当前可见页面所需的数据。
+
+use std::sync::{Arc, Mutex};
+
+use log::info;
+
+/// 与 `crate::state::PAGE_DASHBOARD` 一致，避免 ble 模块依赖 state。
+pub const UI_PAGE_DASHBOARD: i32 = 0;
+
+/// UI 告诉 worker「此刻该轮询什么」。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PollForeground {
+    /// 非 Modbus 相关页（设置、固件等）或未连接。
+    None,
+    /// 主页仪表板（100～149、2011～2012）。
+    Dashboard,
+    /// Modbus 查询页：仅当前激活标签内的查询项。
+    ModbusQuery {
+        tab_index: usize,
+        slave_id: u8,
+        items: Vec<QueryPollItemSpec>,
+    },
+}
+
+/// 单个查询卡片在轮询层的描述（与 Slint 模型解耦）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryPollItemSpec {
+    pub item_index: usize,
+    pub register_text: String,
+    /// `None` 表示寄存器字符串无法解析，轮询时直接标记失败。
+    pub protocol_address: Option<u16>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PollPolicy {
+    pub foreground: PollForeground,
+    /// UI 当前页面（worker 可读，用于连接后默认主页轮询）。
+    pub ui_page: i32,
+}
+
+impl Default for PollPolicy {
+    fn default() -> Self {
+        Self {
+            foreground: PollForeground::None,
+            ui_page: UI_PAGE_DASHBOARD,
+        }
+    }
+}
+
+pub type SharedPollPolicy = Arc<Mutex<PollPolicy>>;
+
+impl PollPolicy {
+    pub fn new_shared() -> SharedPollPolicy {
+        Arc::new(Mutex::new(Self::default()))
+    }
+}
+
+/// 连接就绪且策略仍为「无」时，若 UI 在主页则立即启用主页轮询（不依赖 UI 定时器）。
+pub fn ensure_dashboard_poll_if_idle(policy: &SharedPollPolicy) {
+    let mut p = policy.lock().expect("poll policy lock");
+    if p.foreground != PollForeground::None {
+        return;
+    }
+    if p.ui_page == UI_PAGE_DASHBOARD {
+        info!(
+            target: "ble_gui::poll",
+            "连接就绪，UI 在主页，启用主页轮询",
+        );
+        p.foreground = PollForeground::Dashboard;
+    }
+}
+
+/// 解析实际执行的轮询策略（`None` + 主页时回退为 Dashboard）。
+pub fn effective_foreground(policy: &SharedPollPolicy) -> PollForeground {
+    let p = policy.lock().expect("poll policy lock");
+    if p.foreground != PollForeground::None {
+        return p.foreground.clone();
+    }
+    if p.ui_page == UI_PAGE_DASHBOARD {
+        return PollForeground::Dashboard;
+    }
+    PollForeground::None
+}
+
+/// 日志用：描述当前前台轮询目标。
+pub fn describe_poll_foreground(f: &PollForeground) -> String {
+    match f {
+        PollForeground::None => "无（停止轮询）".into(),
+        PollForeground::Dashboard => "主页 · 100～149 + 2011～2012".into(),
+        PollForeground::ModbusQuery {
+            tab_index,
+            slave_id,
+            items,
+        } => {
+            if items.is_empty() {
+                return format!("Modbus 查询 · 标签 {tab_index} · 从站 {slave_id} · （无查询项）");
+            }
+            let regs: Vec<String> = items
+                .iter()
+                .map(|i| {
+                    if let Some(addr) = i.protocol_address {
+                        format!("{}→{addr}", i.register_text)
+                    } else {
+                        format!("{}→?", i.register_text)
+                    }
+                })
+                .collect();
+            format!(
+                "Modbus 查询 · 标签 {tab_index} · 从站 {slave_id} · [{}]",
+                regs.join(", ")
+            )
+        }
+    }
+}

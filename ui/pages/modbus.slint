@@ -5,7 +5,7 @@ import {
     LineEdit,
     ScrollView,
 } from "std-widgets.slint";
-import { ModbusTab, ModbusQueryLayoutRow } from "../types.slint";
+import { ModbusTab, ModbusQueryLayoutRow, ModbusQueryItem } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ModbusTabItem } from "../components/modbus_tab_item.slint";
 import { ModbusQueryGrid } from "../components/modbus_query_grid.slint";
@@ -15,6 +15,7 @@ export component ModbusPage inherits VerticalLayout {
     in property <bool> device-connected;
     in property <[ModbusTab]> modbus-tabs;
     in property <int> active-modbus-tab;
+    in property <[ModbusQueryItem]> active-query-items;
     in property <[ModbusQueryLayoutRow]> query-layout-rows;
     in property <bool> has-selected-queries;
     in property <[bool]> query-selection-states;
@@ -262,7 +263,7 @@ export component ModbusPage inherits VerticalLayout {
                     horizontal-stretch: 1;
 
                     ModbusQueryGrid {
-                        items: root.modbus-tabs[root.active-modbus-tab].items;
+                        items: root.active-query-items;
                         layout-rows: root.query-layout-rows;
                         query-selection-states: root.query-selection-states;
                         remove-item(index) => {

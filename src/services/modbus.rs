@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Default)]
@@ -28,8 +29,28 @@ pub struct ModbusLive {
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
 
+/// Modbus 查询页单个卡片轮询结果（worker 写入，UI 合并到 Slint 模型）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryItemPollResult {
+    pub item_index: usize,
+    pub status: String,
+    pub result: String,
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QueryPollSnapshot {
+    pub tab_index: usize,
+    pub items: Vec<QueryItemPollResult>,
+}
+
+pub type SharedQueryPollLive = Arc<Mutex<QueryPollSnapshot>>;
+
 struct ModbusInner {
     live: SharedModbusLive,
+    query_live: SharedQueryPollLive,
+    /// worker 写入 query_live 后递增，UI 定时器据此触发合并。
+    query_poll_generation: Arc<AtomicU64>,
     session_active: bool,
 }
 
@@ -43,6 +64,8 @@ impl ModbusService {
         Self {
             inner: Rc::new(RefCell::new(ModbusInner {
                 live: Arc::new(Mutex::new(ModbusLive::default())),
+                query_live: Arc::new(Mutex::new(QueryPollSnapshot::default())),
+                query_poll_generation: Arc::new(AtomicU64::new(0)),
                 session_active: false,
             })),
         }
@@ -50,6 +73,37 @@ impl ModbusService {
 
     pub fn shared_live(&self) -> SharedModbusLive {
         self.inner.borrow().live.clone()
+    }
+
+    pub fn shared_query_live(&self) -> SharedQueryPollLive {
+        self.inner.borrow().query_live.clone()
+    }
+
+    pub fn shared_query_poll_generation(&self) -> Arc<AtomicU64> {
+        self.inner.borrow().query_poll_generation.clone()
+    }
+
+    pub fn query_poll_generation(&self) -> u64 {
+        self.inner
+            .borrow()
+            .query_poll_generation
+            .load(Ordering::Acquire)
+    }
+
+    pub fn mark_query_poll_updated(&self) {
+        self.inner
+            .borrow()
+            .query_poll_generation
+            .fetch_add(1, Ordering::Release);
+    }
+
+    pub fn query_snapshot(&self) -> QueryPollSnapshot {
+        self.inner
+            .borrow()
+            .query_live
+            .lock()
+            .map(|s| s.clone())
+            .unwrap_or_default()
     }
 
     pub fn on_connected(&self) {
@@ -65,6 +119,10 @@ impl ModbusService {
             live.output_busy = false;
             live.modbus_online = false;
         }
+        if let Ok(mut query) = inner.query_live.lock() {
+            *query = QueryPollSnapshot::default();
+        }
+        inner.query_poll_generation.store(0, Ordering::Release);
     }
 
     pub fn dashboard_data(&self) -> DashboardData {
