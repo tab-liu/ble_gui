@@ -1,6 +1,12 @@
 export struct ModbusQueryItem {
     name: string,
     register: string,
+    /// `integer` | `float` | `string`（默认 integer）
+    value-type: string,
+    /// 连续保持寄存器个数（默认 1）
+    register-count: int,
+    /// 整数显示倍数，实际值 = 原始值 / scale（默认 1）
+    scale: int,
     status: string,
     result: string,
     result-display: string,

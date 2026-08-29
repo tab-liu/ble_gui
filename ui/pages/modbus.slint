@@ -1,5 +1,6 @@
 import {
     Button,
+    ComboBox,
     VerticalBox,
     HorizontalBox,
     LineEdit,
@@ -22,6 +23,9 @@ export component ModbusPage inherits VerticalLayout {
     in property <bool> show-add-query-form;
     in-out property <string> query-form-name;
     in-out property <string> query-form-register;
+    in-out property <int> query-form-value-type-index;
+    in-out property <string> query-form-register-count;
+    in-out property <string> query-form-scale;
     in-out property <string> active-tab-slave-id;
     in property <int> renaming-tab-index;
     in-out property <string> editing-tab-title;
@@ -211,13 +215,13 @@ export component ModbusPage inherits VerticalLayout {
 
                                 LineEdit {
                                     text <=> root.query-form-name;
-                                    placeholder-text: "例如：室内温度";
+                                    placeholder-text: "例如：AC 输入功率";
                                 }
                             }
 
                             VerticalBox {
                                 spacing: 4px;
-                                min-width: 120px;
+                                min-width: 100px;
 
                                 Text {
                                     text: "寄存器";
@@ -228,6 +232,55 @@ export component ModbusPage inherits VerticalLayout {
                                 LineEdit {
                                     text <=> root.query-form-register;
                                     placeholder-text: "40001";
+                                }
+                            }
+
+                            VerticalBox {
+                                spacing: 4px;
+                                min-width: 80px;
+
+                                Text {
+                                    text: "类型";
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                }
+
+                                ComboBox {
+                                    horizontal-stretch: 1;
+                                    model: ["整数", "浮点", "字符串"];
+                                    current-index <=> root.query-form-value-type-index;
+                                }
+                            }
+
+                            VerticalBox {
+                                spacing: 4px;
+                                min-width: 56px;
+
+                                Text {
+                                    text: "长度";
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                }
+
+                                LineEdit {
+                                    text <=> root.query-form-register-count;
+                                    placeholder-text: "1";
+                                }
+                            }
+
+                            VerticalBox {
+                                spacing: 4px;
+                                min-width: 56px;
+
+                                Text {
+                                    text: "倍数";
+                                    color: Theme.text-muted;
+                                    font-size: 11px;
+                                }
+
+                                LineEdit {
+                                    text <=> root.query-form-scale;
+                                    placeholder-text: "1";
                                 }
                             }
 

@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex};
 
 use log::info;
 
+use crate::services::ble::modbus::QueryValueType;
+
 /// 与 `crate::state::PAGE_DASHBOARD` 一致，避免 ble 模块依赖 state。
 pub const UI_PAGE_DASHBOARD: i32 = 0;
 
@@ -29,6 +31,9 @@ pub struct QueryPollItemSpec {
     pub register_text: String,
     /// `None` 表示寄存器字符串无法解析，轮询时直接标记失败。
     pub protocol_address: Option<u16>,
+    pub register_count: u16,
+    pub value_type: QueryValueType,
+    pub scale: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -98,10 +103,15 @@ pub fn describe_poll_foreground(f: &PollForeground) -> String {
             let regs: Vec<String> = items
                 .iter()
                 .map(|i| {
-                    if let Some(addr) = i.protocol_address {
-                        format!("{}→{addr}", i.register_text)
+                    let len = if i.register_count > 1 {
+                        format!("×{}", i.register_count)
                     } else {
-                        format!("{}→?", i.register_text)
+                        String::new()
+                    };
+                    if let Some(addr) = i.protocol_address {
+                        format!("{}→{addr}{len}", i.register_text)
+                    } else {
+                        format!("{}→?{len}", i.register_text)
                     }
                 })
                 .collect();

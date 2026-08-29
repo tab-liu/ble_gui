@@ -3,7 +3,7 @@
 use slint::Model;
 
 use crate::pages::modbus_query;
-use crate::services::ble::modbus::parse_register_address;
+use crate::services::ble::modbus::{parse_register_address, parse_scale, parse_value_type};
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
 use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_MODBUS};
 use crate::ui::MainWindow;
@@ -53,10 +53,19 @@ fn build_modbus_query_foreground(ui: &MainWindow, ctx: &AppContext) -> PollForeg
             continue;
         };
         let register_text = row.register.to_string();
+        let register_count = row.register_count.max(1) as u16;
+        let scale = if row.scale > 0 {
+            row.scale as u32
+        } else {
+            parse_scale("")
+        };
         items.push(QueryPollItemSpec {
             item_index: i,
             register_text: register_text.clone(),
             protocol_address: parse_register_address(&register_text).ok(),
+            register_count,
+            value_type: parse_value_type(&row.value_type.to_string()),
+            scale,
         });
     }
 

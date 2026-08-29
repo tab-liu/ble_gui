@@ -7,7 +7,7 @@ use log::{debug, info, warn};
 
 use crate::services::modbus::{QueryItemPollResult, SharedModbusLive, SharedQueryPollLive};
 
-use super::modbus::{build_read_holding, format_register_value};
+use super::modbus::{build_read_holding, format_query_value};
 use super::poll::{modbus_read, poll_dashboard, ModbusGate};
 use super::poll_policy::{describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
 use super::protocol::ProtocolSession;
@@ -138,50 +138,69 @@ pub async fn poll_modbus_query(
                     ok: false,
                 }
             }
-            Some(address) => match modbus_read(
-                protocol,
-                write_tx,
-                build_read_holding(slave_id, address, 1),
-                slave_id,
-                1,
-            )
-            .await
-            {
-                Ok(values) => {
-                    any_ok = true;
-                    let value = values.first().copied().unwrap_or(0);
-                    let result = format_register_value(value);
-                    info!(
-                        target: "ble_gui::poll",
-                        "查询 标签={tab_index} 从站={slave_id} [#{}] 寄存器 {} (协议 {address}) → {result}",
-                        item.item_index,
-                        item.register_text,
-                    );
-                    QueryItemPollResult {
-                        item_index: item.item_index,
-                        status: "正常".into(),
-                        result,
-                        ok: true,
+            Some(address) => {
+                let count = item.register_count.max(1);
+                match modbus_read(
+                    protocol,
+                    write_tx,
+                    build_read_holding(slave_id, address, count),
+                    slave_id,
+                    count,
+                )
+                .await
+                {
+                    Ok(values) => {
+                        match format_query_value(&values, item.value_type, item.scale) {
+                            Ok(result) => {
+                                any_ok = true;
+                                info!(
+                                    target: "ble_gui::poll",
+                                    "查询 标签={tab_index} 从站={slave_id} [#{}] 寄存器 {} (协议 {address}×{count}) → {result}",
+                                    item.item_index,
+                                    item.register_text,
+                                );
+                                QueryItemPollResult {
+                                    item_index: item.item_index,
+                                    status: "正常".into(),
+                                    result,
+                                    ok: true,
+                                }
+                            }
+                            Err(err) => {
+                                warn!(
+                                    target: "ble_gui::poll",
+                                    "查询 标签={tab_index} [#{}] 寄存器 {} 解析失败: {err}",
+                                    item.item_index,
+                                    item.register_text,
+                                );
+                                QueryItemPollResult {
+                                    item_index: item.item_index,
+                                    status: "解析失败".into(),
+                                    result: err,
+                                    ok: false,
+                                }
+                            }
+                        }
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {
+                        return false;
+                    }
+                    Err(err) => {
+                        warn!(
+                            target: "ble_gui::poll",
+                            "查询 标签={tab_index} [#{}] 寄存器 {} (协议 {address}×{count}) 失败: {err}",
+                            item.item_index,
+                            item.register_text,
+                        );
+                        QueryItemPollResult {
+                            item_index: item.item_index,
+                            status: "失败".into(),
+                            result: err.to_string(),
+                            ok: false,
+                        }
                     }
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {
-                    return false;
-                }
-                Err(err) => {
-                    warn!(
-                        target: "ble_gui::poll",
-                        "查询 标签={tab_index} [#{}] 寄存器 {} (协议 {address}) 失败: {err}",
-                        item.item_index,
-                        item.register_text,
-                    );
-                    QueryItemPollResult {
-                        item_index: item.item_index,
-                        status: "失败".into(),
-                        result: err.to_string(),
-                        ok: false,
-                    }
-                }
-            },
+            }
         };
         if poll_result.ok {
             any_ok = true;

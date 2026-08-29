@@ -7,6 +7,7 @@ use slint::language::{DragAction, DropEvent};
 use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecModel};
 
 use crate::app::{close_dialog, open_dialog};
+use crate::services::ble::modbus::{parse_register_count, parse_scale, value_type_from_index};
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
 use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
@@ -53,6 +54,9 @@ impl ModbusQueryState {
             vec![enrich_query_item(ModbusQueryItem {
                 name: "室内温度".into(),
                 register: "40001".into(),
+                value_type: "integer".into(),
+                register_count: 1,
+                scale: 1,
                 status: "正常".into(),
                 result: "24.6 °C".into(),
                 result_display: SharedString::default(),
@@ -73,6 +77,30 @@ fn clear_query_form(ui: &MainWindow) {
     ui.set_show_add_query_form(false);
     ui.set_query_form_name(SharedString::default());
     ui.set_query_form_register(SharedString::default());
+    ui.set_query_form_value_type_index(0);
+    ui.set_query_form_register_count(SharedString::default());
+    ui.set_query_form_scale(SharedString::default());
+}
+
+fn new_pending_query_item(
+    name: &str,
+    register: &str,
+    value_type_index: i32,
+    register_count_text: &str,
+    scale_text: &str,
+) -> ModbusQueryItem {
+    let value_type = value_type_from_index(value_type_index);
+    enrich_query_item(ModbusQueryItem {
+        name: name.into(),
+        register: register.into(),
+        value_type: value_type.as_str().into(),
+        register_count: parse_register_count(register_count_text, 1) as i32,
+        scale: parse_scale(scale_text) as i32,
+        status: "等待查询".into(),
+        result: "（Modbus 轮询后将自动填充）".into(),
+        result_display: SharedString::default(),
+        result_font_size: 20,
+    })
 }
 
 fn clear_selection(ctx: &AppContext, ui: &MainWindow) {
@@ -280,6 +308,9 @@ fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
     enrich_query_item(ModbusQueryItem {
         name: source.name.clone(),
         register: source.register.clone(),
+        value_type: source.value_type.clone(),
+        register_count: source.register_count,
+        scale: source.scale,
         status: "等待查询".into(),
         result: "（Modbus 轮询后将自动填充）".into(),
         result_display: SharedString::default(),
@@ -674,6 +705,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ctx_panel.state.borrow_mut().modbus_query.pending_query_tab = tab_index;
         ui.set_query_form_name(SharedString::default());
         ui.set_query_form_register(SharedString::default());
+        ui.set_query_form_value_type_index(0);
         ui.set_show_add_query_form(true);
     });
 
@@ -691,6 +723,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if name.is_empty() || register.is_empty() {
             return;
         }
+        let value_type_index = ui.get_query_form_value_type_index();
+        let register_count = ui.get_query_form_register_count().to_string();
+        let scale = ui.get_query_form_scale().to_string();
         let idx = ctx_add.state.borrow().modbus_query.pending_query_tab as usize;
         clear_query_form(&ui);
         let st = ctx_add.state.borrow();
@@ -702,14 +737,13 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let mut items_vec: Vec<ModbusQueryItem> = (0..items.row_count())
             .filter_map(|i| items.row_data(i))
             .collect();
-        items_vec.push(enrich_query_item(ModbusQueryItem {
-            name: name.into(),
-            register: register.into(),
-            status: "等待查询".into(),
-            result: "（Modbus 轮询后将自动填充）".into(),
-            result_display: SharedString::default(),
-            result_font_size: 20,
-        }));
+        items_vec.push(new_pending_query_item(
+            &name,
+            &register,
+            value_type_index,
+            &register_count,
+            &scale,
+        ));
         drop(st);
         update_tab_items(&ctx_add, &ui, idx, items_vec);
     });

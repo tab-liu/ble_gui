@@ -69,6 +69,9 @@ export component MainWindow inherits Window {
     in-out property <bool> show-add-query-form: false;
     in-out property <string> query-form-name: "";
     in-out property <string> query-form-register: "";
+    in-out property <int> query-form-value-type-index: 0;
+    in-out property <string> query-form-register-count: "";
+    in-out property <string> query-form-scale: "";
 
     in-out property <string> active-tab-slave-id: "0";
     in-out property <bool> has-selected-queries;
@@ -203,6 +206,9 @@ export component MainWindow inherits Window {
                             show-add-query-form: root.show-add-query-form;
                             query-form-name <=> root.query-form-name;
                             query-form-register <=> root.query-form-register;
+                            query-form-value-type-index <=> root.query-form-value-type-index;
+                            query-form-register-count <=> root.query-form-register-count;
+                            query-form-scale <=> root.query-form-scale;
                             active-tab-slave-id <=> root.active-tab-slave-id;
                             has-selected-queries: root.has-selected-queries;
                             query-selection-states: root.query-selection-states;
