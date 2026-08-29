@@ -8,8 +8,6 @@ pub struct BleScanEntry {
     pub address: String,
     /// 当前信号强度，随广播实时更新。
     pub rssi: i32,
-    /// 首次发现时的信号强度，用于稳定排序。
-    pub initial_rssi: i32,
     /// 广播中包含 FF00 服务，判定为目标 BLUETTI 设备。
     pub is_target: bool,
 }
@@ -100,7 +98,6 @@ impl BleInner {
                 name: display_name,
                 address: address.to_string(),
                 rssi,
-                initial_rssi: rssi,
                 is_target,
             });
             self.scan_list_generation += 1;
@@ -159,5 +156,10 @@ impl BleInner {
 pub type SharedBleState = Arc<Mutex<BleInner>>;
 
 fn placeholder_name(address: &str) -> String {
-    format!("BLUETTI ({address})")
+    format!("蓝牙设备 ({address})")
+}
+
+/// 尚未解析到广播名称时的占位显示名。
+pub fn is_placeholder_scan_name(name: &str) -> bool {
+    name.starts_with("蓝牙设备 (") && name.ends_with(')')
 }

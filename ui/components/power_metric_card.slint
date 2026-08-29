@@ -1,0 +1,37 @@
+import { VerticalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component PowerMetricCard inherits Rectangle {
+    in property <string> label;
+    in property <int> power-w: -1;
+    in property <bool> data-valid: false;
+    in property <color> value-color: Theme.text-primary;
+
+    width: 168px;
+    height: 94px;
+    border-radius: 10px;
+    background: Theme.bg-card;
+    border-width: 1px;
+    border-color: Theme.border-card;
+
+    VerticalBox {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        spacing: 6px;
+
+        Text {
+            text: root.label;
+            color: Theme.text-muted;
+            font-size: 11px;
+        }
+
+        Text {
+            text: root.data-valid && root.power-w >= 0 ? root.power-w + " W" : "-- W";
+            color: root.value-color;
+            font-size: 22px;
+            font-weight: 700;
+        }
+    }
+}

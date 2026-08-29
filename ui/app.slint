@@ -4,7 +4,6 @@ import {
     ModbusQueryItem,
     ModbusTab,
     ModbusQueryLayoutRow,
-    DashboardMetric,
     BleScanDevice,
 } from "types.slint";
 
@@ -22,7 +21,6 @@ export {
     ModbusQueryItem,
     ModbusTab,
     ModbusQueryLayoutRow,
-    DashboardMetric,
     BleScanDevice,
     Theme,
     Palette,
@@ -46,8 +44,15 @@ export component MainWindow inherits Window {
     in-out property <bool> ble-scan-rssi-filter-enabled: false;
     in-out property <string> ble-scan-rssi-min: "-70";
 
-    in-out property <[DashboardMetric]> metrics;
-    in-out property <[string]> dashboard-summary;
+    in-out property <int> dashboard-soc: -1;
+    in-out property <int> dashboard-ac-output-w: -1;
+    in-out property <int> dashboard-dc-output-w: -1;
+    in-out property <int> dashboard-pv-input-w: -1;
+    in-out property <int> dashboard-ac-input-w: -1;
+    in-out property <bool> dashboard-data-valid;
+    in-out property <bool> ac-output-on;
+    in-out property <bool> dc-output-on;
+    in-out property <bool> output-control-busy;
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
@@ -77,6 +82,8 @@ export component MainWindow inherits Window {
     callback select-scan-device(string);
     callback connect-selected-clicked();
     callback ble-scan-filters-changed();
+    callback ac-output-toggle();
+    callback dc-output-toggle();
     callback add-modbus-tab-request();
     callback remove-modbus-tab(int);
     callback switch-modbus-tab(int);
@@ -160,8 +167,15 @@ export component MainWindow inherits Window {
                             scan-filter <=> root.ble-scan-filter;
                             scan-rssi-filter-enabled <=> root.ble-scan-rssi-filter-enabled;
                             scan-rssi-min <=> root.ble-scan-rssi-min;
-                            metrics: root.metrics;
-                            dashboard-summary: root.dashboard-summary;
+                            dashboard-soc: root.dashboard-soc;
+                            dashboard-ac-output-w: root.dashboard-ac-output-w;
+                            dashboard-dc-output-w: root.dashboard-dc-output-w;
+                            dashboard-pv-input-w: root.dashboard-pv-input-w;
+                            dashboard-ac-input-w: root.dashboard-ac-input-w;
+                            dashboard-data-valid: root.dashboard-data-valid;
+                            ac-output-on: root.ac-output-on;
+                            dc-output-on: root.dc-output-on;
+                            output-control-busy: root.output-control-busy;
                             select-scan-device(address) => {
                                 root.select-scan-device(address);
                             }
@@ -170,6 +184,12 @@ export component MainWindow inherits Window {
                             }
                             scan-filters-changed => {
                                 root.ble-scan-filters-changed();
+                            }
+                            ac-output-toggle => {
+                                root.ac-output-toggle();
+                            }
+                            dc-output-toggle => {
+                                root.dc-output-toggle();
                             }
                         }
 

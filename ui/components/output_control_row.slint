@@ -1,0 +1,60 @@
+import { HorizontalBox, Button } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component OutputControlRow inherits Rectangle {
+    in property <string> label;
+    in property <bool> output-on;
+    in property <bool> data-valid: false;
+    in property <bool> busy: false;
+    callback toggle-clicked();
+
+    horizontal-stretch: 1;
+    vertical-stretch: 0;
+    height: 72px;
+    border-radius: 10px;
+    background: Theme.bg-card;
+    border-width: 1px;
+    border-color: Theme.border-card;
+
+    HorizontalBox {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 14px;
+        padding-bottom: 14px;
+        spacing: 12px;
+        alignment: space-between;
+
+        HorizontalBox {
+            spacing: 16px;
+            alignment: start;
+
+            Text {
+                text: root.label;
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+                vertical-alignment: center;
+            }
+
+            Text {
+                text: !root.data-valid ? "未知"
+                    : root.output-on ? "已开启" : "已关闭";
+                color: !root.data-valid ? Theme.text-dim
+                    : root.output-on ? Theme.success : Theme.text-muted;
+                font-size: 13px;
+                vertical-alignment: center;
+            }
+        }
+
+        Button {
+            text: root.busy ? "处理中…"
+                : (root.output-on ? "关闭" : "开启");
+            min-width: 88px;
+            enabled: root.data-valid && !root.busy;
+            primary: root.data-valid && !root.output-on;
+            clicked => {
+                root.toggle-clicked();
+            }
+        }
+    }
+}

@@ -3,10 +3,10 @@
 use slint::ComponentHandle;
 
 use crate::app::refresh;
+use crate::services::ble::{REG_AC_OUTPUT, REG_DC_OUTPUT};
 use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS};
 use crate::ui::MainWindow;
-use crate::ui::bindings::refresh_ble;
-use crate::ui::bindings::refresh_ble_scan_filter;
+use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ui_weak = ui.as_weak();
@@ -75,5 +75,39 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.on_ble_scan_filters_changed(move || {
         let ui = ui_weak.unwrap();
         refresh_ble_scan_filter(&ui, &ctx_filter.ble.snapshot());
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_ac = ctx.clone();
+    ui.on_ac_output_toggle(move || {
+        let ui = ui_weak.unwrap();
+        if !ctx_ac.ble.is_connected() {
+            return;
+        }
+        let data = ctx_ac.modbus.dashboard_data();
+        if !data.data_valid || ctx_ac.modbus.output_busy() {
+            return;
+        }
+        let on = !data.ac_output_on;
+        ctx_ac.modbus.set_output_busy(true);
+        refresh_modbus_dashboard(&ui, &ctx_ac.modbus);
+        ctx_ac.ble.write_register(REG_AC_OUTPUT, if on { 1 } else { 0 });
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_dc = ctx.clone();
+    ui.on_dc_output_toggle(move || {
+        let ui = ui_weak.unwrap();
+        if !ctx_dc.ble.is_connected() {
+            return;
+        }
+        let data = ctx_dc.modbus.dashboard_data();
+        if !data.data_valid || ctx_dc.modbus.output_busy() {
+            return;
+        }
+        let on = !data.dc_output_on;
+        ctx_dc.modbus.set_output_busy(true);
+        refresh_modbus_dashboard(&ui, &ctx_dc.modbus);
+        ctx_dc.ble.write_register(REG_DC_OUTPUT, if on { 1 } else { 0 });
     });
 }

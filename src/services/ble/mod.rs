@@ -1,9 +1,13 @@
 //! 蓝牙连接服务：同步 UI 接口 + Tokio/btleplug 后台 worker。
 
+mod crypto;
+mod modbus;
+mod poll;
 mod protocol;
 mod runtime;
 mod state;
 mod target;
+mod transport;
 mod uuids;
 mod worker;
 mod win_name;
@@ -13,10 +17,14 @@ use std::rc::Rc;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::services::modbus::SharedModbusLive;
+
 use runtime::TokioRuntime;
 use state::{BleInner, LinkPhase, SharedBleState};
 use worker::{BleCommand, worker_main};
 
+pub use modbus::{REG_AC_OUTPUT, REG_DC_OUTPUT};
+pub use poll::{clear_live_on_disconnect, init_live_on_connect};
 pub use state::{BleScanEntry, BleSnapshot};
 
 /// Worker 线程回调：通过 `slint::invoke_from_event_loop` 在主线程刷新 UI。
@@ -28,6 +36,7 @@ struct BleServiceInner {
     cmd_tx: UnboundedSender<BleCommand>,
     event_rx: Mutex<mpsc::Receiver<()>>,
     ui_refresh: UiRefreshSlot,
+    modbus_live: SharedModbusLive,
 }
 
 #[derive(Clone)]
@@ -36,7 +45,7 @@ pub struct BleService {
 }
 
 impl BleService {
-    pub fn new() -> Self {
+    pub fn new(modbus_live: SharedModbusLive) -> Self {
         let state: SharedBleState = Arc::new(Mutex::new(BleInner::default()));
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel();
@@ -45,8 +54,9 @@ impl BleService {
         let runtime = TokioRuntime::new();
         let worker_state = state.clone();
         let worker_ui_refresh = ui_refresh.clone();
+        let worker_live = modbus_live.clone();
         runtime.spawn(async move {
-            worker_main(cmd_rx, worker_state, event_tx, worker_ui_refresh).await;
+            worker_main(cmd_rx, worker_state, event_tx, worker_ui_refresh, worker_live).await;
         });
 
         Self {
@@ -55,6 +65,7 @@ impl BleService {
                 cmd_tx,
                 event_rx: Mutex::new(event_rx),
                 ui_refresh,
+                modbus_live,
             }),
         }
     }
@@ -108,6 +119,10 @@ impl BleService {
 
     pub fn disconnect(&self) {
         let _ = self.inner.cmd_tx.send(BleCommand::Disconnect);
+    }
+
+    pub fn write_register(&self, address: u16, value: u16) {
+        let _ = self.inner.cmd_tx.send(BleCommand::WriteRegister { address, value });
     }
 
     pub fn is_connected(&self) -> bool {

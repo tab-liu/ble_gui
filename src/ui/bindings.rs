@@ -1,11 +1,10 @@
-use log::debug;
 use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::services::ble::{BleScanEntry, BleSnapshot};
 use crate::services::firmware::FirmwareSnapshot;
-use crate::services::modbus::ModbusDashboard;
+use crate::services::modbus::DashboardData;
 use crate::state::AppContext;
 use crate::ui::BleScanDevice;
 use crate::ui::MainWindow;
@@ -17,12 +16,9 @@ struct ScanListCache {
     addresses: Vec<String>,
 }
 
-const SCAN_RSSI_REFRESH_MS: u64 = 1000;
-
 struct BleUiCache {
     scan_generation: u64,
     filter_key: String,
-    last_list_refresh_ms: u64,
 }
 
 thread_local! {
@@ -30,16 +26,7 @@ thread_local! {
     static BLE_UI_CACHE: RefCell<BleUiCache> = RefCell::new(BleUiCache {
         scan_generation: u64::MAX,
         filter_key: String::new(),
-        last_list_refresh_ms: 0,
     });
-}
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
 }
 
 fn parse_rssi_min(text: &str) -> i32 {
@@ -73,11 +60,6 @@ fn prepare_scan_devices(
         result.retain(|d| d.rssi >= min_rssi);
     }
 
-    result.sort_by(|a, b| {
-        b.is_target
-            .cmp(&a.is_target)
-            .then_with(|| b.initial_rssi.cmp(&a.initial_rssi))
-    });
     result
 }
 
@@ -87,12 +69,12 @@ fn scan_empty_message(snap: &BleSnapshot, filtered_len: usize) -> String {
     }
     let raw = snap.scan_devices.len();
     if raw > 0 {
-        return format!("已发现 {raw} 个 BLUETTI 设备，均被当前过滤条件隐藏（请清空名称过滤或关闭信号强度过滤）");
+        return format!("已发现 {raw} 个蓝牙设备，均被当前过滤条件隐藏（请清空名称过滤或关闭信号强度过滤）");
     }
     if snap.scanning {
-        "正在扫描 BLUETTI 设备…".into()
+        "正在扫描蓝牙设备…".into()
     } else {
-        "暂无 BLUETTI 设备，请点击顶部「扫描设备」".into()
+        "暂无蓝牙设备，请点击顶部「扫描设备」".into()
     }
 }
 
@@ -109,14 +91,7 @@ fn should_refresh_scan_list(ui: &MainWindow, snap: &BleSnapshot) -> bool {
     let filter_key = scan_filter_key(ui);
     BLE_UI_CACHE.with(|cell| {
         let cache = cell.borrow();
-        if filter_key != cache.filter_key {
-            return true;
-        }
-        if snap.scanning {
-            // 扫描中统一按 1s 周期刷新（新设备、RSSI 均在此周期内更新）。
-            return now_ms().saturating_sub(cache.last_list_refresh_ms) >= SCAN_RSSI_REFRESH_MS;
-        }
-        snap.scan_list_generation != cache.scan_generation
+        filter_key != cache.filter_key || snap.scan_list_generation != cache.scan_generation
     })
 }
 
@@ -125,7 +100,6 @@ fn mark_scan_list_refreshed(ui: &MainWindow, snap: &BleSnapshot) {
         let mut cache = cell.borrow_mut();
         cache.scan_generation = snap.scan_list_generation;
         cache.filter_key = scan_filter_key(ui);
-        cache.last_list_refresh_ms = now_ms();
     });
 }
 
@@ -150,14 +124,14 @@ fn entries_to_devices(entries: &[BleScanEntry]) -> Vec<BleScanDevice> {
         .collect()
 }
 
-/// 尽量原地更新 VecModel，避免扫描期间整表替换导致列表行无法点击。
+/// 尽量原地更新或末尾追加，避免整表替换导致已有行跳动。
 fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
     let devices = entries_to_devices(filtered);
     let addresses: Vec<String> = filtered.iter().map(|d| d.address.clone()).collect();
 
     SCAN_LIST_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
-        if let Some(cached) = cache.as_ref() {
+        if let Some(cached) = cache.as_mut() {
             if cached.addresses == addresses {
                 for (i, dev) in devices.iter().enumerate() {
                     let unchanged = cached.rows.row_data(i).is_some_and(|row| {
@@ -167,6 +141,17 @@ fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
                         cached.rows.set_row_data(i, dev.clone());
                     }
                 }
+                return;
+            }
+
+            // 发现顺序追加：仅追加新行，已有行不动。
+            if addresses.len() > cached.addresses.len()
+                && addresses[..cached.addresses.len()] == cached.addresses[..]
+            {
+                for dev in devices.iter().skip(cached.addresses.len()) {
+                    cached.rows.push(dev.clone());
+                }
+                cached.addresses = addresses;
                 return;
             }
         }
@@ -185,15 +170,6 @@ fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot) {
         ui.get_ble_scan_rssi_min().as_str(),
     );
 
-    debug!(
-        target: "ble_gui::ui",
-        "refresh scan list: phase={:?} scanning={} raw={} filtered={}",
-        snap.link_phase,
-        snap.scanning,
-        snap.scan_devices.len(),
-        filtered.len(),
-    );
-
     ui.set_scan_device_total(filtered.len() as i32);
     sync_scan_devices(ui, &filtered);
     ui.set_scan_empty_message(scan_empty_message(snap, filtered.len()).into());
@@ -208,13 +184,30 @@ fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot) {
 
 /// 将各服务状态同步到 Slint UI。
 pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
+    let connected = ctx.ble.is_connected();
     refresh_ble(ui, &ctx.ble.snapshot());
-    if ctx.ble.is_connected() {
-        refresh_dashboard(ui, &ctx.modbus.dashboard_snapshot());
+    if connected {
+        ctx.modbus.on_connected();
     } else {
-        refresh_dashboard(ui, &ctx.modbus.disconnected_dashboard());
+        ctx.modbus.on_disconnected();
     }
+    refresh_modbus_dashboard(ui, &ctx.modbus);
     refresh_firmware(ui, &ctx.firmware.snapshot());
+}
+
+pub fn refresh_modbus_dashboard(ui: &MainWindow, modbus: &crate::services::modbus::ModbusService) {
+    refresh_modbus_dashboard_from_live(ui, &modbus.shared_live());
+}
+
+pub fn refresh_modbus_dashboard_from_live(
+    ui: &MainWindow,
+    live: &crate::services::modbus::SharedModbusLive,
+) {
+    let (dash, busy, _) = live
+        .lock()
+        .map(|l| (l.dashboard.clone(), l.output_busy, l.modbus_online))
+        .unwrap_or_default();
+    refresh_dashboard(ui, &dash, busy);
 }
 
 pub fn refresh_ble(ui: &MainWindow, snap: &BleSnapshot) {
@@ -229,14 +222,16 @@ pub fn refresh_ble_scan_filter(ui: &MainWindow, snap: &BleSnapshot) {
     refresh_ble_status(ui, snap);
 }
 
-pub fn refresh_dashboard(ui: &MainWindow, dash: &ModbusDashboard) {
-    ui.set_metrics(ModelRc::new(VecModel::from(dash.metrics.clone())));
-    ui.set_dashboard_summary(ModelRc::new(VecModel::from(
-        dash.summary
-            .iter()
-            .map(|s| slint::SharedString::from(s.as_str()))
-            .collect::<Vec<_>>(),
-    )));
+pub fn refresh_dashboard(ui: &MainWindow, dash: &DashboardData, output_busy: bool) {
+    ui.set_dashboard_soc(dash.soc);
+    ui.set_dashboard_ac_output_w(dash.ac_output_w);
+    ui.set_dashboard_dc_output_w(dash.dc_output_w);
+    ui.set_dashboard_pv_input_w(dash.pv_input_w);
+    ui.set_dashboard_ac_input_w(dash.ac_input_w);
+    ui.set_dashboard_data_valid(dash.data_valid);
+    ui.set_ac_output_on(dash.ac_output_on);
+    ui.set_dc_output_on(dash.dc_output_on);
+    ui.set_output_control_busy(output_busy);
 }
 
 pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {

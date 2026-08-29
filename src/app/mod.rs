@@ -8,7 +8,7 @@ use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 use crate::pages;
 use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD};
 use crate::ui::MainWindow;
-use crate::ui::bindings::{self, refresh_all, refresh_ble};
+use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_modbus_dashboard_from_live};
 
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
@@ -16,13 +16,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     let ui_weak = ui.as_weak();
     let ble_state = ctx.ble.shared_state();
+    let modbus_live = ctx.modbus.shared_live();
     ctx.ble.set_ui_refresh_hook(Arc::new(move || {
         let ui_weak = ui_weak.clone();
         let ble_state = ble_state.clone();
+        let modbus_live = modbus_live.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let snap = ble_state.lock().expect("ble state lock").snapshot();
                 refresh_ble(&ui, &snap);
+                if snap.connected {
+                    refresh_modbus_dashboard_from_live(&ui, &modbus_live);
+                }
             }
         });
     }));

@@ -7,9 +7,7 @@ mod state;
 mod ui;
 
 fn main() -> Result<(), slint::PlatformError> {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info,ble_gui::services::ble=debug"),
-    )
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
     .format_timestamp_millis()
     .init();
     app::run()

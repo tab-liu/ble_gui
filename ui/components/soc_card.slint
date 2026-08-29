@@ -1,0 +1,55 @@
+import { VerticalBox } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+
+export component SocCard inherits Rectangle {
+    in property <int> soc: -1;
+    in property <bool> data-valid: false;
+
+    width: 220px;
+    height: 200px;
+    border-radius: 12px;
+    background: Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: Theme.border-accent;
+
+    VerticalBox {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "电池电量 / SOC";
+            color: Theme.text-muted;
+            font-size: 12px;
+        }
+
+        Text {
+            text: root.data-valid && root.soc >= 0 ? root.soc + "%" : "--%";
+            color: Theme.accent;
+            font-size: 42px;
+            font-weight: 700;
+        }
+
+        Rectangle {
+            height: 10px;
+            border-radius: 5px;
+            background: Theme.border-subtle;
+
+            Rectangle {
+                x: 0;
+                y: 0;
+                height: parent.height;
+                width: root.data-valid && root.soc >= 0
+                    ? parent.width * clamp(root.soc, 0, 100) / 100
+                    : 0;
+                border-radius: 5px;
+                background: Theme.accent;
+            }
+        }
+
+        Text {
+            text: root.data-valid ? "设备实时上报" : "等待首次轮询";
+            color: Theme.text-dim;
+            font-size: 11px;
+        }
+    }
+}

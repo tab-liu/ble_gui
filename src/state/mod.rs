@@ -36,14 +36,16 @@ pub struct AppContext {
 
 impl AppContext {
     pub fn new() -> Self {
+        let modbus = ModbusService::new();
+        let modbus_live = modbus.shared_live();
         Self {
             state: Rc::new(RefCell::new(AppState {
                 modbus_query: ModbusQueryState::new(Rc::new(VecModel::from(vec![
                     ModbusQueryState::default_tab("默认分组", true),
                 ]))),
             })),
-            ble: BleService::new(),
-            modbus: ModbusService::new(),
+            ble: BleService::new(modbus_live),
+            modbus,
             firmware: FirmwareService::new(),
             theme: ThemeService::new(),
         }

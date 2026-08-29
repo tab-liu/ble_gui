@@ -1,8 +1,10 @@
 import { VerticalBox, HorizontalBox, ScrollView, LineEdit, CheckBox, Button } from "std-widgets.slint";
-import { DashboardMetric, BleScanDevice } from "../types.slint";
+import { BleScanDevice } from "../types.slint";
 import { Theme } from "../theme.slint";
-import { MetricCard } from "../components/metric_card.slint";
 import { ScanDeviceRow } from "../components/scan_device_row.slint";
+import { SocCard } from "../components/soc_card.slint";
+import { PowerMetricCard } from "../components/power_metric_card.slint";
+import { OutputControlRow } from "../components/output_control_row.slint";
 
 export component DashboardPage inherits VerticalBox {
     in property <bool> device-connected;
@@ -10,8 +12,15 @@ export component DashboardPage inherits VerticalBox {
     in property <[BleScanDevice]> scan-devices;
     in property <int> scan-device-total;
     in property <string> scan-empty-message;
-    in property <[DashboardMetric]> metrics;
-    in property <[string]> dashboard-summary;
+    in property <int> dashboard-soc: -1;
+    in property <int> dashboard-ac-output-w: -1;
+    in property <int> dashboard-dc-output-w: -1;
+    in property <int> dashboard-pv-input-w: -1;
+    in property <int> dashboard-ac-input-w: -1;
+    in property <bool> dashboard-data-valid;
+    in property <bool> ac-output-on;
+    in property <bool> dc-output-on;
+    in property <bool> output-control-busy;
     in-out property <string> scan-filter;
     in-out property <bool> scan-rssi-filter-enabled;
     in-out property <string> scan-rssi-min;
@@ -19,6 +28,8 @@ export component DashboardPage inherits VerticalBox {
     callback select-scan-device(string);
     callback connect-selected-clicked();
     callback scan-filters-changed();
+    callback ac-output-toggle();
+    callback dc-output-toggle();
 
     spacing: 16px;
     vertical-stretch: 1;
@@ -134,49 +145,117 @@ export component DashboardPage inherits VerticalBox {
     if root.device-connected: VerticalBox {
         spacing: 16px;
         vertical-stretch: 1;
+        alignment: start;
 
-        Text {
-            text: "Modbus 数据概览";
-            color: Theme.text-primary;
-            font-size: 18px;
-            font-weight: 700;
-        }
-
-        HorizontalBox {
-            spacing: 12px;
-            alignment: start;
-
-            for metric in root.metrics: MetricCard {
-                label: metric.label;
-                value: metric.value;
-                unit: metric.unit;
-                hint: metric.hint;
-                accent: metric.accent-color;
-            }
-        }
-
+        // 数据区：固定尺寸卡片，不随窗口拉伸
         Rectangle {
-            vertical-stretch: 1;
-            border-radius: 10px;
+            vertical-stretch: 0;
+            border-radius: 12px;
             background: Theme.bg-panel;
             border-width: 1px;
             border-color: Theme.border;
 
             VerticalBox {
-                padding: 20px;
-                spacing: 10px;
+                padding: 16px;
+                spacing: 12px;
+
+                HorizontalBox {
+                    spacing: 16px;
+                    alignment: start;
+
+                    SocCard {
+                        soc: root.dashboard-soc;
+                        data-valid: root.dashboard-data-valid;
+                    }
+
+                    VerticalBox {
+                        spacing: 12px;
+
+                        HorizontalBox {
+                            spacing: 12px;
+                            alignment: start;
+
+                            PowerMetricCard {
+                                label: "AC 输出功率";
+                                power-w: root.dashboard-ac-output-w;
+                                data-valid: root.dashboard-data-valid;
+                                value-color: Theme.accent;
+                            }
+
+                            PowerMetricCard {
+                                label: "DC 输出功率";
+                                power-w: root.dashboard-dc-output-w;
+                                data-valid: root.dashboard-data-valid;
+                                value-color: #f59e0b;
+                            }
+                        }
+
+                        HorizontalBox {
+                            spacing: 12px;
+                            alignment: start;
+
+                            PowerMetricCard {
+                                label: "PV 输入功率";
+                                power-w: root.dashboard-pv-input-w;
+                                data-valid: root.dashboard-data-valid;
+                                value-color: Theme.success;
+                            }
+
+                            PowerMetricCard {
+                                label: "AC 输入功率";
+                                power-w: root.dashboard-ac-input-w;
+                                data-valid: root.dashboard-data-valid;
+                                value-color: Theme.text-primary;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 输出控制：紧跟数据区，宽度随主区域拉伸
+        Rectangle {
+            vertical-stretch: 0;
+            horizontal-stretch: 1;
+            border-radius: 12px;
+            background: Theme.bg-panel-alt;
+            border-width: 1px;
+            border-color: Theme.border;
+
+            VerticalBox {
+                padding: 16px;
+                spacing: 12px;
 
                 Text {
-                    text: "设备运行摘要";
+                    text: "输出控制";
                     color: Theme.text-primary;
                     font-size: 14px;
                     font-weight: 600;
                 }
 
-                for row in root.dashboard-summary: Text {
-                    text: row;
-                    color: Theme.text-secondary;
-                    font-size: 13px;
+                HorizontalBox {
+                    spacing: 12px;
+                    cross-axis-alignment: start;
+
+                    OutputControlRow {
+                        label: "AC 输出";
+                        output-on: root.ac-output-on;
+                        data-valid: root.dashboard-data-valid;
+                        busy: root.output-control-busy;
+                        toggle-clicked => {
+                            root.ac-output-toggle();
+                        }
+                    }
+
+                    OutputControlRow {
+                        label: "DC 输出";
+                        output-on: root.dc-output-on;
+                        data-valid: root.dashboard-data-valid;
+                        busy: root.output-control-busy;
+                        toggle-clicked => {
+                            root.dc-output-toggle();
+                        }
+                    }
                 }
             }
         }

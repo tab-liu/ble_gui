@@ -1,57 +1,100 @@
-//! Modbus 数据服务（当前为模拟实现）。
+//! Modbus 主页数据（寄存器 100～149 实时数据、2011/2012 输出控制）。
+//! 实时值由 BLE worker 写入 `SharedModbusLive`，UI 从本服务读取。
 
-use crate::ui::DashboardMetric;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Default)]
-pub struct ModbusDashboard {
-    pub metrics: Vec<DashboardMetric>,
-    pub summary: Vec<String>,
+pub struct DashboardData {
+    pub soc: i32,
+    pub ac_output_w: i32,
+    pub dc_output_w: i32,
+    pub pv_input_w: i32,
+    pub ac_input_w: i32,
+    pub data_valid: bool,
+    pub ac_output_on: bool,
+    pub dc_output_on: bool,
+}
+
+/// BLE worker 与 UI 共享的 Modbus 实时状态。
+#[derive(Clone, Debug, Default)]
+pub struct ModbusLive {
+    pub dashboard: DashboardData,
+    pub output_busy: bool,
+    pub slave_id: u8,
+    pub modbus_online: bool,
+}
+
+pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
+
+struct ModbusInner {
+    live: SharedModbusLive,
+    session_active: bool,
 }
 
 #[derive(Clone)]
-pub struct ModbusService;
+pub struct ModbusService {
+    inner: Rc<RefCell<ModbusInner>>,
+}
 
 impl ModbusService {
     pub fn new() -> Self {
-        Self
-    }
-
-    pub fn dashboard_snapshot(&self) -> ModbusDashboard {
-        ModbusDashboard {
-            metrics: vec![
-                metric("室内温度", "24.6", "°C", "寄存器 40001", green()),
-                metric("运行状态", "正常", "", "状态字 00001", green()),
-                metric("输出电压", "220", "V", "寄存器 40003", blue()),
-                metric("负载电流", "3.2", "A", "寄存器 40004", blue()),
-            ],
-            summary: vec![
-                "Modbus 通信: 正常".into(),
-                "最近轮询: 刚刚".into(),
-                "设备固件: v2.1.0".into(),
-                "已配置查询项: 可在 Modbus 页管理".into(),
-            ],
+        Self {
+            inner: Rc::new(RefCell::new(ModbusInner {
+                live: Arc::new(Mutex::new(ModbusLive::default())),
+                session_active: false,
+            })),
         }
     }
 
-    pub fn disconnected_dashboard(&self) -> ModbusDashboard {
-        ModbusDashboard::default()
+    pub fn shared_live(&self) -> SharedModbusLive {
+        self.inner.borrow().live.clone()
     }
-}
 
-fn metric(label: &str, value: &str, unit: &str, hint: &str, accent: slint::Color) -> DashboardMetric {
-    DashboardMetric {
-        label: label.into(),
-        value: value.into(),
-        unit: unit.into(),
-        hint: hint.into(),
-        accent_color: accent,
+    pub fn on_connected(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.session_active = true;
     }
-}
 
-fn green() -> slint::Color {
-    slint::Color::from_rgb_u8(126, 200, 164)
-}
+    pub fn on_disconnected(&self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.session_active = false;
+        if let Ok(mut live) = inner.live.lock() {
+            live.dashboard = DashboardData::default();
+            live.output_busy = false;
+            live.modbus_online = false;
+        }
+    }
 
-fn blue() -> slint::Color {
-    slint::Color::from_rgb_u8(74, 124, 255)
+    pub fn dashboard_data(&self) -> DashboardData {
+        self.inner
+            .borrow()
+            .live
+            .lock()
+            .map(|l| l.dashboard.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn output_busy(&self) -> bool {
+        self.inner
+            .borrow()
+            .live
+            .lock()
+            .map(|l| l.output_busy)
+            .unwrap_or(false)
+    }
+
+    pub fn set_output_busy(&self, busy: bool) {
+        if let Ok(mut live) = self.inner.borrow().live.lock() {
+            live.output_busy = busy;
+        }
+    }
+
+    pub fn apply_control_state(&self, ac_on: bool, dc_on: bool) {
+        if let Ok(mut live) = self.inner.borrow().live.lock() {
+            live.dashboard.ac_output_on = ac_on;
+            live.dashboard.dc_output_on = dc_on;
+        }
+    }
 }

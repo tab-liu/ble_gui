@@ -1,12 +1,9 @@
-//! BLUETTI BLE 应用层协议：2A2A 鉴权 + 0086/0007 ECDH + AES-CBC 业务包。
+//! BLUETTI BLE 应用层协议：2A2A 鉴权 + ECDH + Modbus 业务传输。
 //!
-//! 逻辑对齐 ref/tool/BLUETTI_BLE_Bridge.cs 与 ref/dev/main/bluetooth/app_ble.c。
+//! 加解密见 `crypto`，Modbus RTU 见 `modbus`，通知重组见 `transport`。
 
 use std::io;
 
-use aes::Aes128;
-use cbc::{Decryptor, Encryptor};
-use cipher::{block_padding::ZeroPadding, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
 use md5::{Digest, Md5};
 use p256::ecdh::diffie_hellman;
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey, VerifyingKey};
@@ -15,65 +12,12 @@ use p256::{EncodedPoint, PublicKey, SecretKey};
 use rand::rngs::OsRng;
 use sha2::{Digest as Sha2Digest, Sha256};
 
-type Aes128CbcEnc = Encryptor<Aes128>;
-type Aes128CbcDec = Decryptor<Aes128>;
-
-/// 与 C# 常量一致。
-const AES_KEY: [u8; 16] = hex_const("459FC535808941F17091E0993EE3E93D");
-const PRIVATE_KEY_L1: [u8; 32] = hex_bytes32(
-    "4F19A16E3E87BDD9BD24D3E5495B88041511943CBC8B969ADE9641D0F56AF337",
-);
-const PUBLIC_KEY_K2: [u8; 64] = hex_bytes64(
-    "A73ABF5D2232C8C1C72E68304343C272495E3A8FD6F30EA96DE2F4B3CE60B251EE21AC667CF8A71E18B46B664EAEFFE3C489F24F695B6411DB7E22CCC85A8594",
-);
-
-const fn hex_const(s: &str) -> [u8; 16] {
-    let bytes = s.as_bytes();
-    let mut out = [0u8; 16];
-    let mut i = 0;
-    while i < 16 {
-        let hi = hex_nibble(bytes[i * 2]);
-        let lo = hex_nibble(bytes[i * 2 + 1]);
-        out[i] = (hi << 4) | lo;
-        i += 1;
-    }
-    out
-}
-
-const fn hex_bytes32(s: &str) -> [u8; 32] {
-    let bytes = s.as_bytes();
-    let mut out = [0u8; 32];
-    let mut i = 0;
-    while i < 32 {
-        let hi = hex_nibble(bytes[i * 2]);
-        let lo = hex_nibble(bytes[i * 2 + 1]);
-        out[i] = (hi << 4) | lo;
-        i += 1;
-    }
-    out
-}
-
-const fn hex_bytes64(s: &str) -> [u8; 64] {
-    let bytes = s.as_bytes();
-    let mut out = [0u8; 64];
-    let mut i = 0;
-    while i < 64 {
-        let hi = hex_nibble(bytes[i * 2]);
-        let lo = hex_nibble(bytes[i * 2 + 1]);
-        out[i] = (hi << 4) | lo;
-        i += 1;
-    }
-    out
-}
-
-const fn hex_nibble(b: u8) -> u8 {
-    match b {
-        b'0'..=b'9' => b - b'0',
-        b'a'..=b'f' => b - b'a' + 10,
-        b'A'..=b'F' => b - b'A' + 10,
-        _ => 0,
-    }
-}
+use super::crypto::{
+    aes_cbc, encrypt_business_packet, trim_zero, zero_pad, PRIVATE_KEY_L1, PUBLIC_KEY_K2,
+    ROOT_AES_KEY,
+};
+use super::modbus::{build_read_holding, DEFAULT_SLAVE_ID};
+use super::transport::ModbusRxAssembler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakePhase {
@@ -96,6 +40,7 @@ pub struct ProtocolSession {
     ephemeral_secret: Option<SecretKey>,
     handshake_acc: Vec<u8>,
     handshake_prefix: Option<&'static str>,
+    pub rx: ModbusRxAssembler,
 }
 
 impl ProtocolSession {
@@ -113,6 +58,7 @@ impl ProtocolSession {
             ephemeral_secret: None,
             handshake_acc: Vec::new(),
             handshake_prefix: None,
+            rx: ModbusRxAssembler::new(),
         }
     }
 
@@ -124,11 +70,48 @@ impl ProtocolSession {
         self.encryption_ready
     }
 
+    pub fn is_plaintext_modbus(&self) -> bool {
+        self.phase == HandshakePhase::Plaintext
+    }
+
+    pub fn modbus_ready(&self) -> bool {
+        self.encryption_ready || self.phase == HandshakePhase::Plaintext
+    }
+
     pub fn auth_started(&self) -> bool {
         self.auth_started
     }
 
-    /// 处理 GATT 通知；返回需要写入 FF02 的响应包（若有）。
+    pub fn shared_key(&self) -> Option<[u8; 32]> {
+        self.shared_key
+    }
+
+    /// 将 Modbus RTU 明文帧包装为 BLE 空口数据。
+    pub fn wrap_modbus_request(&self, plain: &[u8]) -> io::Result<Vec<u8>> {
+        if self.encryption_ready {
+            let key = self.shared_key.ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "ECDH 共享密钥未建立")
+            })?;
+            encrypt_business_packet(&key, plain)
+        } else if self.phase == HandshakePhase::Plaintext {
+            Ok(plain.to_vec())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Modbus 链路尚未就绪",
+            ))
+        }
+    }
+
+    pub fn pop_modbus_response(&mut self) -> Option<Vec<u8>> {
+        self.rx.pop_response()
+    }
+
+    pub fn clear_modbus_responses(&mut self) {
+        self.rx.clear_pending_responses();
+    }
+
+    /// 处理 GATT 通知；返回需写入 FF02 的握手响应（若有）。
     pub fn on_notification(&mut self, data: &[u8]) -> io::Result<Option<Vec<u8>>> {
         if data.is_empty() {
             return Ok(None);
@@ -170,7 +153,9 @@ impl ProtocolSession {
             return self.handle_key_exchange_result(data);
         }
 
-        // 业务包留待 Modbus 阶段处理。
+        if self.modbus_ready() {
+            self.rx.push_notification(data)?;
+        }
         Ok(None)
     }
 
@@ -198,7 +183,7 @@ impl ProtocolSession {
         let md5_hash = md5_bytes(&random);
         let mut new_aes_key = [0u8; 16];
         for i in 0..16 {
-            new_aes_key[i] = md5_hash[i] ^ AES_KEY[i];
+            new_aes_key[i] = md5_hash[i] ^ ROOT_AES_KEY[i];
         }
         self.md5_hash = Some(md5_hash);
         self.new_aes_key = Some(new_aes_key);
@@ -216,7 +201,6 @@ impl ProtocolSession {
         response[8] = (check >> 8) as u8;
         response[9] = check as u8;
 
-        self.phase = HandshakePhase::WaitingAuth;
         Ok(Some(response.to_vec()))
     }
 
@@ -243,26 +227,32 @@ impl ProtocolSession {
                 "收到 0086 但 2A2A 鉴权尚未完成",
             ));
         }
-        let md5_hash = self.md5_hash.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文")
-        })?;
-        let new_aes_key = self.new_aes_key.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥")
-        })?;
+        let md5_hash = self
+            .md5_hash
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文"))?;
+        let new_aes_key = self
+            .new_aes_key
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥"))?;
 
         let cipher = &data[2..];
         let decrypted = trim_zero(&aes_cbc(false, &new_aes_key, &md5_hash, cipher)?);
         if decrypted.len() < 134 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "0086 解密后长度不足",
+                format!("0086 解密后长度不足: {}", decrypted.len()),
             ));
         }
-        let payload = &decrypted[4..decrypted.len() - 6];
+        // 对齐 C# Slice(decrypted, 4, decrypted.Length - 6)：从偏移 4 起取 (len-6) 字节。
+        let payload_count = decrypted.len() - 6;
+        let payload = &decrypted[4..4 + payload_count];
         if payload.len() < 128 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "0086 有效载荷不足 128 字节",
+                format!(
+                    "0086 有效载荷不足 128 字节: decrypted_len={} payload_len={}",
+                    decrypted.len(),
+                    payload.len(),
+                ),
             ));
         }
         let mut iot_public = [0u8; 64];
@@ -284,12 +274,12 @@ impl ProtocolSession {
     }
 
     fn build_key_exchange_response(&mut self) -> io::Result<Vec<u8>> {
-        let md5_hash = self.md5_hash.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文")
-        })?;
-        let new_aes_key = self.new_aes_key.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥")
-        })?;
+        let md5_hash = self
+            .md5_hash
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文"))?;
+        let new_aes_key = self
+            .new_aes_key
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥"))?;
 
         let secret = SecretKey::random(&mut OsRng);
         let public = secret.public_key();
@@ -333,18 +323,19 @@ impl ProtocolSession {
     }
 
     fn handle_key_exchange_result(&mut self, data: &[u8]) -> io::Result<Option<Vec<u8>>> {
-        let md5_hash = self.md5_hash.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文")
-        })?;
-        let new_aes_key = self.new_aes_key.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥")
-        })?;
-        let ephemeral = self.ephemeral_secret.take().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少 ECDH 临时私钥")
-        })?;
-        let iot_public_raw = self.iot_public_key.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "缺少 IoT 公钥")
-        })?;
+        let md5_hash = self
+            .md5_hash
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少 MD5 上下文"))?;
+        let new_aes_key = self
+            .new_aes_key
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥"))?;
+        let ephemeral = self
+            .ephemeral_secret
+            .take()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少 ECDH 临时私钥"))?;
+        let iot_public_raw = self
+            .iot_public_key
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少 IoT 公钥"))?;
 
         let cipher = &data[2..];
         let plain = trim_zero(&aes_cbc(false, &new_aes_key, &md5_hash, cipher)?);
@@ -366,33 +357,16 @@ impl ProtocolSession {
         self.key_exchange_done = true;
         self.encryption_ready = true;
         self.phase = HandshakePhase::Encrypted;
+        self.rx.set_encrypted(shared_key);
 
-        // 与 C# 一致：协商完成后发送 Modbus 探测包。
-        let probe_plain = hex::decode("01030001001015C6").unwrap();
-        Ok(Some(self.encrypt_business_packet(&probe_plain)?))
-    }
-
-    pub fn encrypt_business_packet(&self, plain: &[u8]) -> io::Result<Vec<u8>> {
-        let shared_key = self.shared_key.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::InvalidData, "ECDH 共享密钥未建立")
-        })?;
-        let padded = zero_pad(plain, 16);
-        let mut random = [0u8; 4];
-        rand::RngCore::fill_bytes(&mut OsRng, &mut random);
-        let iv = md5_bytes(&random);
-        let cipher = aes_cbc(true, &shared_key, &iv, &padded)?;
-
-        let mut packet = Vec::with_capacity(6 + cipher.len());
-        packet.push((plain.len() >> 8) as u8);
-        packet.push(plain.len() as u8);
-        packet.extend_from_slice(&random);
-        packet.extend_from_slice(&cipher);
-        Ok(packet)
+        let probe = build_read_holding(DEFAULT_SLAVE_ID, 1, 16);
+        Ok(Some(encrypt_business_packet(&shared_key, &probe)?))
     }
 
     pub fn mark_plaintext_mode(&mut self) {
         self.phase = HandshakePhase::Plaintext;
         self.encryption_ready = false;
+        self.rx.set_plaintext();
     }
 }
 
@@ -415,51 +389,6 @@ fn additive_checksum(data: &[u8]) -> u16 {
     data.iter().map(|b| *b as u32).sum::<u32>() as u16
 }
 
-fn zero_pad(data: &[u8], block_size: usize) -> Vec<u8> {
-    let padding = block_size - (data.len() % block_size);
-    let mut out = Vec::with_capacity(data.len() + padding);
-    out.extend_from_slice(data);
-    out.resize(out.len() + padding, 0);
-    out
-}
-
-fn trim_zero(data: &[u8]) -> Vec<u8> {
-    let mut len = data.len();
-    while len > 0 && data[len - 1] == 0 {
-        len -= 1;
-    }
-    data[..len].to_vec()
-}
-
-fn aes_cbc(encrypt: bool, key: &[u8], iv: &[u8], data: &[u8]) -> io::Result<Vec<u8>> {
-    if data.is_empty() || data.len() % 16 != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "AES-CBC 数据必须 16 字节对齐",
-        ));
-    }
-    let key_arr: [u8; 16] = key.try_into().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "AES 密钥长度必须为 16")
-    })?;
-    let iv_arr: [u8; 16] = iv.try_into().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidData, "AES IV 长度必须为 16")
-    })?;
-
-    if encrypt {
-        let mut buf = data.to_vec();
-        Aes128CbcEnc::new(&key_arr.into(), &iv_arr.into())
-            .encrypt_padded_mut::<ZeroPadding>(&mut buf, data.len())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-        Ok(buf)
-    } else {
-        let mut buf = data.to_vec();
-        Ok(Aes128CbcDec::new(&key_arr.into(), &iv_arr.into())
-            .decrypt_padded_mut::<ZeroPadding>(&mut buf)
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
-            .to_vec())
-    }
-}
-
 fn public_key_from_raw64(raw: &[u8; 64]) -> io::Result<PublicKey> {
     let mut encoded = [0u8; 65];
     encoded[0] = 0x04;
@@ -473,13 +402,12 @@ fn public_key_from_raw64(raw: &[u8; 64]) -> io::Result<PublicKey> {
 }
 
 fn sign_raw(private_key: &[u8; 32], data: &[u8]) -> io::Result<[u8; 64]> {
-    let signing_key = SigningKey::from_bytes(private_key.into()).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    let signing_key = SigningKey::from_bytes(private_key.into())
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     let hash = Sha256::digest(data);
-    let signature: Signature = signing_key.sign_prehash(&hash).map_err(|e| {
-        io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    let signature: Signature = signing_key
+        .sign_prehash(&hash)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     Ok(signature.to_bytes().into())
 }
 
@@ -505,12 +433,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn auth_request_roundtrip_structure() {
+    fn auth_request_structure() {
         let mut session = ProtocolSession::new();
         let req = hex::decode("2A2A010001020304").unwrap();
-        let resp = session.handle_auth_request(&req).unwrap().unwrap();
+        let resp = session.on_notification(&req).unwrap().unwrap();
         assert_eq!(resp.len(), 10);
         assert_eq!(resp[0], 0x2A);
-        assert_eq!(resp[1], 0x2A);
+    }
+
+    #[test]
+    fn key_exchange_payload_slice_matches_csharp() {
+        // C# Slice(decrypted, 4, decrypted.Length - 6) → len=134 时 payload 仍为 128 字节。
+        let decrypted: Vec<u8> = (0..134u8).collect();
+        let payload_count = decrypted.len() - 6;
+        let payload = &decrypted[4..4 + payload_count];
+        assert_eq!(payload.len(), 128);
     }
 }

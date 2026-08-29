@@ -10,20 +10,31 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::StreamExt;
-use log::{debug, info, warn};
+use log::warn;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use super::poll::{
+    clear_live_on_disconnect, init_live_on_connect, poll_dashboard, poll_dashboard_once,
+    write_control_register, ModbusGate,
+};
 use super::protocol::{HandshakePhase, ProtocolSession};
 use super::state::{LinkPhase, SharedBleState};
 use super::target::{is_target_manufacturer_data, is_target_properties, matches_ff00};
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
+use crate::services::modbus::SharedModbusLive;
+use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
     StartScan,
     StopScan,
     Connect { address: String },
     Disconnect,
+    WriteRegister { address: u16, value: u16 },
+}
+
+enum SessionCommand {
+    WriteRegister { address: u16, value: u16 },
 }
 
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
@@ -31,6 +42,7 @@ type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
 struct ActiveSession {
     notify_task: tokio::task::JoinHandle<()>,
     peripheral: Peripheral,
+    cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
 }
 
 fn set_phase(state: &SharedBleState, phase: LinkPhase, detail: impl Into<String>) {
@@ -38,12 +50,6 @@ fn set_phase(state: &SharedBleState, phase: LinkPhase, detail: impl Into<String>
         inner.phase = phase;
         inner.status_detail = detail.into();
     }
-}
-
-fn notify_ui(
-    ui_refresh: &super::UiRefreshSlot,
-) {
-    notify_ui_force(ui_refresh, false);
 }
 
 fn notify_ui_force(
@@ -92,6 +98,7 @@ pub async fn worker_main(
     state: SharedBleState,
     event_tx: std::sync::mpsc::Sender<()>,
     ui_refresh: super::UiRefreshSlot,
+    modbus_live: SharedModbusLive,
 ) {
     let manager = match Manager::new().await {
         Ok(m) => m,
@@ -134,7 +141,6 @@ pub async fn worker_main(
                 if state.lock().expect("ble state lock").phase == LinkPhase::Scanning
                     && scan_task.is_some()
                 {
-                    info!(target: "ble_gui::services::ble", "StartScan ignored: already scanning");
                     continue;
                 }
                 if let Some(active) = session.take() {
@@ -151,10 +157,9 @@ pub async fn worker_main(
                     inner.phase = LinkPhase::Scanning;
                     inner.scan_devices.clear();
                     inner.scan_list_generation += 1;
-                    inner.status_detail = "正在扫描附近 BLE 设备……".into();
+                    inner.status_detail = "正在扫描附近蓝牙设备……".into();
                 }
                 known.lock().expect("known lock").clear();
-                info!(target: "ble_gui::services::ble", "StartScan: list cleared, spawning scan loop");
                 notify_ui_force(&ui_refresh, true);
 
                 let adapter_clone = adapter.clone();
@@ -174,7 +179,6 @@ pub async fn worker_main(
                 }));
             }
             BleCommand::StopScan => {
-                info!(target: "ble_gui::services::ble", "StopScan requested");
                 // 立刻切换状态，避免 UI 在 worker 清理完成前仍显示「扫描中」。
                 set_phase(&state, LinkPhase::Idle, "正在停止扫描……");
                 notify_ui_force(&ui_refresh, true);
@@ -199,7 +203,6 @@ pub async fn worker_main(
                     LinkPhase::Idle,
                     format!("扫描已停止（共 {count} 个设备）"),
                 );
-                info!(target: "ble_gui::services::ble", "StopScan done: {count} devices in list");
                 notify_ui_force(&ui_refresh, true);
             }
             BleCommand::Connect { address } => {
@@ -227,6 +230,7 @@ pub async fn worker_main(
                     &ui_refresh,
                     &address,
                     &known,
+                    &modbus_live,
                 )
                 .await {
                     Ok(active) => session = Some(active),
@@ -242,6 +246,7 @@ pub async fn worker_main(
                     active.notify_task.abort();
                     let _ = active.peripheral.disconnect().await;
                 }
+                clear_live_on_disconnect(&modbus_live);
                 {
                     let mut inner = state.lock().expect("ble state lock");
                     inner.phase = LinkPhase::Idle;
@@ -252,6 +257,11 @@ pub async fn worker_main(
                     inner.status_detail = "已断开".into();
                 }
                 notify_ui_force(&ui_refresh, true);
+            }
+            BleCommand::WriteRegister { address, value } => {
+                if let Some(active) = &session {
+                    let _ = active.cmd_tx.send(SessionCommand::WriteRegister { address, value });
+                }
             }
         }
     }
@@ -284,7 +294,6 @@ async fn run_scan_loop(
         notify_ui_force(&ui_refresh, true);
         return;
     }
-    info!(target: "ble_gui::services::ble", "scan loop started");
 
     let mut name_resolve_pending: HashSet<String> = HashSet::new();
 
@@ -302,6 +311,8 @@ async fn run_scan_loop(
 
     let mut poll = tokio::time::interval(Duration::from_millis(SCAN_SYNC_INTERVAL_MS));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // 跳过 interval 首次立即触发的 tick，避免与上方 sync 重复。
+    poll.tick().await;
 
     loop {
         if state.lock().expect("ble state lock").phase != LinkPhase::Scanning {
@@ -329,7 +340,7 @@ async fn run_scan_loop(
                         }
                         match event {
                             CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id) => {
-                                let _ = ingest_peripheral(
+                                if ingest_peripheral(
                                     &adapter,
                                     &id,
                                     &state,
@@ -340,11 +351,14 @@ async fn run_scan_loop(
                                     false,
                                     true,
                                 )
-                                .await;
+                                .await
+                                {
+                                    notify_scan_list_changed(&state, &ui_refresh);
+                                }
                             }
                             CentralEvent::ServicesAdvertisement { id, services } => {
                                 let force_target = services.iter().any(|uuid| matches_ff00(uuid));
-                                let _ = ingest_peripheral(
+                                if ingest_peripheral(
                                     &adapter,
                                     &id,
                                     &state,
@@ -355,14 +369,17 @@ async fn run_scan_loop(
                                     force_target,
                                     true,
                                 )
-                                .await;
+                                .await
+                                {
+                                    notify_scan_list_changed(&state, &ui_refresh);
+                                }
                             }
                             CentralEvent::ManufacturerDataAdvertisement { id, manufacturer_data } => {
                                 let force_target = manufacturer_data
                                     .values()
                                     .any(|data| is_target_manufacturer_data(data));
-                                if force_target {
-                                    let _ = ingest_peripheral(
+                                if force_target
+                                    && ingest_peripheral(
                                         &adapter,
                                         &id,
                                         &state,
@@ -373,7 +390,9 @@ async fn run_scan_loop(
                                         true,
                                         true,
                                     )
-                                    .await;
+                                    .await
+                                {
+                                    notify_scan_list_changed(&state, &ui_refresh);
                                 }
                             }
                             _ => {}
@@ -402,12 +421,12 @@ async fn sync_all_peripherals(
     require_scanning: bool,
 ) {
     let Ok(peripherals) = adapter.peripherals().await else {
-        debug!(target: "ble_gui::services::ble", "peripherals() failed");
         return;
     };
     let gen_before = state.lock().expect("ble state lock").scan_list_generation;
+    let mut list_changed = false;
     for peripheral in peripherals {
-        let _ = ingest_peripheral(
+        if ingest_peripheral(
             adapter,
             &peripheral.id(),
             state,
@@ -418,15 +437,24 @@ async fn sync_all_peripherals(
             false,
             require_scanning,
         )
-        .await;
+        .await
+        {
+            list_changed = true;
+        }
     }
-    let scanning = state.lock().expect("ble state lock").phase == LinkPhase::Scanning;
-    if scanning {
+    if list_changed {
         update_scan_status_detail(state);
-        notify_ui(ui_refresh);
-    } else if !require_scanning && gen_before != state.lock().expect("ble state lock").scan_list_generation {
+        notify_ui_force(ui_refresh, true);
+    } else if !require_scanning
+        && gen_before != state.lock().expect("ble state lock").scan_list_generation
+    {
         notify_ui_force(ui_refresh, true);
     }
+}
+
+fn notify_scan_list_changed(state: &SharedBleState, ui_refresh: &super::UiRefreshSlot) {
+    update_scan_status_detail(state);
+    notify_ui_force(ui_refresh, true);
 }
 
 fn update_scan_status_detail(state: &SharedBleState) {
@@ -438,9 +466,9 @@ fn update_scan_status_detail(state: &SharedBleState) {
     let named = inner
         .scan_devices
         .iter()
-        .filter(|d| !d.name.starts_with("BLUETTI ("))
+        .filter(|d| !crate::services::ble::state::is_placeholder_scan_name(&d.name))
         .count();
-    inner.status_detail = format!("已发现 {total} 个 BLUETTI 设备，其中 {named} 个已解析名称");
+    inner.status_detail = format!("已发现 {total} 个蓝牙设备，其中 {named} 个已解析名称");
 }
 
 async fn ingest_peripheral(
@@ -491,13 +519,6 @@ async fn ingest_peripheral(
         inner.scan_list_generation > gen_before || inner.scan_devices.len() > before_len
     };
 
-    if list_changed {
-        debug!(
-            target: "ble_gui::services::ble",
-            "ingest + {address} name={name:?} rssi={rssi} target={is_target}"
-        );
-    }
-
     if name.is_empty() && name_resolve_pending.insert(address.clone()) {
         let peripheral = peripheral.clone();
         let state = state.clone();
@@ -532,7 +553,7 @@ async fn resolve_device_name(
             inner.upsert_advertisement(&name, &address, rssi as i32, is_target_properties(&props));
         }
         update_scan_status_detail(&state);
-        notify_ui(&ui_refresh);
+        notify_ui_force(&ui_refresh, true);
         return;
     }
 
@@ -570,7 +591,7 @@ async fn resolve_device_name(
             inner.upsert_advertisement(&name, &address, rssi as i32, is_target);
         }
         update_scan_status_detail(&state);
-        notify_ui(&ui_refresh);
+        notify_ui_force(&ui_refresh, true);
         return;
     }
 }
@@ -582,6 +603,7 @@ async fn connect_device(
     ui_refresh: &super::UiRefreshSlot,
     address_text: &str,
     known: &KnownMap,
+    modbus_live: &SharedModbusLive,
 ) -> Result<ActiveSession, String> {
     let target_addr = parse_address(address_text).ok_or_else(|| "MAC 地址格式无效".to_string())?;
 
@@ -643,21 +665,63 @@ async fn connect_device(
     }
     notify_ui_force(ui_refresh, true);
 
+    init_live_on_connect(modbus_live);
+
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (session_cmd_tx, mut session_cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
     let protocol = Arc::new(Mutex::new(ProtocolSession::new()));
     let protocol_for_notify = protocol.clone();
+    let protocol_for_write = protocol.clone();
     let state_for_notify = state.clone();
     let event_for_notify = event_tx.clone();
     let peripheral_for_write = peripheral.clone();
     let write_char_for_task = write_char.clone();
     let state_for_plain = state.clone();
     let event_for_plain = event_tx.clone();
+    let ui_refresh_for_poll = ui_refresh.clone();
+    let ui_refresh_for_notify = ui_refresh.clone();
+    let modbus_live_poll = modbus_live.clone();
+    let modbus_live_write = modbus_live.clone();
+    let write_tx_poll = write_tx.clone();
+
+    let modbus_gate: ModbusGate = Arc::new(tokio::sync::Mutex::new(()));
+    let gate_for_poll = modbus_gate.clone();
+    let gate_for_write = modbus_gate.clone();
+    let event_for_poll = event_tx.clone();
+    let protocol_for_poll_task = protocol.clone();
+    let poll_task = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(900)).await;
+        let mut poll_timer = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
+        poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            poll_timer.tick().await;
+            let ready = protocol_for_poll_task
+                .lock()
+                .expect("protocol lock")
+                .modbus_ready();
+            if !ready {
+                continue;
+            }
+            let _ok = poll_dashboard(
+                &protocol_for_poll_task,
+                &write_tx_poll,
+                &modbus_live_poll,
+                &gate_for_poll,
+            )
+            .await;
+            notify_ui_force(&ui_refresh_for_poll, true);
+            let _ = event_for_poll.send(());
+        }
+    });
 
     let peripheral_for_session = peripheral.clone();
     let notify_task = tokio::spawn(async move {
         let mut notifications = match peripheral.notifications().await {
             Ok(stream) => stream,
-            Err(_) => return,
+            Err(_) => {
+                poll_task.abort();
+                return;
+            }
         };
 
         let plain_timer = tokio::time::sleep(Duration::from_secs(6));
@@ -676,16 +740,93 @@ async fn connect_device(
                             inner.status_detail = "设备未触发加密握手，按明文 Modbus 模式".into();
                         }
                         let _ = event_for_plain.send(());
+                        let p = protocol_for_notify.clone();
+                        let w = write_tx.clone();
+                        let l = modbus_live_write.clone();
+                        let g = gate_for_write.clone();
+                        let ui = ui_refresh_for_notify.clone();
+                        let ev = event_for_notify.clone();
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(300)).await;
+                            poll_dashboard_once(&p, &w, &l, &g).await;
+                            notify_ui_force(&ui, true);
+                            let _ = ev.send(());
+                        });
+                    }
+                }
+                maybe_cmd = session_cmd_rx.recv() => {
+                    match maybe_cmd {
+                        Some(SessionCommand::WriteRegister { address, value }) => {
+                            if let Ok(mut live) = modbus_live_write.lock() {
+                                live.output_busy = true;
+                            }
+                            notify_ui_force(&ui_refresh_for_notify, true);
+                            let protocol = protocol_for_write.clone();
+                            let write_tx = write_tx.clone();
+                            let live = modbus_live_write.clone();
+                            let ui = ui_refresh_for_notify.clone();
+                            let event_tx = event_for_notify.clone();
+                            let gate = gate_for_write.clone();
+                            let protocol_poll = protocol.clone();
+                            let write_tx_poll = write_tx.clone();
+                            let live_poll = modbus_live_write.clone();
+                            let gate_poll = gate_for_write.clone();
+                            tokio::spawn(async move {
+                                let result = write_control_register(
+                                    &protocol,
+                                    &write_tx,
+                                    &live,
+                                    &gate,
+                                    address,
+                                    value,
+                                )
+                                .await;
+                                if let Ok(mut live) = live.lock() {
+                                    live.output_busy = false;
+                                    if result.is_err() {
+                                        warn!(
+                                            target: "ble_gui::worker",
+                                            "写寄存器 {address} 失败: {}",
+                                            result.as_ref().err().unwrap_or(&String::new())
+                                        );
+                                    }
+                                }
+                                if result.is_ok() {
+                                    poll_dashboard_once(
+                                        &protocol_poll,
+                                        &write_tx_poll,
+                                        &live_poll,
+                                        &gate_poll,
+                                    )
+                                    .await;
+                                }
+                                notify_ui_force(&ui, true);
+                                let _ = event_tx.send(());
+                            });
+                        }
+                        None => {
+                            poll_task.abort();
+                            break;
+                        }
                     }
                 }
                 maybe_write = write_rx.recv() => {
                     match maybe_write {
                         Some(data) => {
-                            let _ = peripheral_for_write
+                            match peripheral_for_write
                                 .write(&write_char_for_task, &data, WriteType::WithResponse)
-                                .await;
+                                .await
+                            {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    warn!(target: "ble_gui::worker", "GATT 写入失败: {err}");
+                                }
+                            }
                         }
-                        None => break,
+                        None => {
+                            poll_task.abort();
+                            break;
+                        }
                     }
                 }
                 maybe_notification = notifications.next() => {
@@ -693,10 +834,20 @@ async fn connect_device(
                         Some(notification) => {
                             let response = {
                                 let mut session = protocol_for_notify.lock().expect("protocol lock");
+                                let was_encryption_ready = session.is_encryption_ready();
+                                let was_modbus_ready = session.modbus_ready();
                                 let result = session.on_notification(&notification.value);
                                 let encrypted = session.is_encryption_ready();
+                                let became_encrypted = !was_encryption_ready && encrypted;
                                 let phase = session.phase;
-                                (result, encrypted, phase)
+                                let modbus_ready = session.modbus_ready();
+                                let became_modbus_ready = !was_modbus_ready && modbus_ready;
+                                (
+                                    result,
+                                    became_encrypted,
+                                    phase,
+                                    became_modbus_ready,
+                                )
                             };
                             match response.0 {
                                 Ok(Some(bytes)) => {
@@ -704,6 +855,7 @@ async fn connect_device(
                                 }
                                 Ok(None) => {}
                                 Err(err) => {
+                                    warn!(target: "ble_gui::worker", "协议处理异常: {err}");
                                     if let Ok(mut inner) = state_for_notify.lock() {
                                         inner.status_detail = format!("协议处理异常：{err}");
                                     }
@@ -717,15 +869,33 @@ async fn connect_device(
                                     inner.status_detail = "加密链路已完成".into();
                                 }
                                 let _ = event_for_notify.send(());
+                                // 仅首次加密就绪时拉一次仪表板（周期任务也会轮询）。
+                                let p = protocol_for_notify.clone();
+                                let w = write_tx.clone();
+                                let l = modbus_live_write.clone();
+                                let g = gate_for_write.clone();
+                                let ui = ui_refresh_for_notify.clone();
+                                let ev = event_for_notify.clone();
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_millis(900)).await;
+                                    poll_dashboard_once(&p, &w, &l, &g).await;
+                                    notify_ui_force(&ui, true);
+                                    let _ = ev.send(());
+                                });
                             } else if response.2 == HandshakePhase::AuthDone {
                                 if let Ok(mut inner) = state_for_notify.lock() {
                                     inner.phase = LinkPhase::Handshake;
                                     inner.status_detail = "2A2A 鉴权成功，ECDH 握手中……".into();
                                 }
                                 let _ = event_for_notify.send(());
+                            } else if response.3 {
+                                let _ = event_for_notify.send(());
                             }
                         }
-                        None => break,
+                        None => {
+                            poll_task.abort();
+                            break;
+                        }
                     }
                 }
             }
@@ -735,6 +905,7 @@ async fn connect_device(
     Ok(ActiveSession {
         notify_task,
         peripheral: peripheral_for_session,
+        cmd_tx: session_cmd_tx,
     })
 }
 
