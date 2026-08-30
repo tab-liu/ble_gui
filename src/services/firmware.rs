@@ -1,4 +1,8 @@
-//! 设备固件升级服务（当前为模拟实现）。
+//! 设备固件升级服务。
+//!
+//! 当前为占位实现（检查更新仅更新文案）。后续 BLE OTA 应对齐 `ref/tool`
+//!（固件头解析 + Modbus OTA Start + XMODEM-1K），类型枚举以 `ref/dev` 为准
+//!（`DEVICE_IOT = 0` 等，勿使用 Studio 显示表里错误的「IOT=4」）。
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -1,4 +1,13 @@
 //! 全局常量与共享应用上下文。
+//!
+//! [`AppContext`] 是 UI 线程上的「服务总线」：克隆成本低（内部 `Rc`/`Arc`），
+//! 各页面 `wire` 闭包捕获它即可调用 BLE / Modbus / 持久化。
+//!
+//! ## 页面 ID
+//!
+//! 与侧栏 `navigate`、Slint `current-page` 一致：
+//! [`PAGE_DASHBOARD`] / [`PAGE_MODBUS`] / [`PAGE_DEVICE_CONFIG`] /
+//! [`PAGE_FIRMWARE`] / [`PAGE_SETTINGS`]。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -22,17 +31,24 @@ pub mod dialog;
 
 pub use dialog::{DIALOG_COPY_QUERY, DIALOG_NEW_TAB, DIALOG_NONE};
 
+/// 主页（仪表板 SOC/功率）。
 pub const PAGE_DASHBOARD: i32 = 0;
+/// Modbus 查询页（可增删查询项 + 前台轮询）。
 pub const PAGE_MODBUS: i32 = 1;
+/// 应用设置（主题等）。
 pub const PAGE_SETTINGS: i32 = 2;
+/// 固件升级页。
 pub const PAGE_FIRMWARE: i32 = 3;
+/// 设备配置（固定「常用」+ 自定义寄存器表单）。
 pub const PAGE_DEVICE_CONFIG: i32 = 4;
 
+/// UI 线程可变状态（查询标签、设备配置分组等）。
 pub struct AppState {
     pub modbus_query: ModbusQueryState,
     pub device_config: DeviceConfigState,
 }
 
+/// 可克隆的应用上下文；跨页面共享服务与状态句柄。
 #[derive(Clone)]
 pub struct AppContext {
     pub state: Rc<RefCell<AppState>>,

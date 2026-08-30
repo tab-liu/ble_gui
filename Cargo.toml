@@ -2,6 +2,7 @@
 name = "ble_gui"
 version = "0.1.0"
 edition = "2024"
+description = "BLE Modbus desktop tool (Slint + btleplug). Docs: cargo docs"
 
 [dependencies]
 slint = "1.17"

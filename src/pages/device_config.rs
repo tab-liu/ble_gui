@@ -1,4 +1,13 @@
-//! 设备配置页：固定「常用」+ 可编辑灵活分组；前台轮询读回，写入走保持寄存器。
+//! 设备配置页：固定「常用」+ 可编辑灵活分组。
+//!
+//! # 设计要点
+//!
+//! - **常用**（`builtin=true`）：schema 在 `device_config_builtin`（[`BUILTIN_SETTINGS`]），不可删改名；
+//!   可含 bit 域，写入时 RMW。  
+//! - **自定义分组**：整寄存器表单（开关/文本/数值），TOML 持久化见
+//!   [`crate::services::device_config_store`]。  
+//! - **读写分离**：轮询只改「读回」字段，不覆盖「设置」输入框。  
+//! - 与查询页共用 `QueryPollSnapshot`，目标为 [`QueryPollTarget::DeviceConfig`]。
 
 use std::rc::Rc;
 

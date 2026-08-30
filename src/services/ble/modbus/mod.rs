@@ -1,4 +1,12 @@
-//! BLE 链路上的 Modbus RTU 辅助。
+//! BLE 链路上的 Modbus RTU 辅助（帧构建、查询格式化、TLV、仪表解析）。
+//!
+//! | 子模块 | 内容 |
+//! |--------|------|
+//! | [`rtu`] | CRC、读/写保持寄存器帧、响应解析 |
+//! | [`query`] | 地址记法、整数/浮点/字符串格式化与写入编码 |
+//! | [`tlv`] | 组合读（写 21000）批量 TL |
+//! | [`dashboard`] | 主页 100～149 / 2011～2012 映射 |
+//! | [`device_config_builtin`] | 设备配置「常用」静态寄存器表 |
 
 mod dashboard;
 mod device_config_builtin;

@@ -1,4 +1,13 @@
-//! Modbus 查询页：标签与寄存器列表管理。
+//! Modbus 查询页：标签、查询卡片、拖拽布局与轮询结果合并。
+//!
+//! # 数据流
+//!
+//! 1. 用户编辑列表 → 内存 [`ModbusQueryState`] + [`crate::services::modbus_query_store::save`]  
+//! 2. [`crate::services::poll_sync::sync_poll_policy`] → worker 按当前标签轮询  
+//! 3. 结果写入 `QueryPollSnapshot` → [`apply_query_poll_results`] 合并到卡片  
+//!    （只更新 `status`/`result`，不改寄存器定义）
+//!
+//! 查询项「倍数」：显示值 ≈ 原始整数 / scale（设备配置页无倍数）。
 
 use std::rc::Rc;
 

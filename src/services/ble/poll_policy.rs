@@ -1,4 +1,10 @@
 //! 前台轮询策略：worker 只轮询当前可见页面所需的数据。
+//!
+//! [`PollForeground`] 由 UI 线程经 [`crate::services::poll_sync`] 写入
+//! [`SharedPollPolicy`]；worker 在每轮轮询前读取 [`effective_foreground`]。
+//!
+//! 连接刚就绪且策略仍为 [`PollForeground::None`]、同时 UI 在主页时，
+//! [`ensure_dashboard_poll_if_idle`] 会自动切到仪表板轮询（不依赖 UI 定时器）。
 
 use std::sync::{Arc, Mutex};
 

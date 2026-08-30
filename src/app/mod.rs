@@ -1,4 +1,18 @@
-//! 应用组装：创建 UI、注入各页面回调、运行事件循环。
+//! 应用组装层：创建窗口、注入回调、定时刷新、跑事件循环。
+//!
+//! # 启动顺序（[`run`]）
+//!
+//! 1. `MainWindow::new()` — 编译期由 `build.rs` 生成的 Slint 根组件  
+//! 2. [`crate::state::AppContext::new`] — 加载 TOML、构造 BLE/Modbus 服务  
+//! 3. 注册 BLE UI 刷新钩子（worker → `invoke_from_event_loop`）  
+//! 4. [`crate::pages::wire_all`] — 各页 `on_*` 回调  
+//! 5. 50ms 定时器：连线态刷新、合并查询/配置轮询结果  
+//! 6. `ui.run()` — 阻塞直到窗口关闭  
+//!
+//! # 与页面层的边界
+//!
+//! 本模块不写具体业务；业务在 `pages::*` 与 `services::*`。
+//! 这里只负责「把服务接到 UI 生命周期」。
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -15,6 +29,7 @@ use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_modbus_dashboard_from_live};
 
+/// 创建并运行主窗口（阻塞到退出）。
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
     let ctx = AppContext::new();
@@ -81,6 +96,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 was_connected.set(false);
             }
 
+            // worker 写入 query_live 后递增 generation；有变化才合并到 Slint 模型
             let poll_gen = ctx_poll.modbus.query_poll_generation();
             if poll_gen != query_gen_applied.get() {
                 modbus_query::apply_query_poll_results(&ui, &ctx_poll);
@@ -98,11 +114,13 @@ pub fn refresh(ui: &MainWindow, ctx: &AppContext) {
     refresh_all(ui, ctx);
 }
 
+/// 打开通用对话框（种类见 [`crate::state::dialog`]）。
 pub fn open_dialog(ui: &MainWindow, kind: i32) {
     ui.set_dialog_kind(kind);
     ui.set_dialog_name(SharedString::default());
 }
 
+/// 关闭对话框。
 pub fn close_dialog(ui: &MainWindow) {
     bindings::close_dialog(ui);
 }

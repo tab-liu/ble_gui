@@ -1,4 +1,26 @@
 //! 蓝牙连接服务：同步 UI 接口 + Tokio/btleplug 后台 worker。
+//!
+//! # 分层
+//!
+//! ```text
+//! BleService (本模块，UI 线程 API)
+//!     │  UnboundedSender<BleCommand>
+//!     ▼
+//! worker::worker_main          —— 扫描 / 连接 / 会话生命周期
+//!     ├── protocol             —— 握手、业务加密封装
+//!     ├── crypto               —— AES / ECDH 密钥
+//!     ├── transport            —— GATT 写队列、粘包拆帧
+//!     ├── poll_policy          —— 「当前该轮询什么」
+//!     ├── poll_executor        —— 按策略读寄存器，写 query_live
+//!     └── modbus::*            —— RTU / TLV / 仪表解析 / 查询格式化
+//! ```
+//!
+//! # 使用注意
+//!
+//! - UI 只调用 [`BleService`] 的方法，不要直接碰 worker。
+//! - 连接态与扫描列表通过 [`shared_state`](BleService::shared_state) 快照读取。
+//! - 切换页面后务必 [`set_poll_foreground`](BleService::set_poll_foreground)
+//!   （通常由 [`crate::services::poll_sync`] 完成）。
 
 mod crypto;
 pub mod modbus;

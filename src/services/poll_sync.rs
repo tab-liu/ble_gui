@@ -1,4 +1,7 @@
-//! UI 层 → BLE worker：同步前台轮询策略。
+//! UI → BLE worker：同步前台轮询策略。
+//!
+//! 在换页、换标签/分组、改查询列表后调用 [`sync_poll_policy`]，
+//! 使 worker 只服务当前可见页（见 [`crate::services::ble::PollForeground`]）。
 
 use slint::Model;
 
@@ -12,7 +15,7 @@ use crate::state::{
 };
 use crate::ui::MainWindow;
 
-/// 切换页面并同步 Slint 与轮询策略。
+/// 切换页面并同步至 Slint 与 worker 轮询策略。
 pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
     ctx.ble.set_ui_page(page);
     ui.set_current_page(page);
@@ -22,7 +25,7 @@ pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
     }
 }
 
-/// 根据当前页面、Modbus 标签与查询列表，更新 worker 轮询目标。
+/// 根据当前页面与激活列表，更新 worker 的 [`PollForeground`]。
 pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
     let foreground = if !ctx.ble.is_connected() {
         PollForeground::None

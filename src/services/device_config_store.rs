@@ -1,5 +1,11 @@
 //! 设备配置页灵活分组持久化（TOML）。
-//! 「常用」组由代码映射，不写入文件；只保存用户自定义分组与激活索引。
+//!
+//! 路径：Unix `~/.config/ble_gui/device_config.toml`，
+//! Windows `%APPDATA%\ble_gui\device_config.toml`。
+//!
+//! - **不写入**「常用」组内容（由代码 [`BUILTIN_SETTINGS`](crate::services::ble::modbus::BUILTIN_SETTINGS) 提供）  
+//! - 只保存用户自定义分组的 schema 与 `active_group`  
+//! - 加载时总是先插入 builtin「常用」，再追加文件中的自定义组
 
 use std::fs;
 use std::path::PathBuf;

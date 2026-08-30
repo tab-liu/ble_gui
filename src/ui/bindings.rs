@@ -1,3 +1,7 @@
+//! 将服务层快照刷到 Slint 属性（BLE 列表、仪表板、固件文案等）。
+//!
+//! 尽量做增量更新（扫描列表缓存），避免每帧重建整个 model 造成闪烁。
+
 use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;

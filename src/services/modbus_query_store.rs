@@ -1,4 +1,9 @@
 //! Modbus 查询页标签与寄存器配置持久化（TOML）。
+//!
+//! 路径：Unix `~/.config/ble_gui/modbus_query.toml`，
+//! Windows `%APPDATA%\ble_gui\modbus_query.toml`。
+//!
+//! 只存 schema（名称/寄存器/类型/长度/倍数）与激活标签；不存轮询读回值。
 
 use std::fs;
 use std::path::PathBuf;

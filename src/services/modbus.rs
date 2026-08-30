@@ -1,5 +1,10 @@
-//! Modbus 主页数据（寄存器 100～149 实时数据、2011/2012 输出控制）。
-//! 实时值由 BLE worker 写入 `SharedModbusLive`，UI 从本服务读取。
+//! Modbus 主页数据与查询轮询共享态。
+//!
+//! - [`ModbusLive`]：仪表板 SOC/功率、AC/DC 开关、读模式（标准/TLV）  
+//! - [`QueryPollSnapshot`]：查询页 **与** 设备配置页共用的单项读回结果  
+//!   （通过 [`QueryPollTarget`] 区分归属，避免串页）
+//!
+//! BLE worker 写入上述 `Arc<Mutex<_>>`；UI 定时器读 generation 后合并进 Slint。
 
 use std::cell::RefCell;
 use std::rc::Rc;

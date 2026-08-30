@@ -1,4 +1,4 @@
-//! 设备固件升级页。
+//! 固件升级页回调（检查更新等）；OTA 传输逻辑将落在 [`crate::services::firmware`] / BLE worker。
 
 use slint::ComponentHandle;
 

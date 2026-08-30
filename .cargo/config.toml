@@ -1,0 +1,8 @@
+# 本仓库为 binary crate，业务模块多为私有。
+# 默认让 `cargo doc` 包含内部模块，便于本地阅读与学习。
+[build]
+rustdocflags = ["--document-private-items"]
+
+# 快捷：cargo docs  →  生成并打开（不含依赖文档）
+[alias]
+docs = "doc --no-deps --open"
