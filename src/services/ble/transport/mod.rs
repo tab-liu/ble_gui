@@ -58,13 +58,6 @@ impl ModbusRxAssembler {
         self.responses.clear();
     }
 
-    pub fn reset(&mut self) {
-        self.buffer.clear();
-        self.responses.clear();
-        self.encrypted = false;
-        self.shared_key = None;
-    }
-
     fn enqueue(&mut self, plain: Vec<u8>) {
         if !plain.is_empty() {
             self.responses.push_back(plain);

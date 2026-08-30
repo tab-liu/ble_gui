@@ -23,8 +23,8 @@ struct QueryDragPayload {
     source_index: usize,
 }
 
-struct GridLayoutState {
-    width: f32,
+pub(crate) struct GridLayoutState {
+    pub(crate) width: f32,
 }
 
 pub struct ModbusQueryState {

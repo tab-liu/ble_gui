@@ -6,14 +6,13 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use btleplug::api::{
-    BDAddr, Central, CentralEvent, Manager as _, Peripheral as _, PeripheralProperties,
+    BDAddr, Central, CentralEvent, Manager as _, Peripheral as _,
     ScanFilter, WriteType,
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::StreamExt;
 use log::{info, warn};
 use tokio::sync::mpsc;
-use uuid::Uuid;
 
 use super::poll::{
     clear_live_on_disconnect, init_live_on_connect, write_control_register, ModbusGate,
@@ -568,7 +567,7 @@ async fn resolve_device_name(
     peripheral: Peripheral,
     address: String,
     state: SharedBleState,
-    event_tx: std::sync::mpsc::Sender<()>,
+    _event_tx: std::sync::mpsc::Sender<()>,
     ui_refresh: super::UiRefreshSlot,
 ) {
     if let Some(name) = super::win_name::resolve_device_name_from_address(&address).await {

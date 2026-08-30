@@ -79,11 +79,6 @@ pub fn parse_scale(text: &str) -> u32 {
     s.parse::<u32>().unwrap_or(1).max(1)
 }
 
-/// 将单个保持寄存器原始值格式化为展示字符串（兼容旧调用）。
-pub fn format_register_value(value: u16) -> String {
-    value.to_string()
-}
-
 /// 按类型、长度与倍数格式化一次读保持寄存器的结果。
 pub fn format_query_value(
     values: &[u16],
@@ -163,7 +158,8 @@ fn format_string(values: &[u16]) -> Result<String, String> {
 }
 
 /// 将字符串按 Modbus 寄存器规则编码（寄存器内低字节在前，与 [`format_string`] 互逆）。
-pub fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
+#[cfg(test)]
+fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
     let count = register_count.max(1) as usize;
     let mut bytes = vec![0u8; count * 2];
     for (i, &b) in text.as_bytes().iter().enumerate().take(bytes.len()) {

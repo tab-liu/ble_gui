@@ -27,10 +27,9 @@ use state::{BleInner, LinkPhase, SharedBleState};
 use worker::{BleCommand, worker_main};
 
 pub use modbus::{REG_AC_OUTPUT, REG_DC_OUTPUT};
-pub use poll::{clear_live_on_disconnect, init_live_on_connect};
 pub use poll_policy::{
-    describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, PollPolicy,
-    QueryPollItemSpec, SharedPollPolicy, UI_PAGE_DASHBOARD,
+    ensure_dashboard_poll_if_idle, PollForeground,
+    QueryPollItemSpec,
 };
 pub use state::{BleScanEntry, BleSnapshot};
 
@@ -43,8 +42,6 @@ struct BleServiceInner {
     cmd_tx: UnboundedSender<BleCommand>,
     event_rx: Mutex<mpsc::Receiver<()>>,
     ui_refresh: UiRefreshSlot,
-    modbus_live: SharedModbusLive,
-    query_live: SharedQueryPollLive,
     poll_policy: poll_policy::SharedPollPolicy,
 }
 
@@ -92,8 +89,6 @@ impl BleService {
                 cmd_tx,
                 event_rx: Mutex::new(event_rx),
                 ui_refresh,
-                modbus_live,
-                query_live,
                 poll_policy,
             }),
         }

@@ -5,16 +5,24 @@ use slint::ComponentHandle;
 use crate::app::refresh;
 use crate::services::ble::{REG_AC_OUTPUT, REG_DC_OUTPUT};
 use crate::services::poll_sync::{set_app_page, sync_poll_policy};
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS};
+use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
+
+fn page_requires_connection(page: i32) -> bool {
+    match page {
+        PAGE_MODBUS | PAGE_FIRMWARE => true,
+        PAGE_DASHBOARD | PAGE_SETTINGS => false,
+        _ => false,
+    }
+}
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ui_weak = ui.as_weak();
     let ctx_nav = ctx.clone();
     ui.on_navigate(move |page| {
         let ui = ui_weak.unwrap();
-        if (page == PAGE_MODBUS || page == PAGE_FIRMWARE) && !ctx_nav.ble.is_connected() {
+        if page_requires_connection(page) && !ctx_nav.ble.is_connected() {
             return;
         }
         set_app_page(&ui, &ctx_nav, page);
@@ -27,7 +35,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if ctx_ble.ble.is_connected() {
             ctx_ble.ble.disconnect();
             let page = ctx_ble.ble.ui_page();
-            if page == PAGE_MODBUS || page == PAGE_FIRMWARE {
+            if page_requires_connection(page) {
                 set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
             } else {
                 sync_poll_policy(&ui, &ctx_ble);

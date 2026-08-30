@@ -40,6 +40,7 @@ impl TlReadSpec {
         }
     }
 
+    #[cfg(test)]
     pub fn register_count(&self) -> u16 {
         (self.byte_len / 2).max(1)
     }
@@ -395,7 +396,7 @@ mod tests {
     #[test]
     fn parse_tlv_response_with_reg100_data_from_device_log() {
         // 实机结构：TL1(reg100,100B) + TL2(reg2011,4B)；V 区与日志前缀一致
-        let mut payload = hex::decode(concat!(
+        let payload = hex::decode(concat!(
             "000000640064",
             "14cc0000005d0000531c531c0000000300030000",
             "5041303300300000000000e6cde5d8024b000000010004000104",

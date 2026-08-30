@@ -110,22 +110,6 @@ impl ModbusService {
             .load(Ordering::Acquire)
     }
 
-    pub fn mark_query_poll_updated(&self) {
-        self.inner
-            .borrow()
-            .query_poll_generation
-            .fetch_add(1, Ordering::Release);
-    }
-
-    pub fn query_snapshot(&self) -> QueryPollSnapshot {
-        self.inner
-            .borrow()
-            .query_live
-            .lock()
-            .map(|s| s.clone())
-            .unwrap_or_default()
-    }
-
     pub fn on_connected(&self) {
         let mut inner = self.inner.borrow_mut();
         inner.session_active = true;
@@ -177,13 +161,6 @@ impl ModbusService {
     pub fn set_output_busy(&self, busy: bool) {
         if let Ok(mut live) = self.inner.borrow().live.lock() {
             live.output_busy = busy;
-        }
-    }
-
-    pub fn apply_control_state(&self, ac_on: bool, dc_on: bool) {
-        if let Ok(mut live) = self.inner.borrow().live.lock() {
-            live.dashboard.ac_output_on = ac_on;
-            live.dashboard.dc_output_on = dc_on;
         }
     }
 }

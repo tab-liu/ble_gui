@@ -10,7 +10,7 @@ use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey, Verif
 use p256::elliptic_curve::sec1::ToEncodedPoint;
 use p256::{EncodedPoint, PublicKey, SecretKey};
 use rand::rngs::OsRng;
-use sha2::{Digest as Sha2Digest, Sha256};
+use sha2::Sha256;
 
 use super::crypto::{
     aes_cbc, encrypt_business_packet, trim_zero, zero_pad, PRIVATE_KEY_L1, PUBLIC_KEY_K2,
@@ -62,16 +62,8 @@ impl ProtocolSession {
         }
     }
 
-    pub fn reset(&mut self) {
-        *self = Self::new();
-    }
-
     pub fn is_encryption_ready(&self) -> bool {
         self.encryption_ready
-    }
-
-    pub fn is_plaintext_modbus(&self) -> bool {
-        self.phase == HandshakePhase::Plaintext
     }
 
     pub fn modbus_ready(&self) -> bool {
@@ -80,10 +72,6 @@ impl ProtocolSession {
 
     pub fn auth_started(&self) -> bool {
         self.auth_started
-    }
-
-    pub fn shared_key(&self) -> Option<[u8; 32]> {
-        self.shared_key
     }
 
     /// 将 Modbus RTU 明文帧包装为 BLE 空口数据。

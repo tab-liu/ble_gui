@@ -11,7 +11,7 @@ use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 use super::modbus::{
     build_read_holding, build_write_single, iot_status_supports_tlv, is_fc10_write_ack,
     merge_control_states, parse_dashboard_registers, parse_read_holding, parse_tlv_response_packet,
-    parse_tlv_read_units, describe_tlv_units, tlv_data_to_u16, tlv_register_values, TlReadSpec, TlvPacketCollector,
+    parse_tlv_read_units, describe_tlv_units, tlv_register_values, TlReadSpec, TlvPacketCollector,
     DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT, REG_DASHBOARD_COUNT,
     REG_DASHBOARD_START, REG_IOT_STATUS,
 };
@@ -355,7 +355,7 @@ async fn poll_dashboard_tlv(
         }
     };
 
-    let mut dashboard = match tlv_register_values(&results, slave_id, REG_DASHBOARD_START) {
+    let dashboard = match tlv_register_values(&results, slave_id, REG_DASHBOARD_START) {
         Ok(regs) => {
             info!(
                 target: "ble_gui::poll",
@@ -547,18 +547,4 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.modbus_online = false;
     inner.read_mode = ModbusReadMode::Unknown;
     inner.capabilities_probed = false;
-}
-
-/// 加密/明文 Modbus 就绪后立即拉一次数据。
-pub async fn poll_dashboard_once(
-    protocol: &Arc<Mutex<ProtocolSession>>,
-    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
-    live: &SharedModbusLive,
-    gate: &ModbusGate,
-) {
-    let ready = protocol.lock().expect("protocol lock").modbus_ready();
-    if !ready {
-        return;
-    }
-    poll_dashboard(protocol, write_tx, live, gate).await;
 }

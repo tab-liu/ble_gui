@@ -109,9 +109,8 @@ fn refresh_ble_status(ui: &MainWindow, snap: &BleSnapshot, read_mode: Option<Mod
     ui.set_device_connected(snap.connected);
     let status_text = if snap.connected {
         match read_mode {
-            Some(ModbusReadMode::Tlv) => format!("{} · Modbus TLV", snap.status_text),
-            Some(ModbusReadMode::Unknown) => format!("{} · Modbus 检测中", snap.status_text),
-            _ => snap.status_text.clone(),
+            Some(ModbusReadMode::Standard) | None => snap.status_text.clone(),
+            Some(mode) => format!("{} · Modbus {}", snap.status_text, mode.label()),
         }
     } else {
         snap.status_text.clone()
