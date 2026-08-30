@@ -21,12 +21,50 @@ const MFG_MAGIC_BLBLUETTF: &[u8] = b"BLBLUETTF";
 /// 扩展广播 Manufacturer Data（`BLE_CONFIG_EXTENDED_ADV`）
 const MFG_MAGIC_BLBLUETTI: &[u8] = b"BLBLUETTI";
 
-/// 加密 LCD 广播 prefix（ble_adv.h `MFG_HEADER_PREFIX_*`）
-const MFG_PREFIX_DISCONNECTED: u16 = 0x02F0;
-const MFG_PREFIX_CONNECTED: u16 = 0x82F0;
+/// 加密 LCD 广播 prefix 基值（ble_adv.h）；bit15=`0x8000` 表示已连接。
+const MFG_PREFIX_BASE: u16 = 0x02F0;
+const MFG_PREFIX_CONNECTED_BIT: u16 = 0x8000;
+const MFG_PREFIX_DISCONNECTED: u16 = MFG_PREFIX_BASE;
+const MFG_PREFIX_CONNECTED: u16 = MFG_PREFIX_BASE | MFG_PREFIX_CONNECTED_BIT;
+
+/// 从广播推断的对端连接占用提示（非通用 BLE Flags，而是 BLUETTI 厂商字段）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AdvLinkHint {
+    #[default]
+    Unknown,
+    /// 广播声明未连接（可尝试连接）。
+    Available,
+    /// 广播声明已连接（可能被其它主机占用）。
+    Occupied,
+}
 
 pub fn matches_ff00(uuid: &Uuid) -> bool {
     uuid == &service_uuid() || (uuid.as_u128() & 0xFFFF) == 0xFF00
+}
+
+fn poweroak_prefix_hint(prefix: u16) -> AdvLinkHint {
+    if prefix == MFG_PREFIX_CONNECTED {
+        return AdvLinkHint::Occupied;
+    }
+    if prefix == MFG_PREFIX_DISCONNECTED {
+        return AdvLinkHint::Available;
+    }
+    // 兼容同基值上其它标志位组合。
+    if (prefix & !MFG_PREFIX_CONNECTED_BIT) == MFG_PREFIX_BASE {
+        return if prefix & MFG_PREFIX_CONNECTED_BIT != 0 {
+            AdvLinkHint::Occupied
+        } else {
+            AdvLinkHint::Available
+        };
+    }
+    AdvLinkHint::Unknown
+}
+
+fn poweroak_payload_hint(payload: &[u8]) -> AdvLinkHint {
+    if payload.len() < 2 {
+        return AdvLinkHint::Unknown;
+    }
+    poweroak_prefix_hint(u16::from_le_bytes([payload[0], payload[1]]))
 }
 
 /// 厂商数据段是否匹配 BLUETTI 广播格式。
@@ -49,14 +87,47 @@ pub fn is_target_manufacturer_data(data: &[u8]) -> bool {
     // PowerOak 加密广播：Company ID + prefix（ble_adv_container.header）
     if data.len() >= 4 {
         let company = u16::from_le_bytes([data[0], data[1]]);
-        if company == COMPANY_ID_POWEROAK {
-            let prefix = u16::from_le_bytes([data[2], data[3]]);
-            if prefix == MFG_PREFIX_DISCONNECTED || prefix == MFG_PREFIX_CONNECTED {
-                return true;
-            }
+        if company == COMPANY_ID_POWEROAK
+            && poweroak_prefix_hint(u16::from_le_bytes([data[2], data[3]])) != AdvLinkHint::Unknown
+        {
+            return true;
         }
     }
     false
+}
+
+fn manufacturer_entry_hint(company: u16, data: &[u8]) -> AdvLinkHint {
+    if company == COMPANY_ID_POWEROAK {
+        let hint = poweroak_payload_hint(data);
+        if hint != AdvLinkHint::Unknown {
+            return hint;
+        }
+    }
+    // 部分平台把 Company ID 留在 value 前两字节。
+    if data.len() >= 4 {
+        let embedded = u16::from_le_bytes([data[0], data[1]]);
+        if embedded == COMPANY_ID_POWEROAK {
+            return poweroak_payload_hint(&data[2..]);
+        }
+    }
+    if is_target_manufacturer_data(data) {
+        // 默认识别包无连接 bit，只能判断是目标设备。
+        return AdvLinkHint::Unknown;
+    }
+    AdvLinkHint::Unknown
+}
+
+/// 从广播属性读取连接占用提示（若有 PowerOak LCD 加密前缀）。
+pub fn adv_link_hint_from_properties(props: &PeripheralProperties) -> AdvLinkHint {
+    let mut best = AdvLinkHint::Unknown;
+    for (company, data) in &props.manufacturer_data {
+        match manufacturer_entry_hint(*company, data) {
+            AdvLinkHint::Occupied => return AdvLinkHint::Occupied,
+            AdvLinkHint::Available => best = AdvLinkHint::Available,
+            AdvLinkHint::Unknown => {}
+        }
+    }
+    best
 }
 
 /// 根据广播字段判定是否 BLUETTI 目标设备（不用本地名过滤）。
@@ -64,10 +135,10 @@ pub fn is_target_properties(props: &PeripheralProperties) -> bool {
     if props.services.iter().any(matches_ff00) {
         return true;
     }
-    props
-        .manufacturer_data
-        .values()
-        .any(|data| is_target_manufacturer_data(data))
+    props.manufacturer_data.iter().any(|(company, data)| {
+        *company == COMPANY_ID_POWEROAK && poweroak_payload_hint(data) != AdvLinkHint::Unknown
+            || is_target_manufacturer_data(data)
+    })
 }
 
 #[cfg(test)]
@@ -89,5 +160,12 @@ mod tests {
         data[3] = 0x82;
         assert!(is_target_manufacturer_data(&data));
         assert!(!is_target_manufacturer_data(&[0x06, 0x0F, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn poweroak_prefix_connected_bit() {
+        assert_eq!(poweroak_prefix_hint(MFG_PREFIX_DISCONNECTED), AdvLinkHint::Available);
+        assert_eq!(poweroak_prefix_hint(MFG_PREFIX_CONNECTED), AdvLinkHint::Occupied);
+        assert_eq!(poweroak_prefix_hint(0x1234), AdvLinkHint::Unknown);
     }
 }

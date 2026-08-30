@@ -4,17 +4,23 @@ use slint::ComponentHandle;
 
 use crate::app::refresh;
 use crate::services::ble::{REG_AC_OUTPUT, REG_DC_OUTPUT};
+use crate::services::ble_favorites;
 use crate::services::poll_sync::{set_app_page, sync_poll_policy};
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS};
+use crate::state::{AppContext, PAGE_DASHBOARD};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
 
-fn page_requires_connection(page: i32) -> bool {
-    match page {
-        PAGE_MODBUS | PAGE_FIRMWARE => true,
-        PAGE_DASHBOARD | PAGE_SETTINGS => false,
-        _ => false,
+fn start_connect(ui: &MainWindow, ctx: &AppContext, address: &str) {
+    if address.is_empty() || ctx.ble.is_connecting() || ctx.ble.is_connected() {
+        return;
     }
+    ui.set_selected_scan_address(address.into());
+    // 收藏直连：不依赖广谱扫描，内部会定向查找。
+    if ctx.ble.is_scanning() {
+        ctx.ble.stop_scan();
+    }
+    ctx.ble.connect(address);
+    refresh_ble(ui, &ctx.favorites_snapshot(), &ctx.ble.snapshot(), None);
 }
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
@@ -22,9 +28,6 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_nav = ctx.clone();
     ui.on_navigate(move |page| {
         let ui = ui_weak.unwrap();
-        if page_requires_connection(page) && !ctx_nav.ble.is_connected() {
-            return;
-        }
         set_app_page(&ui, &ctx_nav, page);
     });
 
@@ -34,18 +37,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         if ctx_ble.ble.is_connected() {
             ctx_ble.ble.disconnect();
-            let page = ctx_ble.ble.ui_page();
-            if page_requires_connection(page) {
-                set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
-            } else {
-                sync_poll_policy(&ui, &ctx_ble);
-            }
+            sync_poll_policy(&ui, &ctx_ble);
             refresh(&ui, &ctx_ble);
         } else if ctx_ble.ble.is_connecting() {
-            // 连接过程中忽略顶部操作，避免重复发起扫描/连接。
+            ctx_ble.ble.cancel_connect();
+            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
         } else if ctx_ble.ble.is_scanning() {
             ctx_ble.ble.stop_scan();
-            refresh_ble(&ui, &ctx_ble.ble.snapshot(), None);
+            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
         } else {
             ctx_ble.ble.start_scan();
             ui.set_ble_scan_filter("".into());
@@ -54,7 +53,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
                 set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
             }
-            refresh_ble(&ui, &ctx_ble.ble.snapshot(), None);
+            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
         }
     });
 
@@ -72,15 +71,41 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_connect = ctx.clone();
     ui.on_connect_selected_clicked(move || {
         let ui = ui_weak.unwrap();
-        if ctx_connect.ble.is_connecting() || ctx_connect.ble.is_connected() {
-            return;
-        }
         let address = ui.get_selected_scan_address().to_string();
-        if address.is_empty() {
+        start_connect(&ui, &ctx_connect, &address);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_fav_connect = ctx.clone();
+    ui.on_connect_favorite_clicked(move |address| {
+        let ui = ui_weak.unwrap();
+        start_connect(&ui, &ctx_fav_connect, &address);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_toggle = ctx.clone();
+    ui.on_toggle_favorite_clicked(move |address| {
+        let ui = ui_weak.unwrap();
+        if ctx_toggle.ble.is_connecting() {
             return;
         }
-        ctx_connect.ble.connect(&address);
-        // 连接异步完成；轮询策略在 UI refresh hook（connected=true）时同步。
+        let address = address.to_string();
+        let snap = ctx_toggle.ble.snapshot();
+        let name = snap
+            .scan_devices
+            .iter()
+            .find(|d| ble_favorites::addresses_equal(&d.address, &address))
+            .map(|d| d.name.clone())
+            .or_else(|| ctx_toggle.favorite_name(&address))
+            .unwrap_or_else(|| address.clone());
+        ctx_toggle.toggle_favorite(&address, &name);
+        // 收藏后从右侧移到左侧（或相反），强制刷新列表缓存。
+        refresh_ble_scan_filter(
+            &ui,
+            &ctx_toggle.favorites_snapshot(),
+            &ctx_toggle.ble.snapshot(),
+            None,
+        );
     });
 
     let ui_weak = ui.as_weak();
@@ -89,6 +114,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         refresh_ble_scan_filter(
             &ui,
+            &ctx_filter.favorites_snapshot(),
             &ctx_filter.ble.snapshot(),
             if ctx_filter.ble.is_connected() {
                 Some(ctx_filter.modbus.read_mode())

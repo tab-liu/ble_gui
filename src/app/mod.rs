@@ -23,11 +23,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let ble_state = ctx.ble.shared_state();
     let modbus_live = ctx.modbus.shared_live();
     let poll_policy = ctx.ble.shared_poll_policy();
+    let favorites = ctx.favorites.clone();
     ctx.ble.set_ui_refresh_hook(Arc::new(move || {
         let ui_weak = ui_weak.clone();
         let ble_state = ble_state.clone();
         let modbus_live = modbus_live.clone();
         let poll_policy = poll_policy.clone();
+        let favorites = favorites.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = ui_weak.upgrade() {
                 let snap = ble_state.lock().expect("ble state lock").snapshot();
@@ -36,7 +38,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 } else {
                     None
                 };
-                refresh_ble(&ui, &snap, read_mode);
+                let favs = favorites.lock().map(|g| g.clone()).unwrap_or_default();
+                refresh_ble(&ui, &favs, &snap, read_mode);
                 if snap.connected {
                     ensure_dashboard_poll_if_idle(&poll_policy);
                     if ui.get_current_page() == PAGE_DASHBOARD {

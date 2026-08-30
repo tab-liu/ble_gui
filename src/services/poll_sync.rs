@@ -5,7 +5,7 @@ use slint::Model;
 use crate::pages::modbus_query;
 use crate::services::ble::modbus::{parse_register_address, parse_scale, parse_value_type};
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_MODBUS};
+use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS};
 use crate::ui::MainWindow;
 
 /// 切换页面并同步 Slint 与轮询策略。
@@ -26,6 +26,7 @@ pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
         match ctx.ble.ui_page() {
             PAGE_DASHBOARD => PollForeground::Dashboard,
             PAGE_MODBUS => build_modbus_query_foreground(ui, ctx),
+            PAGE_SETTINGS | PAGE_FIRMWARE => PollForeground::None,
             _ => PollForeground::None,
         }
     };

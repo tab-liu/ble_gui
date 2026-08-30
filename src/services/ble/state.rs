@@ -2,6 +2,15 @@
 
 use std::sync::{Arc, Mutex};
 
+/// 扫描时从厂商广播推断的占用提示。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ScanLinkHint {
+    #[default]
+    Unknown,
+    Available,
+    Occupied,
+}
+
 #[derive(Clone, Debug)]
 pub struct BleScanEntry {
     pub name: String,
@@ -10,6 +19,7 @@ pub struct BleScanEntry {
     pub rssi: i32,
     /// 广播中包含 FF00 服务，判定为目标 BLUETTI 设备。
     pub is_target: bool,
+    pub link_hint: ScanLinkHint,
 }
 
 impl BleScanEntry {
@@ -68,7 +78,14 @@ impl Default for BleInner {
 }
 
 impl BleInner {
-    pub fn upsert_advertisement(&mut self, name: &str, address: &str, rssi: i32, is_target: bool) {
+    pub fn upsert_advertisement(
+        &mut self,
+        name: &str,
+        address: &str,
+        rssi: i32,
+        is_target: bool,
+        link_hint: ScanLinkHint,
+    ) {
         if !is_target {
             return;
         }
@@ -78,12 +95,17 @@ impl BleInner {
             .iter_mut()
             .find(|d| d.address == address)
         {
+            let mut changed = existing.rssi != rssi || existing.link_hint != link_hint;
             existing.rssi = rssi;
+            existing.link_hint = link_hint;
             if is_target {
                 existing.is_target = true;
             }
             if !name.is_empty() && existing.name != name {
                 existing.name = name.to_string();
+                changed = true;
+            }
+            if changed {
                 self.scan_list_generation += 1;
             }
         } else {
@@ -97,6 +119,7 @@ impl BleInner {
                 address: address.to_string(),
                 rssi,
                 is_target,
+                link_hint,
             });
             self.scan_list_generation += 1;
         }
@@ -112,12 +135,20 @@ impl BleInner {
 
         let status_text = match self.phase {
             LinkPhase::Idle if connected => "已连接".into(),
-            LinkPhase::Idle if self.status_detail.starts_with("连接失败") => {
+            LinkPhase::Idle if self.status_detail.starts_with("连接失败")
+                || self.status_detail.starts_with("已取消") =>
+            {
                 self.status_detail.clone()
             }
             LinkPhase::Idle => "未连接".into(),
             LinkPhase::Scanning => "扫描中".into(),
-            LinkPhase::Connecting => "连接中".into(),
+            LinkPhase::Connecting => {
+                if self.status_detail.is_empty() {
+                    "连接中".into()
+                } else {
+                    self.status_detail.clone()
+                }
+            }
             LinkPhase::GattReady => "已连接".into(),
             LinkPhase::Handshake => "鉴权中".into(),
             LinkPhase::Encrypted => "已连接（加密）".into(),
@@ -137,7 +168,7 @@ impl BleInner {
             action_text: if connected {
                 "断开".into()
             } else if connecting {
-                "连接中".into()
+                "取消".into()
             } else if scanning {
                 "结束扫描".into()
             } else {

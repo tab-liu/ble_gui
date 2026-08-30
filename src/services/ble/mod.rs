@@ -14,7 +14,7 @@ mod uuids;
 mod worker;
 mod win_name;
 
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::rc::Rc;
 
@@ -31,7 +31,7 @@ pub use poll_policy::{
     ensure_dashboard_poll_if_idle, PollForeground,
     QueryPollItemSpec,
 };
-pub use state::{BleScanEntry, BleSnapshot};
+pub use state::{BleScanEntry, BleSnapshot, ScanLinkHint};
 
 /// Worker 线程回调：通过 `slint::invoke_from_event_loop` 在主线程刷新 UI。
 pub type UiRefreshHook = Arc<dyn Fn() + Send + Sync>;
@@ -43,6 +43,7 @@ struct BleServiceInner {
     event_rx: Mutex<mpsc::Receiver<()>>,
     ui_refresh: UiRefreshSlot,
     poll_policy: poll_policy::SharedPollPolicy,
+    cancel_connect: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -61,6 +62,7 @@ impl BleService {
         let (cmd_tx, cmd_rx) = tokio::sync::mpsc::unbounded_channel();
         let (event_tx, event_rx) = mpsc::channel();
         let ui_refresh: UiRefreshSlot = Arc::new(Mutex::new(None));
+        let cancel_connect = Arc::new(AtomicBool::new(false));
 
         let runtime = TokioRuntime::new();
         let worker_state = state.clone();
@@ -69,6 +71,7 @@ impl BleService {
         let worker_query = query_live.clone();
         let worker_query_gen = query_generation.clone();
         let worker_policy = poll_policy.clone();
+        let worker_cancel = cancel_connect.clone();
         runtime.spawn(async move {
             worker_main(
                 cmd_rx,
@@ -79,6 +82,7 @@ impl BleService {
                 worker_query,
                 worker_query_gen,
                 worker_policy,
+                worker_cancel,
             )
             .await;
         });
@@ -90,6 +94,7 @@ impl BleService {
                 event_rx: Mutex::new(event_rx),
                 ui_refresh,
                 poll_policy,
+                cancel_connect,
             }),
         }
     }
@@ -160,12 +165,29 @@ impl BleService {
     }
 
     pub fn connect(&self, address: &str) -> bool {
+        self.inner.cancel_connect.store(false, Ordering::Release);
         self.inner
             .cmd_tx
             .send(BleCommand::Connect {
                 address: address.to_string(),
             })
             .is_ok()
+    }
+
+    /// 取消进行中的连接/定向查找（不走命令队列，立即生效）。
+    pub fn cancel_connect(&self) {
+        self.inner.cancel_connect.store(true, Ordering::Release);
+        if let Ok(mut inner) = self.inner.state.lock() {
+            if inner.phase == LinkPhase::Connecting {
+                inner.phase = LinkPhase::Idle;
+                inner.status_detail = "已取消连接".into();
+            }
+        }
+        if let Ok(guard) = self.inner.ui_refresh.lock() {
+            if let Some(hook) = guard.as_ref() {
+                hook();
+            }
+        }
     }
 
     pub fn disconnect(&self) {

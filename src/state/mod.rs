@@ -2,11 +2,14 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 
+use log::warn;
 use slint::{ModelRc, VecModel};
 
 use crate::pages::modbus_query::ModbusQueryState;
 use crate::services::ble::BleService;
+use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareService;
 use crate::services::modbus::ModbusService;
 use crate::services::modbus_query_store;
@@ -33,6 +36,8 @@ pub struct AppContext {
     pub modbus: ModbusService,
     pub firmware: FirmwareService,
     pub theme: ThemeService,
+    /// 收藏设备（可跨线程读取，供 BLE UI 刷新钩子使用）。
+    pub favorites: Arc<Mutex<Vec<FavoriteDevice>>>,
     /// 启动时恢复的 Modbus 标签页索引（来自持久化配置）。
     pub initial_modbus_tab: i32,
 }
@@ -63,6 +68,7 @@ impl AppContext {
             modbus,
             firmware: FirmwareService::new(),
             theme: ThemeService::new(),
+            favorites: Arc::new(Mutex::new(ble_favorites::load())),
             initial_modbus_tab,
         }
     }
@@ -70,5 +76,38 @@ impl AppContext {
     pub fn bind_modbus_tabs(&self, ui: &MainWindow) {
         let tabs = self.state.borrow().modbus_query.tabs.clone();
         ui.set_modbus_tabs(ModelRc::new(tabs));
+    }
+
+    pub fn favorites_snapshot(&self) -> Vec<FavoriteDevice> {
+        self.favorites
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn toggle_favorite(&self, address: &str, name: &str) -> bool {
+        let Ok(mut favorites) = self.favorites.lock() else {
+            return false;
+        };
+        let changed = if ble_favorites::contains(&favorites, address) {
+            ble_favorites::remove(&mut favorites, address)
+        } else {
+            ble_favorites::upsert(&mut favorites, address, name)
+        };
+        if changed {
+            if let Err(e) = ble_favorites::save(&favorites) {
+                warn!(target: "ble_gui::favorites", "保存收藏失败: {e}");
+            }
+        }
+        changed
+    }
+
+    pub fn favorite_name(&self, address: &str) -> Option<String> {
+        self.favorites.lock().ok().and_then(|favorites| {
+            favorites
+                .iter()
+                .find(|d| ble_favorites::addresses_equal(&d.address, address))
+                .map(|d| d.name.clone())
+        })
     }
 }

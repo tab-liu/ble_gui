@@ -1,7 +1,8 @@
 import { VerticalBox, HorizontalBox, ScrollView, LineEdit, CheckBox, Button } from "std-widgets.slint";
-import { BleScanDevice } from "../types.slint";
+import { BleScanDevice, BleFavoriteDevice } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ScanDeviceRow } from "../components/scan_device_row.slint";
+import { FavoriteDeviceRow } from "../components/favorite_device_row.slint";
 import { SocCard } from "../components/soc_card.slint";
 import { PowerMetricCard } from "../components/power_metric_card.slint";
 import { OutputControlRow } from "../components/output_control_row.slint";
@@ -10,6 +11,7 @@ export component DashboardPage inherits VerticalBox {
     in property <bool> device-connected;
     in property <bool> ble-connecting;
     in property <[BleScanDevice]> scan-devices;
+    in property <[BleFavoriteDevice]> favorite-devices;
     in property <int> scan-device-total;
     in property <string> scan-empty-message;
     in property <int> dashboard-soc: -1;
@@ -27,6 +29,8 @@ export component DashboardPage inherits VerticalBox {
     in-out property <string> selected-scan-address: "";
     callback select-scan-device(string);
     callback connect-selected-clicked();
+    callback connect-favorite-clicked(string);
+    callback toggle-favorite-clicked(string);
     callback scan-filters-changed();
     callback ac-output-toggle();
     callback dc-output-toggle();
@@ -47,7 +51,7 @@ export component DashboardPage inherits VerticalBox {
 
         LineEdit {
             text <=> root.scan-filter;
-            placeholder-text: "按名称过滤（不区分大小写）";
+            placeholder-text: "按名称过滤扫描列表（不区分大小写）";
             enabled: !root.ble-connecting;
             edited => {
                 root.scan-filters-changed();
@@ -101,41 +105,142 @@ export component DashboardPage inherits VerticalBox {
 
             Text {
                 text: root.ble-connecting
-                    ? "正在连接，请稍候…"
+                    ? "正在连接/查找，可点顶部「取消」终止"
                     : (root.selected-scan-address != ""
                         ? ("已选: " + root.selected-scan-address)
-                        : "在列表中点击选择要连接的设备");
+                        : "左侧收藏可直接 ↗ 定向连接；右侧扫描后点 ★ 收藏");
                 color: Theme.text-secondary;
                 font-size: 13px;
                 vertical-alignment: center;
             }
         }
 
-        ScrollView {
+        HorizontalBox {
+            spacing: 12px;
             vertical-stretch: 1;
 
-            VerticalBox {
-                spacing: 8px;
+            // 左：收藏
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 10px;
+                background: Theme.bg-panel;
+                border-width: 1px;
+                border-color: Theme.border;
 
-                for dev in root.scan-devices: ScanDeviceRow {
-                    name: dev.name;
-                    address: dev.address;
-                    rssi: dev.rssi;
-                    selected: dev.address == root.selected-scan-address;
-                    enabled: !root.ble-connecting;
-                    clicked => {
-                        root.select-scan-device(dev.address);
+                VerticalBox {
+                    padding: 10px;
+                    spacing: 8px;
+
+                    Text {
+                        text: "收藏";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "点亮=附近已发现；↗=定向连接";
+                        color: Theme.text-dim;
+                        font-size: 11px;
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+
+                        VerticalBox {
+                            spacing: 8px;
+
+                            for fav in root.favorite-devices: FavoriteDeviceRow {
+                                name: fav.name;
+                                address: fav.address;
+                                rssi: fav.rssi;
+                                seen: fav.seen;
+                                occupied: fav.occupied;
+                                selected: fav.address == root.selected-scan-address;
+                                enabled: !root.ble-connecting;
+                                clicked => {
+                                    root.select-scan-device(fav.address);
+                                }
+                                unfavorite-clicked => {
+                                    root.toggle-favorite-clicked(fav.address);
+                                }
+                                connect-clicked => {
+                                    root.connect-favorite-clicked(fav.address);
+                                }
+                            }
+
+                            if root.favorite-devices.length == 0: Rectangle {
+                                height: 100px;
+                                Text {
+                                    text: "暂无收藏\n在右侧扫描结果点 ★ 添加";
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
                     }
                 }
+            }
 
-                if root.scan-device-total == 0: Rectangle {
-                    height: 120px;
+            // 右：实时扫描
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 10px;
+                background: Theme.bg-panel;
+                border-width: 1px;
+                border-color: Theme.border;
+
+                VerticalBox {
+                    padding: 10px;
+                    spacing: 8px;
+
                     Text {
-                        text: root.scan-empty-message;
+                        text: "扫描结果";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }
+
+                    Text {
+                        text: "未收藏的附近设备";
                         color: Theme.text-dim;
-                        font-size: 13px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                        font-size: 11px;
+                    }
+
+                    ScrollView {
+                        vertical-stretch: 1;
+
+                        VerticalBox {
+                            spacing: 8px;
+
+                            for dev in root.scan-devices: ScanDeviceRow {
+                                name: dev.name;
+                                address: dev.address;
+                                rssi: dev.rssi;
+                                selected: dev.address == root.selected-scan-address;
+                                favorited: false;
+                                enabled: !root.ble-connecting;
+                                clicked => {
+                                    root.select-scan-device(dev.address);
+                                }
+                                favorite-clicked => {
+                                    root.toggle-favorite-clicked(dev.address);
+                                }
+                            }
+
+                            if root.scan-device-total == 0: Rectangle {
+                                height: 100px;
+                                Text {
+                                    text: root.scan-empty-message;
+                                    color: Theme.text-dim;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -147,7 +252,6 @@ export component DashboardPage inherits VerticalBox {
         vertical-stretch: 1;
         alignment: start;
 
-        // 数据区：固定尺寸卡片，不随窗口拉伸
         Rectangle {
             vertical-stretch: 0;
             border-radius: 12px;
@@ -213,7 +317,6 @@ export component DashboardPage inherits VerticalBox {
             }
         }
 
-        // 输出控制：紧跟数据区，宽度随主区域拉伸
         Rectangle {
             vertical-stretch: 0;
             horizontal-stretch: 1;

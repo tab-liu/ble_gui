@@ -36,3 +36,14 @@ export struct BleScanDevice {
     address: string,
     rssi: string,
 }
+
+export struct BleFavoriteDevice {
+    name: string,
+    address: string,
+    /// 未扫描到时为空或提示文案
+    rssi: string,
+    /// 当前扫描中已发现
+    seen: bool,
+    /// 广播标记为已被其它主机连接
+    occupied: bool,
+}

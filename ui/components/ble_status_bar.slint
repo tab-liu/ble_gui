@@ -92,7 +92,7 @@ export component BleStatusBar inherits Rectangle {
         StatusBarButton {
             label: root.action-text;
             emphasized: !root.connected && !root.scanning && !root.connecting;
-            enabled: !root.connecting;
+            enabled: true;
             clicked => {
                 root.action-clicked();
             }

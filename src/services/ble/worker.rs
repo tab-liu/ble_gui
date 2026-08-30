@@ -1,7 +1,7 @@
 //! BLE 异步 worker：扫描、连接、GATT 与协议通知处理。
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -20,8 +20,11 @@ use super::poll::{
 use super::poll_executor::{poll_foreground, poll_foreground_once};
 use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
 use super::protocol::{HandshakePhase, ProtocolSession};
-use super::state::{LinkPhase, SharedBleState};
-use super::target::{is_target_manufacturer_data, is_target_properties, matches_ff00};
+use super::state::{LinkPhase, ScanLinkHint, SharedBleState};
+use super::target::{
+    adv_link_hint_from_properties, is_target_manufacturer_data, is_target_properties, matches_ff00,
+    AdvLinkHint,
+};
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
@@ -82,6 +85,13 @@ fn notify_ui_force(
 const UI_REFRESH_INTERVAL_MS: u64 = 1000;
 /// 轮询 btleplug 已缓存外设的间隔（补充事件流未送达的广播）。
 const SCAN_SYNC_INTERVAL_MS: u64 = 1000;
+/// 连接前句柄失效时，定向找回目标设备的超时。
+const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(12);
+
+const MSG_DEVICE_NOT_NEARBY: &str =
+    "附近未发现该设备（可能已关机、距离过远，或已被其它设备连接后停止广播）";
+const MSG_DEVICE_OCCUPIED: &str =
+    "设备仍在附近广播，但标记为已连接；请先在其它手机/电脑上断开后再试";
 
 fn schedule_ui_refresh(ui_refresh: &super::UiRefreshSlot, force: bool) {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -112,6 +122,18 @@ fn parse_address(text: &str) -> Option<BDAddr> {
     text.parse().ok()
 }
 
+fn to_scan_link_hint(hint: AdvLinkHint) -> ScanLinkHint {
+    match hint {
+        AdvLinkHint::Unknown => ScanLinkHint::Unknown,
+        AdvLinkHint::Available => ScanLinkHint::Available,
+        AdvLinkHint::Occupied => ScanLinkHint::Occupied,
+    }
+}
+
+fn connect_cancelled(flag: &AtomicBool) -> bool {
+    flag.load(Ordering::Acquire)
+}
+
 pub async fn worker_main(
     mut cmd_rx: mpsc::UnboundedReceiver<BleCommand>,
     state: SharedBleState,
@@ -121,6 +143,7 @@ pub async fn worker_main(
     query_live: SharedQueryPollLive,
     query_generation: Arc<AtomicU64>,
     poll_policy: SharedPollPolicy,
+    cancel_connect: Arc<AtomicBool>,
 ) {
     let manager = match Manager::new().await {
         Ok(m) => m,
@@ -230,11 +253,7 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
             }
             BleCommand::Connect { address } => {
-                if let Some(task) = scan_task.take() {
-                    task.abort();
-                }
-                let _ = adapter.stop_scan().await;
-
+                cancel_connect.store(false, Ordering::Release);
                 set_phase(
                     &state,
                     LinkPhase::Connecting,
@@ -249,23 +268,128 @@ pub async fn worker_main(
                     clear_live_on_disconnect(&modbus_live);
                 }
 
+                // 先在仍可能持有句柄时解析目标，避免「先停扫描再查找」把缓存清掉。
+                let mut peripheral = find_peripheral(&adapter, &address, &known).await;
+
+                if peripheral.is_none() {
+                    if connect_cancelled(&cancel_connect) {
+                        set_phase(&state, LinkPhase::Idle, "已取消连接");
+                        notify_ui_force(&ui_refresh, true);
+                        continue;
+                    }
+                    set_phase(&state, LinkPhase::Connecting, "正在查找设备……");
+                    notify_ui_force(&ui_refresh, true);
+
+                    if let Some(task) = scan_task.take() {
+                        task.abort();
+                    }
+                    let _ = adapter.stop_scan().await;
+
+                    match rediscover_target(
+                        &adapter,
+                        &address,
+                        &known,
+                        &state,
+                        &ui_refresh,
+                        &cancel_connect,
+                    )
+                    .await
+                    {
+                        Ok(p) => peripheral = Some(p),
+                        Err(RediscoverError::Cancelled) => {
+                            set_phase(&state, LinkPhase::Idle, "已取消连接");
+                            notify_ui_force(&ui_refresh, true);
+                            continue;
+                        }
+                        Err(RediscoverError::Occupied) => {
+                            warn!(
+                                target: "ble_gui::services::ble",
+                                "Connect aborted for {address}: occupied"
+                            );
+                            set_phase(
+                                &state,
+                                LinkPhase::Idle,
+                                format!("连接失败：{MSG_DEVICE_OCCUPIED}"),
+                            );
+                            notify_ui_force(&ui_refresh, true);
+                            continue;
+                        }
+                        Err(RediscoverError::TimedOut) => {
+                            warn!(
+                                target: "ble_gui::services::ble",
+                                "Connect aborted for {address}: rediscover timeout"
+                            );
+                            set_phase(
+                                &state,
+                                LinkPhase::Idle,
+                                format!("连接失败：{MSG_DEVICE_NOT_NEARBY}"),
+                            );
+                            notify_ui_force(&ui_refresh, true);
+                            continue;
+                        }
+                    }
+                }
+
+                if connect_cancelled(&cancel_connect) {
+                    set_phase(&state, LinkPhase::Idle, "已取消连接");
+                    notify_ui_force(&ui_refresh, true);
+                    continue;
+                }
+
+                if let Some(task) = scan_task.take() {
+                    task.abort();
+                }
+                let _ = adapter.stop_scan().await;
+
+                let Some(peripheral) = peripheral else {
+                    set_phase(
+                        &state,
+                        LinkPhase::Idle,
+                        format!("连接失败：{MSG_DEVICE_NOT_NEARBY}"),
+                    );
+                    notify_ui_force(&ui_refresh, true);
+                    continue;
+                };
+
+                if let Ok(Some(props)) = peripheral.properties().await {
+                    if adv_link_hint_from_properties(&props) == AdvLinkHint::Occupied {
+                        warn!(
+                            target: "ble_gui::services::ble",
+                            "Connect aborted for {address}: occupied (from cache)"
+                        );
+                        set_phase(
+                            &state,
+                            LinkPhase::Idle,
+                            format!("连接失败：{MSG_DEVICE_OCCUPIED}"),
+                        );
+                        notify_ui_force(&ui_refresh, true);
+                        continue;
+                    }
+                }
+
                 match connect_device(
-                    &adapter,
+                    peripheral,
                     &state,
                     &event_tx,
                     &ui_refresh,
                     &address,
-                    &known,
                     &modbus_live,
                     &query_live,
                     &query_generation,
                     &poll_policy,
+                    &cancel_connect,
                 )
-                .await {
+                .await
+                {
                     Ok(active) => session = Some(active),
                     Err(err) => {
                         warn!(target: "ble_gui::services::ble", "Connect failed for {address}: {err}");
-                        set_phase(&state, LinkPhase::Idle, format!("连接失败：{err}"));
+                        let detail = if err == "已取消连接" {
+                            "已取消连接".into()
+                        } else {
+                            format!("连接失败：{err}")
+                        };
+                        set_phase(&state, LinkPhase::Idle, detail);
                         notify_ui_force(&ui_refresh, true);
                     }
                 }
@@ -545,7 +669,8 @@ async fn ingest_peripheral(
         }
         let before_len = inner.scan_devices.len();
         let gen_before = inner.scan_list_generation;
-        inner.upsert_advertisement(&name, &address, rssi as i32, is_target);
+        let link_hint = to_scan_link_hint(adv_link_hint_from_properties(&props));
+        inner.upsert_advertisement(&name, &address, rssi as i32, is_target, link_hint);
         inner.scan_list_generation > gen_before || inner.scan_devices.len() > before_len
     };
 
@@ -580,7 +705,14 @@ async fn resolve_device_name(
             if inner.phase != LinkPhase::Scanning {
                 return;
             }
-            inner.upsert_advertisement(&name, &address, rssi as i32, is_target_properties(&props));
+            let hint = to_scan_link_hint(adv_link_hint_from_properties(&props));
+            inner.upsert_advertisement(
+                &name,
+                &address,
+                rssi as i32,
+                is_target_properties(&props),
+                hint,
+            );
         }
         update_scan_status_detail(&state);
         notify_ui_force(&ui_refresh, true);
@@ -618,7 +750,8 @@ async fn resolve_device_name(
             if inner.phase != LinkPhase::Scanning {
                 return;
             }
-            inner.upsert_advertisement(&name, &address, rssi as i32, is_target);
+            let hint = to_scan_link_hint(adv_link_hint_from_properties(&props));
+            inner.upsert_advertisement(&name, &address, rssi as i32, is_target, hint);
         }
         update_scan_status_detail(&state);
         notify_ui_force(&ui_refresh, true);
@@ -627,32 +760,46 @@ async fn resolve_device_name(
 }
 
 async fn connect_device(
-    adapter: &Adapter,
+    peripheral: Peripheral,
     state: &SharedBleState,
     event_tx: &std::sync::mpsc::Sender<()>,
     ui_refresh: &super::UiRefreshSlot,
     address_text: &str,
-    known: &KnownMap,
     modbus_live: &SharedModbusLive,
     query_live: &SharedQueryPollLive,
     query_generation: &Arc<AtomicU64>,
     poll_policy: &SharedPollPolicy,
+    cancel_connect: &AtomicBool,
 ) -> Result<ActiveSession, String> {
-    let target_addr = parse_address(address_text).ok_or_else(|| "MAC 地址格式无效".to_string())?;
-
-    let peripheral = find_peripheral(adapter, target_addr, known)
-        .await
-        .ok_or_else(|| "未找到目标设备，请重新扫描".to_string())?;
+    if connect_cancelled(cancel_connect) {
+        return Err("已取消连接".into());
+    }
+    set_phase(
+        state,
+        LinkPhase::Connecting,
+        format!("正在连接 {address_text}……"),
+    );
+    notify_ui_force(ui_refresh, true);
 
     peripheral
         .connect()
         .await
         .map_err(|e| format!("BLE 连接失败：{e}"))?;
 
+    if connect_cancelled(cancel_connect) {
+        let _ = peripheral.disconnect().await;
+        return Err("已取消连接".into());
+    }
+
     set_phase(state, LinkPhase::Connecting, "正在发现 GATT 服务……");
     notify_ui_force(ui_refresh, true);
 
     discover_services_with_retry(&peripheral, 10).await?;
+
+    if connect_cancelled(cancel_connect) {
+        let _ = peripheral.disconnect().await;
+        return Err("已取消连接".into());
+    }
 
     let characteristics = peripheral.characteristics();
     let write_id = write_uuid();
@@ -702,7 +849,8 @@ async fn connect_device(
     let device_name = props
         .as_ref()
         .and_then(|p| p.local_name.clone())
-        .unwrap_or_else(|| "BLE Device".to_string());
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| address_text.to_string());
     let device_address = props
         .as_ref()
         .map(|p| format_address(p.address))
@@ -1012,16 +1160,192 @@ async fn find_peripheral_by_id(adapter: &Adapter, id: &PeripheralId) -> Result<P
     adapter.peripheral(id).await.map_err(|_| ())
 }
 
+enum RediscoverError {
+    Occupied,
+    TimedOut,
+    Cancelled,
+}
+
+fn address_matches(props_addr: BDAddr, target_text: &str, target_norm: &str) -> bool {
+    let text = format_address(props_addr);
+    text == target_text || normalize_address(&text) == target_norm
+}
+
+async fn note_peripheral_for_target(
+    adapter: &Adapter,
+    id: &PeripheralId,
+    target_text: &str,
+    target_norm: &str,
+    known: &KnownMap,
+) -> Result<Option<Peripheral>, RediscoverError> {
+    let Ok(peripheral) = find_peripheral_by_id(adapter, id).await else {
+        return Ok(None);
+    };
+    let Ok(Some(props)) = peripheral.properties().await else {
+        return Ok(None);
+    };
+    if !address_matches(props.address, target_text, target_norm) {
+        return Ok(None);
+    }
+
+    let address = format_address(props.address);
+    known
+        .lock()
+        .expect("known lock")
+        .insert(address, id.clone());
+
+    if adv_link_hint_from_properties(&props) == AdvLinkHint::Occupied {
+        return Err(RediscoverError::Occupied);
+    }
+    Ok(Some(peripheral))
+}
+
+/// 句柄失效时短时扫描，仅找回指定地址对应的外设。
+async fn rediscover_target(
+    adapter: &Adapter,
+    address_text: &str,
+    known: &KnownMap,
+    state: &SharedBleState,
+    ui_refresh: &super::UiRefreshSlot,
+    cancel_connect: &AtomicBool,
+) -> Result<Peripheral, RediscoverError> {
+    let target_norm = normalize_address(address_text);
+    let deadline = tokio::time::Instant::now() + REDISCOVER_TIMEOUT;
+
+    let mut events = adapter
+        .events()
+        .await
+        .map_err(|_| RediscoverError::TimedOut)?;
+    if adapter.start_scan(ScanFilter::default()).await.is_err() {
+        return Err(RediscoverError::TimedOut);
+    }
+
+    if let Ok(peripherals) = adapter.peripherals().await {
+        for peripheral in peripherals {
+            if connect_cancelled(cancel_connect) {
+                let _ = adapter.stop_scan().await;
+                return Err(RediscoverError::Cancelled);
+            }
+            let id = peripheral.id();
+            match note_peripheral_for_target(adapter, &id, address_text, &target_norm, known).await
+            {
+                Ok(Some(p)) => {
+                    let _ = adapter.stop_scan().await;
+                    return Ok(p);
+                }
+                Err(RediscoverError::Occupied) => {
+                    let _ = adapter.stop_scan().await;
+                    return Err(RediscoverError::Occupied);
+                }
+                Ok(None) | Err(RediscoverError::TimedOut) | Err(RediscoverError::Cancelled) => {}
+            }
+        }
+    }
+
+    let mut poll = tokio::time::interval(Duration::from_millis(SCAN_SYNC_INTERVAL_MS));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll.tick().await;
+
+    let result = loop {
+        if connect_cancelled(cancel_connect)
+            || state.lock().expect("ble state lock").phase != LinkPhase::Connecting
+        {
+            break Err(RediscoverError::Cancelled);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break Err(RediscoverError::TimedOut);
+        }
+
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        tokio::select! {
+            _ = poll.tick() => {
+                if connect_cancelled(cancel_connect) {
+                    break Err(RediscoverError::Cancelled);
+                }
+                if let Some(p) = find_peripheral(adapter, address_text, known).await {
+                    break Ok(p);
+                }
+                let mut occupied = false;
+                let mut found = None;
+                if let Ok(peripherals) = adapter.peripherals().await {
+                    for peripheral in peripherals {
+                        let id = peripheral.id();
+                        match note_peripheral_for_target(
+                            adapter,
+                            &id,
+                            address_text,
+                            &target_norm,
+                            known,
+                        )
+                        .await
+                        {
+                            Ok(Some(p)) => {
+                                found = Some(p);
+                                break;
+                            }
+                            Err(RediscoverError::Occupied) => {
+                                occupied = true;
+                                break;
+                            }
+                            Ok(None) | Err(RediscoverError::TimedOut) | Err(RediscoverError::Cancelled) => {}
+                        }
+                    }
+                }
+                if occupied {
+                    break Err(RediscoverError::Occupied);
+                }
+                if let Some(p) = found {
+                    break Ok(p);
+                }
+            }
+            maybe_event = events.next() => {
+                match maybe_event {
+                    None => break Err(RediscoverError::TimedOut),
+                    Some(CentralEvent::DeviceDiscovered(id) | CentralEvent::DeviceUpdated(id))
+                    | Some(CentralEvent::ServicesAdvertisement { id, .. })
+                    | Some(CentralEvent::ManufacturerDataAdvertisement { id, .. }) => {
+                        match note_peripheral_for_target(
+                            adapter,
+                            &id,
+                            address_text,
+                            &target_norm,
+                            known,
+                        )
+                        .await
+                        {
+                            Ok(Some(p)) => break Ok(p),
+                            Err(RediscoverError::Occupied) => {
+                                break Err(RediscoverError::Occupied);
+                            }
+                            Ok(None) | Err(RediscoverError::TimedOut) | Err(RediscoverError::Cancelled) => {}
+                        }
+                    }
+                    Some(_) => {}
+                }
+            }
+            _ = tokio::time::sleep(remaining) => {
+                break Err(RediscoverError::TimedOut);
+            }
+        }
+    };
+
+    let _ = adapter.stop_scan().await;
+    if matches!(result, Err(RediscoverError::TimedOut) | Err(RediscoverError::Cancelled)) {
+        notify_ui_force(ui_refresh, true);
+    }
+    result
+}
+
 async fn find_peripheral(
     adapter: &Adapter,
-    target: BDAddr,
+    address_text: &str,
     known: &KnownMap,
 ) -> Option<Peripheral> {
-    let target_text = format_address(target);
-    let target_norm = normalize_address(&target_text);
+    let target_norm = normalize_address(address_text);
+    let parsed = parse_address(address_text);
     let id = {
         let map = known.lock().expect("known lock");
-        map.get(&target_text)
+        map.get(address_text)
             .cloned()
             .or_else(|| {
                 map.iter()
@@ -1038,9 +1362,15 @@ async fn find_peripheral(
     if let Ok(peripherals) = adapter.peripherals().await {
         for peripheral in peripherals {
             if let Ok(Some(props)) = peripheral.properties().await {
-                if props.address == target
-                    || normalize_address(&format_address(props.address)) == target_norm
-                {
+                let text = format_address(props.address);
+                let matched = text == address_text
+                    || normalize_address(&text) == target_norm
+                    || parsed.is_some_and(|t| props.address == t);
+                if matched {
+                    known
+                        .lock()
+                        .expect("known lock")
+                        .insert(text, peripheral.id());
                     return Some(peripheral);
                 }
             }

@@ -1,0 +1,118 @@
+import { Theme } from "../theme.slint";
+
+/// 收藏设备行：未扫到时偏暗；扫到时名称点亮；占用时提示。
+export component FavoriteDeviceRow inherits Rectangle {
+    in property <string> name;
+    in property <string> address;
+    in property <string> rssi;
+    in property <bool> seen;
+    in property <bool> occupied;
+    in property <bool> selected;
+    in property <bool> enabled: true;
+    callback clicked();
+    callback unfavorite-clicked();
+    callback connect-clicked();
+
+    height: 64px;
+    border-radius: 8px;
+    background: root.selected ? Theme.bg-nav-selected : Theme.bg-panel-alt;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected ? Theme.border-accent : Theme.border;
+    opacity: root.enabled ? 1 : 0.5;
+
+    TouchArea {
+        x: 0px;
+        width: parent.width - 76px;
+        height: 100%;
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.clicked();
+            }
+        }
+
+        Text {
+            x: 12px;
+            y: 10px;
+            width: parent.width - 24px;
+            text: root.name;
+            color: !root.seen ? Theme.text-dim
+                : (root.occupied ? Theme.warning : Theme.text-primary);
+            font-size: 14px;
+            font-weight: root.seen ? 700 : 500;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+
+        Text {
+            x: 12px;
+            y: 28px;
+            width: parent.width - 24px;
+            text: root.address;
+            color: Theme.text-dim;
+            font-size: 11px;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+
+        Text {
+            x: 12px;
+            y: 44px;
+            width: parent.width - 24px;
+            text: !root.seen ? "未在附近发现"
+                : (root.occupied ? "附近可见·可能已被占用" : root.rssi);
+            color: !root.seen ? Theme.text-dim
+                : (root.occupied ? Theme.warning : Theme.success);
+            font-size: 11px;
+            horizontal-alignment: left;
+            overflow: elide;
+        }
+    }
+
+    // 一键定向连接（无需先广谱扫描；未扫到时也会定向查找）
+    TouchArea {
+        x: parent.width - 72px;
+        y: 8px;
+        width: 28px;
+        height: 48px;
+        enabled: root.enabled && !root.occupied;
+        clicked => {
+            if (root.enabled && !root.occupied) {
+                root.connect-clicked();
+            }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: "↗";
+            color: root.occupied ? Theme.text-dim : Theme.accent;
+            font-size: 16px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    TouchArea {
+        x: parent.width - 40px;
+        y: 8px;
+        width: 32px;
+        height: 48px;
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.unfavorite-clicked();
+            }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: "★";
+            color: Theme.accent;
+            font-size: 18px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+}

@@ -51,11 +51,13 @@ export component ModbusPage inherits VerticalLayout {
     spacing: 8px;
     vertical-stretch: 1;
 
-    if root.device-connected: VerticalLayout {
-        spacing: 8px;
-        vertical-stretch: 1;
+    if !root.device-connected: Text {
+        text: "未连接设备：可编辑标签与寄存器；连接后自动轮询";
+        color: Theme.text-dim;
+        font-size: 12px;
+    }
 
-        toolbar-row := HorizontalLayout {
+    toolbar-row := HorizontalLayout {
             spacing: 12px;
             cross-axis-alignment: center;
 
@@ -310,16 +312,5 @@ export component ModbusPage inherits VerticalLayout {
                 }
             }
         }
-    }
-
-    if !root.device-connected: VerticalLayout {
-        vertical-stretch: 1;
-        Text {
-            text: "请先连接蓝牙设备";
-            color: Theme.text-dim;
-            font-size: 14px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-    }
 }
+

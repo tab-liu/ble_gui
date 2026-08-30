@@ -34,14 +34,12 @@ export component Sidebar inherits Rectangle {
         NavItem {
             label: "Modbus";
             selected: root.current-page == 1;
-            enabled: root.device-connected;
-            clicked => { if root.device-connected { root.navigate(1); } }
+            clicked => { root.navigate(1); }
         }
         NavItem {
             label: "固件升级";
             selected: root.current-page == 3;
-            enabled: root.device-connected;
-            clicked => { if root.device-connected { root.navigate(3); } }
+            clicked => { root.navigate(3); }
         }
 
         Rectangle { vertical-stretch: 1; }

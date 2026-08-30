@@ -5,8 +5,10 @@ export component ScanDeviceRow inherits Rectangle {
     in property <string> address;
     in property <string> rssi;
     in property <bool> selected;
+    in property <bool> favorited;
     in property <bool> enabled: true;
     callback clicked();
+    callback favorite-clicked();
 
     height: 56px;
     border-radius: 8px;
@@ -16,7 +18,8 @@ export component ScanDeviceRow inherits Rectangle {
     opacity: root.enabled ? 1 : 0.5;
 
     TouchArea {
-        width: 100%;
+        x: 0px;
+        width: parent.width - 44px;
         height: 100%;
         enabled: root.enabled;
         clicked => {
@@ -28,7 +31,7 @@ export component ScanDeviceRow inherits Rectangle {
         Text {
             x: 12px;
             y: 11px;
-            width: parent.width - 96px;
+            width: parent.width - 24px;
             text: root.name;
             color: Theme.text-primary;
             font-size: 14px;
@@ -40,7 +43,7 @@ export component ScanDeviceRow inherits Rectangle {
         Text {
             x: 12px;
             y: 29px;
-            width: parent.width - 96px;
+            width: parent.width - 80px;
             text: root.address;
             color: Theme.text-dim;
             font-size: 12px;
@@ -54,6 +57,29 @@ export component ScanDeviceRow inherits Rectangle {
             text: root.rssi;
             color: Theme.text-secondary;
             font-size: 12px;
+        }
+    }
+
+    TouchArea {
+        x: parent.width - 40px;
+        y: 8px;
+        width: 32px;
+        height: 40px;
+        enabled: root.enabled;
+        clicked => {
+            if (root.enabled) {
+                root.favorite-clicked();
+            }
+        }
+
+        Text {
+            width: 100%;
+            height: 100%;
+            text: root.favorited ? "★" : "☆";
+            color: root.favorited ? Theme.accent : Theme.text-dim;
+            font-size: 18px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
         }
     }
 }

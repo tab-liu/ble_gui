@@ -2,14 +2,13 @@ use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::services::ble::{BleScanEntry, BleSnapshot};
-use crate::services::modbus::ModbusReadMode;
+use crate::services::ble::{BleScanEntry, BleSnapshot, ScanLinkHint};
+use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
-use crate::services::modbus::DashboardData;
+use crate::services::modbus::{DashboardData, ModbusReadMode};
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, PAGE_DASHBOARD};
-use crate::ui::BleScanDevice;
-use crate::ui::MainWindow;
+use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow};
 
 const DEFAULT_RSSI_MIN: i32 = -70;
 
@@ -21,6 +20,7 @@ struct ScanListCache {
 struct BleUiCache {
     scan_generation: u64,
     filter_key: String,
+    favorites_fingerprint: String,
 }
 
 thread_local! {
@@ -28,6 +28,7 @@ thread_local! {
     static BLE_UI_CACHE: RefCell<BleUiCache> = RefCell::new(BleUiCache {
         scan_generation: u64::MAX,
         filter_key: String::new(),
+        favorites_fingerprint: String::new(),
     });
 }
 
@@ -44,10 +45,12 @@ fn prepare_scan_devices(
     name_filter: &str,
     rssi_filter_enabled: bool,
     rssi_min_text: &str,
+    favorites: &[FavoriteDevice],
 ) -> Vec<BleScanEntry> {
     let mut result: Vec<BleScanEntry> = devices
         .iter()
         .filter(|d| d.is_target)
+        .filter(|d| !ble_favorites::contains(favorites, &d.address))
         .cloned()
         .collect();
 
@@ -69,15 +72,68 @@ fn scan_empty_message(snap: &BleSnapshot, filtered_len: usize) -> String {
     if filtered_len > 0 {
         return String::new();
     }
-    let raw = snap.scan_devices.len();
+    let raw = snap.scan_devices.iter().filter(|d| d.is_target).count();
     if raw > 0 {
-        return format!("已发现 {raw} 个蓝牙设备，均被当前过滤条件隐藏（请清空名称过滤或关闭信号强度过滤）");
+        return "附近设备均已在左侧收藏，或被当前过滤条件隐藏".into();
     }
     if snap.scanning {
         "正在扫描蓝牙设备…".into()
     } else {
-        "暂无蓝牙设备，请点击顶部「扫描设备」".into()
+        "暂无扫描结果，可点顶部「扫描设备」，或从左侧收藏 ↗ 定向连接".into()
     }
+}
+
+fn favorites_fingerprint(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> String {
+    let mut parts: Vec<String> = favorites
+        .iter()
+        .map(|f| format!("{}:{}", f.address, f.name))
+        .collect();
+    parts.sort();
+    let seen: Vec<String> = snap
+        .scan_devices
+        .iter()
+        .filter(|d| d.is_target)
+        .map(|d| format!("{}:{}:{:?}", d.address, d.rssi, d.link_hint))
+        .collect();
+    format!("{}|{}|{}", parts.join(";"), snap.scanning, seen.join(";"))
+}
+
+fn build_favorite_rows(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> Vec<BleFavoriteDevice> {
+    favorites
+        .iter()
+        .map(|fav| {
+            let seen_entry = snap.scan_devices.iter().find(|d| {
+                d.is_target && ble_favorites::addresses_equal(&d.address, &fav.address)
+            });
+            let (seen, occupied, rssi) = match seen_entry {
+                Some(d) => (
+                    true,
+                    d.link_hint == ScanLinkHint::Occupied,
+                    d.rssi_text(),
+                ),
+                None => (false, false, String::new()),
+            };
+            let name = if !fav.name.is_empty() {
+                fav.name.clone()
+            } else if let Some(d) = seen_entry {
+                d.name.clone()
+            } else {
+                fav.address.clone()
+            };
+            BleFavoriteDevice {
+                name: name.into(),
+                address: fav.address.clone().into(),
+                rssi: rssi.into(),
+                seen,
+                occupied,
+            }
+        })
+        .collect()
+}
+
+fn sync_favorite_devices(ui: &MainWindow, favorites: &[FavoriteDevice], snap: &BleSnapshot) {
+    let rows = build_favorite_rows(favorites, snap);
+    ui.set_favorite_devices(ModelRc::new(VecModel::from(rows)));
 }
 
 fn scan_filter_key(ui: &MainWindow) -> String {
@@ -89,19 +145,22 @@ fn scan_filter_key(ui: &MainWindow) -> String {
     )
 }
 
-fn should_refresh_scan_list(ui: &MainWindow, snap: &BleSnapshot) -> bool {
+fn should_refresh_scan_list(ui: &MainWindow, snap: &BleSnapshot, favorites_fp: &str) -> bool {
     let filter_key = scan_filter_key(ui);
     BLE_UI_CACHE.with(|cell| {
         let cache = cell.borrow();
-        filter_key != cache.filter_key || snap.scan_list_generation != cache.scan_generation
+        filter_key != cache.filter_key
+            || snap.scan_list_generation != cache.scan_generation
+            || favorites_fp != cache.favorites_fingerprint
     })
 }
 
-fn mark_scan_list_refreshed(ui: &MainWindow, snap: &BleSnapshot) {
+fn mark_scan_list_refreshed(ui: &MainWindow, snap: &BleSnapshot, favorites_fp: String) {
     BLE_UI_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
         cache.scan_generation = snap.scan_list_generation;
         cache.filter_key = scan_filter_key(ui);
+        cache.favorites_fingerprint = favorites_fp;
     });
 }
 
@@ -134,7 +193,6 @@ fn entries_to_devices(entries: &[BleScanEntry]) -> Vec<BleScanDevice> {
         .collect()
 }
 
-/// 尽量原地更新或末尾追加，避免整表替换导致已有行跳动。
 fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
     let devices = entries_to_devices(filtered);
     let addresses: Vec<String> = filtered.iter().map(|d| d.address.clone()).collect();
@@ -154,7 +212,6 @@ fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
                 return;
             }
 
-            // 发现顺序追加：仅追加新行，已有行不动。
             if addresses.len() > cached.addresses.len()
                 && addresses[..cached.addresses.len()] == cached.addresses[..]
             {
@@ -172,27 +229,32 @@ fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
     });
 }
 
-fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot) {
+fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot, favorites: &[FavoriteDevice]) {
     let filtered = prepare_scan_devices(
         &snap.scan_devices,
         ui.get_ble_scan_filter().as_str(),
         ui.get_ble_scan_rssi_filter_enabled(),
         ui.get_ble_scan_rssi_min().as_str(),
+        favorites,
     );
 
     ui.set_scan_device_total(filtered.len() as i32);
     sync_scan_devices(ui, &filtered);
+    sync_favorite_devices(ui, favorites, snap);
     ui.set_scan_empty_message(scan_empty_message(snap, filtered.len()).into());
 
     let selected = ui.get_selected_scan_address().to_string();
-    if !selected.is_empty() && !filtered.iter().any(|d| d.address == selected) {
+    let in_scan = filtered.iter().any(|d| d.address == selected);
+    let in_fav = favorites
+        .iter()
+        .any(|d| ble_favorites::addresses_equal(&d.address, &selected));
+    if !selected.is_empty() && !in_scan && !in_fav {
         ui.set_selected_scan_address("".into());
     }
 
-    mark_scan_list_refreshed(ui, snap);
+    mark_scan_list_refreshed(ui, snap, favorites_fingerprint(favorites, snap));
 }
 
-/// 将各服务状态同步到 Slint UI。
 pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     let connected = ctx.ble.is_connected();
     if connected {
@@ -204,7 +266,7 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     } else {
         None
     };
-    refresh_ble(ui, &ctx.ble.snapshot(), read_mode);
+    refresh_ble(ui, &ctx.favorites_snapshot(), &ctx.ble.snapshot(), read_mode);
     if connected {
         ctx.modbus.on_connected();
     } else {
@@ -231,19 +293,28 @@ pub fn refresh_modbus_dashboard_from_live(
     refresh_dashboard(ui, &dash, busy);
 }
 
-pub fn refresh_ble(ui: &MainWindow, snap: &BleSnapshot, read_mode: Option<ModbusReadMode>) {
-    if should_refresh_scan_list(ui, snap) {
-        refresh_ble_scan_list(ui, snap);
+pub fn refresh_ble(
+    ui: &MainWindow,
+    favorites: &[FavoriteDevice],
+    snap: &BleSnapshot,
+    read_mode: Option<ModbusReadMode>,
+) {
+    let fav_fp = favorites_fingerprint(favorites, snap);
+    if should_refresh_scan_list(ui, snap, &fav_fp) {
+        refresh_ble_scan_list(ui, snap, favorites);
+    } else {
+        sync_favorite_devices(ui, favorites, snap);
     }
     refresh_ble_status(ui, snap, read_mode);
 }
 
 pub fn refresh_ble_scan_filter(
     ui: &MainWindow,
+    favorites: &[FavoriteDevice],
     snap: &BleSnapshot,
     read_mode: Option<ModbusReadMode>,
 ) {
-    refresh_ble_scan_list(ui, snap);
+    refresh_ble_scan_list(ui, snap, favorites);
     refresh_ble_status(ui, snap, read_mode);
 }
 

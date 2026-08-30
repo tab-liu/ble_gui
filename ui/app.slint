@@ -5,6 +5,7 @@ import {
     ModbusTab,
     ModbusQueryLayoutRow,
     BleScanDevice,
+    BleFavoriteDevice,
 } from "types.slint";
 
 import { Theme } from "theme.slint";
@@ -22,6 +23,7 @@ export {
     ModbusTab,
     ModbusQueryLayoutRow,
     BleScanDevice,
+    BleFavoriteDevice,
     Theme,
     Palette,
     ModbusDndApi,
@@ -35,6 +37,7 @@ export component MainWindow inherits Window {
     in-out property <string> ble-rssi-text;
     in-out property <string> ble-action-text;
     in-out property <[BleScanDevice]> scan-devices;
+    in-out property <[BleFavoriteDevice]> favorite-devices;
     in-out property <int> scan-device-total;
     in-out property <bool> scanning;
     in-out property <bool> ble-connecting;
@@ -85,6 +88,8 @@ export component MainWindow inherits Window {
     callback ble-action-clicked();
     callback select-scan-device(string);
     callback connect-selected-clicked();
+    callback connect-favorite-clicked(string);
+    callback toggle-favorite-clicked(string);
     callback ble-scan-filters-changed();
     callback ac-output-toggle();
     callback dc-output-toggle();
@@ -165,6 +170,7 @@ export component MainWindow inherits Window {
                             device-connected: root.device-connected;
                             ble-connecting: root.ble-connecting;
                             scan-devices: root.scan-devices;
+                            favorite-devices: root.favorite-devices;
                             scan-device-total: root.scan-device-total;
                             scan-empty-message: root.scan-empty-message;
                             selected-scan-address <=> root.selected-scan-address;
@@ -185,6 +191,12 @@ export component MainWindow inherits Window {
                             }
                             connect-selected-clicked => {
                                 root.connect-selected-clicked();
+                            }
+                            connect-favorite-clicked(address) => {
+                                root.connect-favorite-clicked(address);
+                            }
+                            toggle-favorite-clicked(address) => {
+                                root.toggle-favorite-clicked(address);
                             }
                             scan-filters-changed => {
                                 root.ble-scan-filters-changed();
