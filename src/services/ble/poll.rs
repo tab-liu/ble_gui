@@ -9,11 +9,11 @@ use log::{debug, info, warn};
 use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
-    build_read_holding, build_write_single, iot_status_supports_tlv, is_fc10_write_ack,
-    merge_control_states, parse_dashboard_registers, parse_read_holding, parse_tlv_response_packet,
-    parse_tlv_read_units, describe_tlv_units, tlv_register_values, TlReadSpec, TlvPacketCollector,
-    DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT, REG_DASHBOARD_COUNT,
-    REG_DASHBOARD_START, REG_IOT_STATUS,
+    build_read_holding, build_write_multiple, build_write_single, iot_status_supports_tlv,
+    is_fc10_write_ack, merge_control_states, parse_dashboard_registers, parse_read_holding,
+    parse_tlv_response_packet, parse_tlv_read_units, describe_tlv_units, tlv_register_values,
+    TlReadSpec, TlvPacketCollector, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT,
+    REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_IOT_STATUS,
 };
 
 const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
@@ -407,6 +407,64 @@ async fn poll_dashboard_tlv(
         dashboard.dc_output_on,
     );
     true
+}
+
+/// 写保持寄存器：单字用 FC06，多字用 FC10；`bit` 为 Some 时先读后改写该位。
+pub async fn write_holding_registers(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    gate: &ModbusGate,
+    slave_id: u8,
+    address: u16,
+    values: &[u16],
+    bit: Option<u8>,
+) -> Result<(), String> {
+    if values.is_empty() {
+        return Err("写入值为空".into());
+    }
+    let _guard = gate.lock().await;
+
+    let to_write = if let Some(bit_idx) = bit {
+        let current = modbus_read(
+            protocol,
+            write_tx,
+            build_read_holding(slave_id, address, 1),
+            slave_id,
+            1,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut word = current.first().copied().unwrap_or(0);
+        let on = values.first().copied().unwrap_or(0) != 0;
+        if on {
+            word |= 1u16 << bit_idx;
+        } else {
+            word &= !(1u16 << bit_idx);
+        }
+        vec![word]
+    } else {
+        values.to_vec()
+    };
+
+    let request = if to_write.len() == 1 {
+        build_write_single(slave_id, address, to_write[0])
+    } else {
+        build_write_multiple(slave_id, address, &to_write)
+    };
+
+    let response = modbus_transaction(protocol, write_tx, request)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let ok = if to_write.len() == 1 {
+        response.len() >= 8 && response[1] == 0x06
+    } else {
+        is_fc10_write_ack(&response)
+    };
+    if !ok {
+        return Err(format!("写寄存器 {address} 响应异常"));
+    }
+    Ok(())
 }
 
 /// 写单个控制寄存器（2011/2012），成功后回读确认。

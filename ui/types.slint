@@ -47,3 +47,44 @@ export struct BleFavoriteDevice {
     /// 广播标记为已被其它主机连接
     occupied: bool,
 }
+
+/// 设备配置项（Modbus 寄存器读写；无倍数，控件决定展示方式）
+/// widget-kind: 0=开关 1=文本 2=数值
+/// 读回（result*）与写入（write-value）分离，轮询只更新读回，不覆盖编辑框
+export struct DeviceConfigItem {
+    name: string,
+    register: string,
+    /// `integer` | `float` | `string`
+    value-type: string,
+    register-count: int,
+    widget-kind: int,
+    /// 轮询读回原始/解析结果（与查询页 result 同角色）
+    result: string,
+    result-display: string,
+    result-font-size: int,
+    /// 待写入值（开关用 "0"/"1"）；编辑只改这里
+    write-value: string,
+    status: string,
+    /// 本地已改、尚未写入设备
+    dirty: bool,
+}
+
+export struct DeviceConfigGroup {
+    title: string,
+    slave-id: string,
+    /// 固定「常用」组：不可删、不可改名、不可加灵活项
+    builtin: bool,
+    items: [DeviceConfigItem],
+}
+
+/// 常用设置项（代码映射；可含 bit 域）。读写分离同灵活项。
+/// widget-kind: 0=开关 1=枚举(占位) 2=数值
+export struct BuiltinConfigItem {
+    id: string,
+    name: string,
+    widget-kind: int,
+    result-display: string,
+    write-value: string,
+    status: string,
+    dirty: bool,
+}

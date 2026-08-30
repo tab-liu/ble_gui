@@ -5,21 +5,26 @@ use std::sync::{Arc, Mutex};
 
 use log::{debug, info, warn};
 
-use crate::services::modbus::{ModbusReadMode, QueryItemPollResult, SharedModbusLive, SharedQueryPollLive};
+use crate::services::modbus::{
+    ModbusReadMode, QueryItemPollResult, QueryPollTarget, SharedModbusLive, SharedQueryPollLive,
+};
 
 use super::modbus::{
     build_read_holding, chunk_tl_batches, format_query_value, tlv_batch_start_index,
     tlv_item_batch_index, tlv_register_values, TlReadSpec,
 };
 use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, probe_modbus_capabilities, ModbusGate};
-use super::poll_policy::{describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
+use super::poll_policy::{
+    describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground,
+    QueryPollItemSpec, SharedPollPolicy,
+};
 use super::protocol::ProtocolSession;
 
 /// 将单项轮询结果合并进共享快照；若该项相对上次有变化则返回 true。
 fn publish_query_item(
     query_live: &SharedQueryPollLive,
     query_generation: &Arc<AtomicU64>,
-    tab_index: usize,
+    target: &QueryPollTarget,
     result: &QueryItemPollResult,
 ) {
     let Ok(mut live) = query_live.lock() else {
@@ -27,8 +32,8 @@ fn publish_query_item(
         return;
     };
 
-    let changed = if live.tab_index != tab_index {
-        live.tab_index = tab_index;
+    let changed = if live.target != *target {
+        live.target = target.clone();
         live.items.clear();
         live.items.push(result.clone());
         true
@@ -51,12 +56,22 @@ fn publish_query_item(
     if changed {
         debug!(
             target: "ble_gui::query_ui",
-            "query_live 单项更新 标签={tab_index} [#{}] result={} status={}",
+            "query_live 单项更新 {:?} [#{}] result={} status={}",
+            target,
             result.item_index,
             result.result,
             result.status,
         );
         query_generation.fetch_add(1, Ordering::Release);
+    }
+}
+
+fn format_poll_item(values: &[u16], item: &QueryPollItemSpec) -> Result<String, String> {
+    if let Some(bit) = item.bit {
+        let word = values.first().copied().unwrap_or(0);
+        Ok((((word >> bit) & 1) as u16).to_string())
+    } else {
+        format_query_value(values, item.value_type, item.scale)
     }
 }
 
@@ -95,14 +110,45 @@ pub async fn poll_foreground(
                 "开始 {}",
                 describe_poll_foreground(&foreground),
             );
-            poll_modbus_query(
+            let target = QueryPollTarget::ModbusQuery {
+                tab_index: *tab_index,
+            };
+            poll_register_items(
                 protocol,
                 write_tx,
                 modbus_live,
                 query_live,
                 query_generation,
                 gate,
-                *tab_index,
+                target,
+                *slave_id,
+                items,
+            )
+            .await
+        }
+        PollForeground::DeviceConfig {
+            group_index,
+            builtin,
+            slave_id,
+            items,
+        } => {
+            info!(
+                target: "ble_gui::poll",
+                "开始 {}",
+                describe_poll_foreground(&foreground),
+            );
+            let target = QueryPollTarget::DeviceConfig {
+                group_index: *group_index,
+                builtin: *builtin,
+            };
+            poll_register_items(
+                protocol,
+                write_tx,
+                modbus_live,
+                query_live,
+                query_generation,
+                gate,
+                target,
                 *slave_id,
                 items,
             )
@@ -111,17 +157,17 @@ pub async fn poll_foreground(
     }
 }
 
-/// 读当前标签页内每个查询项对应的一个保持寄存器。
-pub async fn poll_modbus_query(
+/// 读一组寄存器项（查询页 / 设备配置共用）。
+pub async fn poll_register_items(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     modbus_live: &SharedModbusLive,
     query_live: &SharedQueryPollLive,
     query_generation: &Arc<AtomicU64>,
     gate: &ModbusGate,
-    tab_index: usize,
+    target: QueryPollTarget,
     slave_id: u8,
-    items: &[super::poll_policy::QueryPollItemSpec],
+    items: &[QueryPollItemSpec],
 ) -> bool {
     let _guard = gate.lock().await;
     let use_tlv = modbus_live
@@ -132,18 +178,19 @@ pub async fn poll_modbus_query(
     if items.is_empty() {
         info!(
             target: "ble_gui::poll",
-            "Modbus 查询轮询完成 标签={tab_index} 从站={slave_id}（无查询项）",
+            "寄存器轮询完成 {:?} 从站={slave_id}（无项）",
+            target,
         );
         return false;
     }
 
     if use_tlv {
-        return poll_modbus_query_tlv(
+        return poll_register_items_tlv(
             protocol,
             write_tx,
             query_live,
             query_generation,
-            tab_index,
+            target,
             slave_id,
             items,
         )
@@ -154,20 +201,12 @@ pub async fn poll_modbus_query(
 
     for item in items {
         let poll_result = match item.protocol_address {
-            None => {
-                info!(
-                    target: "ble_gui::poll",
-                    "查询 标签={tab_index} [#{}] 寄存器 {} → 地址无效",
-                    item.item_index,
-                    item.register_text,
-                );
-                QueryItemPollResult {
-                    item_index: item.item_index,
-                    status: "地址无效".into(),
-                    result: item.register_text.clone(),
-                    ok: false,
-                }
-            }
+            None => QueryItemPollResult {
+                item_index: item.item_index,
+                status: "地址无效".into(),
+                result: item.register_text.clone(),
+                ok: false,
+            },
             Some(address) => {
                 let count = item.register_count.max(1);
                 match modbus_read(
@@ -179,82 +218,66 @@ pub async fn poll_modbus_query(
                 )
                 .await
                 {
-                    Ok(values) => {
-                        match format_query_value(&values, item.value_type, item.scale) {
-                            Ok(result) => {
-                                any_ok = true;
-                                info!(
-                                    target: "ble_gui::poll",
-                                    "查询 标签={tab_index} 从站={slave_id} [#{}] 寄存器 {} (协议 {address}×{count}) → {result}",
-                                    item.item_index,
-                                    item.register_text,
-                                );
-                                QueryItemPollResult {
-                                    item_index: item.item_index,
-                                    status: "正常".into(),
-                                    result,
-                                    ok: true,
-                                }
-                            }
-                            Err(err) => {
-                                warn!(
-                                    target: "ble_gui::poll",
-                                    "查询 标签={tab_index} [#{}] 寄存器 {} 解析失败: {err}",
-                                    item.item_index,
-                                    item.register_text,
-                                );
-                                QueryItemPollResult {
-                                    item_index: item.item_index,
-                                    status: "解析失败".into(),
-                                    result: err,
-                                    ok: false,
-                                }
+                    Ok(values) => match format_poll_item(&values, item) {
+                        Ok(result) => {
+                            any_ok = true;
+                            info!(
+                                target: "ble_gui::poll",
+                                "轮询 {:?} 从站={slave_id} [#{}] {} → {result}",
+                                target,
+                                item.item_index,
+                                item.register_text,
+                            );
+                            QueryItemPollResult {
+                                item_index: item.item_index,
+                                status: "正常".into(),
+                                result,
+                                ok: true,
                             }
                         }
-                    }
+                        Err(err) => QueryItemPollResult {
+                            item_index: item.item_index,
+                            status: "解析失败".into(),
+                            result: err,
+                            ok: false,
+                        },
+                    },
                     Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => {
                         return false;
                     }
-                    Err(err) => {
-                        warn!(
-                            target: "ble_gui::poll",
-                            "查询 标签={tab_index} [#{}] 寄存器 {} (协议 {address}×{count}) 失败: {err}",
-                            item.item_index,
-                            item.register_text,
-                        );
-                        QueryItemPollResult {
-                            item_index: item.item_index,
-                            status: "失败".into(),
-                            result: err.to_string(),
-                            ok: false,
-                        }
-                    }
+                    Err(err) => QueryItemPollResult {
+                        item_index: item.item_index,
+                        status: "失败".into(),
+                        result: err.to_string(),
+                        ok: false,
+                    },
                 }
             }
         };
         if poll_result.ok {
             any_ok = true;
         }
-        publish_query_item(query_live, query_generation, tab_index, &poll_result);
+        publish_query_item(query_live, query_generation, &target, &poll_result);
     }
 
     info!(
         target: "ble_gui::poll",
-        "Modbus 查询轮询完成 标签={tab_index} 从站={slave_id} 共 {} 项",
+        "寄存器轮询完成 {:?} 从站={slave_id} 共 {} 项",
+        target,
         items.len(),
     );
 
     any_ok || !items.is_empty()
 }
 
-async fn poll_modbus_query_tlv(
+async fn poll_register_items_tlv(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     query_live: &SharedQueryPollLive,
     query_generation: &Arc<AtomicU64>,
-    tab_index: usize,
+    target: QueryPollTarget,
     slave_id: u8,
-    items: &[super::poll_policy::QueryPollItemSpec],
+    items: &[QueryPollItemSpec],
 ) -> bool {
     let mut tl_items = Vec::new();
     let mut valid_items = Vec::new();
@@ -268,7 +291,7 @@ async fn poll_modbus_query_tlv(
                     result: item.register_text.clone(),
                     ok: false,
                 };
-                publish_query_item(query_live, query_generation, tab_index, &poll_result);
+                publish_query_item(query_live, query_generation, &target, &poll_result);
             }
             Some(address) => {
                 let count = item.register_count.max(1);
@@ -283,35 +306,15 @@ async fn poll_modbus_query_tlv(
     }
 
     let batches = chunk_tl_batches(&tl_items);
-    info!(
-        target: "ble_gui::poll",
-        "开始 Modbus TLV 查询 标签={tab_index} 从站={slave_id} {} 项分 {} 批",
-        tl_items.len(),
-        batches.len(),
-    );
-
     let mut batch_failed = vec![false; batches.len()];
-
     let mut all_results = Vec::new();
     for (batch_idx, batch) in batches.iter().enumerate() {
-        info!(
-            target: "ble_gui::poll",
-            "Modbus TLV 查询 标签={tab_index} 批次 {}/{} ({} 项)",
-            batch_idx + 1,
-            batches.len(),
-            batch.len(),
-        );
         match modbus_tlv_read(protocol, write_tx, batch).await {
             Ok(mut chunk) => all_results.append(&mut chunk),
             Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => return false,
             Err(err) => {
                 batch_failed[batch_idx] = true;
                 let err_text = err.to_string();
-                warn!(
-                    target: "ble_gui::poll",
-                    "Modbus TLV 查询 标签={tab_index} 批次 {} 失败: {err_text}",
-                    batch_idx + 1,
-                );
                 let start = tlv_batch_start_index(batch_idx);
                 let end = start + batch.len();
                 for (item, _, _) in &valid_items[start..end] {
@@ -321,28 +324,23 @@ async fn poll_modbus_query_tlv(
                         result: err_text.clone(),
                         ok: false,
                     };
-                    publish_query_item(query_live, query_generation, tab_index, &poll_result);
+                    publish_query_item(query_live, query_generation, &target, &poll_result);
                 }
             }
         }
     }
 
     let mut any_ok = false;
-    for (idx, (item, address, count)) in valid_items.iter().enumerate() {
+    for (idx, (item, _address, _count)) in valid_items.iter().enumerate() {
         let batch_idx = tlv_item_batch_index(idx);
         if batch_failed.get(batch_idx).copied().unwrap_or(false) {
             continue;
         }
-        let poll_result = match tlv_register_values(&all_results, slave_id, *address) {
-            Ok(values) => match format_query_value(&values, item.value_type, item.scale) {
+        let addr = item.protocol_address.unwrap_or(0);
+        let poll_result = match tlv_register_values(&all_results, slave_id, addr) {
+            Ok(values) => match format_poll_item(&values, item) {
                 Ok(result) => {
                     any_ok = true;
-                    info!(
-                        target: "ble_gui::poll",
-                        "TLV 查询 标签={tab_index} 从站={slave_id} [#{}] 寄存器 {} (协议 {address}×{count}) → {result}",
-                        item.item_index,
-                        item.register_text,
-                    );
                     QueryItemPollResult {
                         item_index: item.item_index,
                         status: "正常".into(),
@@ -364,15 +362,8 @@ async fn poll_modbus_query_tlv(
                 ok: false,
             },
         };
-        publish_query_item(query_live, query_generation, tab_index, &poll_result);
+        publish_query_item(query_live, query_generation, &target, &poll_result);
     }
-
-    info!(
-        target: "ble_gui::poll",
-        "Modbus TLV 查询完成 标签={tab_index} 从站={slave_id} 共 {} 项 ({} 批)",
-        items.len(),
-        batches.len(),
-    );
 
     any_ok || !items.is_empty()
 }

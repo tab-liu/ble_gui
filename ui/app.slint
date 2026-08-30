@@ -6,6 +6,9 @@ import {
     ModbusQueryLayoutRow,
     BleScanDevice,
     BleFavoriteDevice,
+    DeviceConfigItem,
+    DeviceConfigGroup,
+    BuiltinConfigItem,
 } from "types.slint";
 
 import { Theme } from "theme.slint";
@@ -14,6 +17,7 @@ import { Sidebar } from "components/sidebar.slint";
 import { NewTabDialog } from "components/new_tab_dialog.slint";
 import { DashboardPage } from "pages/dashboard.slint";
 import { ModbusPage } from "pages/modbus.slint";
+import { DeviceConfigPage } from "pages/device_config.slint";
 import { SettingsPage } from "pages/settings.slint";
 import { FirmwarePage } from "pages/firmware.slint";
 import { ModbusDndApi } from "components/modbus_dnd.slint";
@@ -24,6 +28,9 @@ export {
     ModbusQueryLayoutRow,
     BleScanDevice,
     BleFavoriteDevice,
+    DeviceConfigItem,
+    DeviceConfigGroup,
+    BuiltinConfigItem,
     Theme,
     Palette,
     ModbusDndApi,
@@ -84,6 +91,20 @@ export component MainWindow inherits Window {
     in-out property <int> renaming-tab-index: -1;
     in-out property <string> editing-tab-title: "";
 
+    in-out property <[DeviceConfigGroup]> config-groups;
+    in-out property <int> active-config-group: 0;
+    in-out property <[DeviceConfigItem]> active-config-items;
+    in-out property <[BuiltinConfigItem]> builtin-config-items;
+    in-out property <string> active-group-slave-id: "0";
+    in-out property <int> renaming-config-group-index: -1;
+    in-out property <string> editing-group-title: "";
+    in-out property <bool> show-add-config-form: false;
+    in-out property <string> config-form-name: "";
+    in-out property <string> config-form-register: "";
+    in-out property <int> config-form-widget-index: 2;
+    in-out property <int> config-form-value-type-index: 0;
+    in-out property <string> config-form-register-count: "1";
+
     callback navigate(int);
     callback ble-action-clicked();
     callback select-scan-device(string);
@@ -113,6 +134,21 @@ export component MainWindow inherits Window {
     callback dialog-cancel();
     callback set-theme-mode(int);
     callback toggle-theme-quick();
+
+    callback add-device-config-group-request();
+    callback remove-device-config-group(int);
+    callback switch-device-config-group(int);
+    callback start-rename-device-config-group(int);
+    callback commit-rename-device-config-group();
+    callback commit-device-config-group-slave-id();
+    callback show-add-device-config-panel();
+    callback confirm-add-device-config();
+    callback cancel-add-device-config();
+    callback device-config-value-edited(int, string);
+    callback write-device-config-item(int);
+    callback remove-device-config-item(int);
+    callback builtin-config-value-edited(int, string);
+    callback write-builtin-config-item(int);
 
     title: "BLE Modbus 工具";
     preferred-width: 960px;
@@ -281,6 +317,37 @@ export component MainWindow inherits Window {
                             check-update => {
                                 root.firmware-check-update();
                             }
+                        }
+
+                        if root.current-page == 4: DeviceConfigPage {
+                            device-connected: root.device-connected;
+                            config-groups: root.config-groups;
+                            active-config-group: root.active-config-group;
+                            active-config-items: root.active-config-items;
+                            builtin-config-items: root.builtin-config-items;
+                            active-group-slave-id <=> root.active-group-slave-id;
+                            renaming-group-index: root.renaming-config-group-index;
+                            editing-group-title <=> root.editing-group-title;
+                            show-add-config-form: root.show-add-config-form;
+                            config-form-name <=> root.config-form-name;
+                            config-form-register <=> root.config-form-register;
+                            config-form-widget-index <=> root.config-form-widget-index;
+                            config-form-value-type-index <=> root.config-form-value-type-index;
+                            config-form-register-count <=> root.config-form-register-count;
+                            add-group-request => { root.add-device-config-group-request(); }
+                            remove-group(index) => { root.remove-device-config-group(index); }
+                            switch-group(index) => { root.switch-device-config-group(index); }
+                            start-rename-group(index) => { root.start-rename-device-config-group(index); }
+                            commit-rename-group => { root.commit-rename-device-config-group(); }
+                            commit-group-slave-id => { root.commit-device-config-group-slave-id(); }
+                            show-add-config-panel => { root.show-add-device-config-panel(); }
+                            confirm-add-config => { root.confirm-add-device-config(); }
+                            cancel-add-config => { root.cancel-add-device-config(); }
+                            config-value-edited(index, value) => { root.device-config-value-edited(index, value); }
+                            write-config-item(index) => { root.write-device-config-item(index); }
+                            remove-config-item(index) => { root.remove-device-config-item(index); }
+                            builtin-value-edited(index, value) => { root.builtin-config-value-edited(index, value); }
+                            write-builtin-item(index) => { root.write-builtin-config-item(index); }
                         }
                     }
                 }

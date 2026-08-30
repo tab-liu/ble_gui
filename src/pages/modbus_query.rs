@@ -235,11 +235,14 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
         return;
     }
 
-    if snapshot.tab_index != active {
+    let crate::services::modbus::QueryPollTarget::ModbusQuery { tab_index } = snapshot.target else {
+        return;
+    };
+
+    if tab_index != active {
         debug!(
             target: "ble_gui::query_ui",
-            "apply 跳过: 快照标签 {} != 当前标签 {active}",
-            snapshot.tab_index,
+            "apply 跳过: 快照标签 {tab_index} != 当前标签 {active}",
         );
         return;
     }

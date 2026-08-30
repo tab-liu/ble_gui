@@ -1,0 +1,167 @@
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { ToolbarButton } from "toolbar_button.slint";
+
+/// 常用设置行：无删除；读回与设置分离。
+export component BuiltinConfigRow inherits Rectangle {
+    in property <string> name;
+    in property <int> widget-kind;
+    in property <string> result-display;
+    in-out property <string> write-value;
+    in property <string> status;
+    in property <bool> dirty;
+    in property <bool> write-enabled: true;
+    callback write-value-edited(string);
+    callback write-clicked();
+
+    border-radius: 8px;
+    background: Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: root.dirty ? Theme.border-accent : Theme.border;
+    min-height: 56px;
+    vertical-stretch: 0;
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            alignment: start;
+            min-width: 100px;
+
+            Text {
+                text: root.name;
+                color: Theme.text-primary;
+                font-size: 13px;
+                font-weight: 600;
+                overflow: elide;
+            }
+
+            if root.dirty: Text {
+                text: "未写入";
+                color: Theme.text-dim;
+                font-size: 11px;
+            }
+        }
+
+        VerticalLayout {
+            spacing: 1px;
+            alignment: center;
+            min-width: 72px;
+
+            Text {
+                text: "读回";
+                color: Theme.text-dim;
+                font-size: 10px;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: root.result-display == "" ? "—" : root.result-display;
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            height: 28px;
+            background: Theme.border;
+        }
+
+        VerticalLayout {
+            spacing: 1px;
+            alignment: center;
+
+            Text {
+                text: "设置";
+                color: Theme.text-dim;
+                font-size: 10px;
+                horizontal-alignment: center;
+            }
+
+            if root.widget-kind == 0: HorizontalLayout {
+                spacing: 6px;
+                cross-axis-alignment: center;
+
+                Text {
+                    text: root.write-value == "1" || root.write-value == "true" ? "开" : "关";
+                    color: Theme.text-secondary;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+
+                Rectangle {
+                    width: 44px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: (root.write-value == "1" || root.write-value == "true") ? Theme.accent : Theme.border;
+
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        clicked => {
+                            if (root.write-value == "1" || root.write-value == "true") {
+                                root.write-value-edited("0");
+                            } else {
+                                root.write-value-edited("1");
+                            }
+                        }
+
+                        Rectangle {
+                            x: (root.write-value == "1" || root.write-value == "true") ? parent.width - 22px : 2px;
+                            y: 2px;
+                            width: 20px;
+                            height: 20px;
+                            border-radius: 10px;
+                            background: #ffffff;
+                        }
+                    }
+                }
+            }
+
+            if root.widget-kind == 1: LineEdit {
+                width: 120px;
+                text: root.write-value;
+                placeholder-text: "枚举值";
+                edited => { root.write-value-edited(self.text); }
+            }
+
+            if root.widget-kind == 2: LineEdit {
+                width: 100px;
+                text: root.write-value;
+                placeholder-text: "数值";
+                edited => { root.write-value-edited(self.text); }
+            }
+        }
+
+        Text {
+            text: root.status;
+            color: Theme.text-dim;
+            font-size: 11px;
+            min-width: 56px;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        ToolbarButton {
+            text: "写入";
+            primary: true;
+            opacity: root.write-enabled ? 1 : 0.45;
+            clicked => {
+                if (root.write-enabled) {
+                    root.write-clicked();
+                }
+            }
+        }
+    }
+}

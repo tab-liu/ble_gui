@@ -158,8 +158,7 @@ fn format_string(values: &[u16]) -> Result<String, String> {
 }
 
 /// 将字符串按 Modbus 寄存器规则编码（寄存器内低字节在前，与 [`format_string`] 互逆）。
-#[cfg(test)]
-fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
+pub fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
     let count = register_count.max(1) as usize;
     let mut bytes = vec![0u8; count * 2];
     for (i, &b) in text.as_bytes().iter().enumerate().take(bytes.len()) {
@@ -169,6 +168,48 @@ fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
         .chunks(2)
         .map(|pair| u16::from(pair[0]) | (u16::from(pair.get(1).copied().unwrap_or(0)) << 8))
         .collect()
+}
+
+/// 将写入文本编码为寄存器字（无倍数；整数按低字在前拆分）。
+pub fn encode_write_value(
+    text: &str,
+    value_type: QueryValueType,
+    register_count: u16,
+) -> Result<Vec<u16>, String> {
+    let count = register_count.max(1) as usize;
+    match value_type {
+        QueryValueType::String => Ok(encode_string_to_registers(text, register_count)),
+        QueryValueType::Float => {
+            let f: f32 = text
+                .trim()
+                .parse()
+                .map_err(|_| format!("无法解析浮点: {text}"))?;
+            let bits = f.to_bits();
+            let low = (bits & 0xFFFF) as u16;
+            let high = (bits >> 16) as u16;
+            let mut regs = vec![low, high];
+            regs.resize(count, 0);
+            Ok(regs)
+        }
+        QueryValueType::Integer => {
+            let s = text.trim();
+            let on = matches!(s.to_lowercase().as_str(), "1" | "true" | "on" | "开");
+            let off = matches!(s.to_lowercase().as_str(), "0" | "false" | "off" | "关");
+            let raw: u64 = if on {
+                1
+            } else if off {
+                0
+            } else {
+                s.parse()
+                    .map_err(|_| format!("无法解析整数: {text}"))?
+            };
+            let mut regs = Vec::with_capacity(count);
+            for i in 0..count {
+                regs.push(((raw >> (16 * i)) & 0xFFFF) as u16);
+            }
+            Ok(regs)
+        }
+    }
 }
 
 #[cfg(test)]

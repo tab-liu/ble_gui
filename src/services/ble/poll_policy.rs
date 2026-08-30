@@ -22,9 +22,16 @@ pub enum PollForeground {
         slave_id: u8,
         items: Vec<QueryPollItemSpec>,
     },
+    /// 设备配置页：常用映射或当前灵活分组。
+    DeviceConfig {
+        group_index: usize,
+        builtin: bool,
+        slave_id: u8,
+        items: Vec<QueryPollItemSpec>,
+    },
 }
 
-/// 单个查询卡片在轮询层的描述（与 Slint 模型解耦）。
+/// 单个查询/配置项在轮询层的描述（与 Slint 模型解耦）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct QueryPollItemSpec {
     pub item_index: usize,
@@ -34,6 +41,8 @@ pub struct QueryPollItemSpec {
     pub register_count: u16,
     pub value_type: QueryValueType,
     pub scale: u32,
+    /// 若为 Some，读回只取该 bit（设备配置常用项）。
+    pub bit: Option<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -96,29 +105,44 @@ pub fn describe_poll_foreground(f: &PollForeground) -> String {
             tab_index,
             slave_id,
             items,
+        } => describe_items("Modbus 查询", *tab_index, *slave_id, items),
+        PollForeground::DeviceConfig {
+            group_index,
+            builtin,
+            slave_id,
+            items,
         } => {
-            if items.is_empty() {
-                return format!("Modbus 查询 · 标签 {tab_index} · 从站 {slave_id} · （无查询项）");
-            }
-            let regs: Vec<String> = items
-                .iter()
-                .map(|i| {
-                    let len = if i.register_count > 1 {
-                        format!("×{}", i.register_count)
-                    } else {
-                        String::new()
-                    };
-                    if let Some(addr) = i.protocol_address {
-                        format!("{}→{addr}{len}", i.register_text)
-                    } else {
-                        format!("{}→?{len}", i.register_text)
-                    }
-                })
-                .collect();
-            format!(
-                "Modbus 查询 · 标签 {tab_index} · 从站 {slave_id} · [{}]",
-                regs.join(", ")
-            )
+            let kind = if *builtin { "设备配置·常用" } else { "设备配置·分组" };
+            describe_items(kind, *group_index, *slave_id, items)
         }
     }
+}
+
+fn describe_items(label: &str, index: usize, slave_id: u8, items: &[QueryPollItemSpec]) -> String {
+    if items.is_empty() {
+        return format!("{label} · #{index} · 从站 {slave_id} · （无项）");
+    }
+    let regs: Vec<String> = items
+        .iter()
+        .map(|i| {
+            let len = if i.register_count > 1 {
+                format!("×{}", i.register_count)
+            } else {
+                String::new()
+            };
+            let bit = i
+                .bit
+                .map(|b| format!(".b{b}"))
+                .unwrap_or_default();
+            if let Some(addr) = i.protocol_address {
+                format!("{}→{addr}{bit}{len}", i.register_text)
+            } else {
+                format!("{}→?{bit}{len}", i.register_text)
+            }
+        })
+        .collect();
+    format!(
+        "{label} · #{index} · 从站 {slave_id} · [{}]",
+        regs.join(", ")
+    )
 }

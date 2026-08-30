@@ -198,6 +198,21 @@ impl BleService {
         let _ = self.inner.cmd_tx.send(BleCommand::WriteRegister { address, value });
     }
 
+    pub fn write_holding(
+        &self,
+        slave_id: u8,
+        address: u16,
+        values: Vec<u16>,
+        bit: Option<u8>,
+    ) {
+        let _ = self.inner.cmd_tx.send(BleCommand::WriteHolding {
+            slave_id,
+            address,
+            values,
+            bit,
+        });
+    }
+
     pub fn is_connected(&self) -> bool {
         matches!(
             self.inner.state.lock().expect("ble state lock").phase,

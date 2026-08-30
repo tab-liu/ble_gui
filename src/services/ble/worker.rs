@@ -15,7 +15,8 @@ use log::{info, warn};
 use tokio::sync::mpsc;
 
 use super::poll::{
-    clear_live_on_disconnect, init_live_on_connect, write_control_register, ModbusGate,
+    clear_live_on_disconnect, init_live_on_connect, write_control_register, write_holding_registers,
+    ModbusGate,
 };
 use super::poll_executor::{poll_foreground, poll_foreground_once};
 use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
@@ -35,10 +36,22 @@ pub enum BleCommand {
     Connect { address: String },
     Disconnect,
     WriteRegister { address: u16, value: u16 },
+    WriteHolding {
+        slave_id: u8,
+        address: u16,
+        values: Vec<u16>,
+        bit: Option<u8>,
+    },
 }
 
 enum SessionCommand {
     WriteRegister { address: u16, value: u16 },
+    WriteHolding {
+        slave_id: u8,
+        address: u16,
+        values: Vec<u16>,
+        bit: Option<u8>,
+    },
 }
 
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
@@ -415,6 +428,21 @@ pub async fn worker_main(
             BleCommand::WriteRegister { address, value } => {
                 if let Some(active) = &session {
                     let _ = active.cmd_tx.send(SessionCommand::WriteRegister { address, value });
+                }
+            }
+            BleCommand::WriteHolding {
+                slave_id,
+                address,
+                values,
+                bit,
+            } => {
+                if let Some(active) = &session {
+                    let _ = active.cmd_tx.send(SessionCommand::WriteHolding {
+                        slave_id,
+                        address,
+                        values,
+                        bit,
+                    });
                 }
             }
         }
@@ -1009,6 +1037,57 @@ async fn connect_device(
                                             result.as_ref().err().unwrap_or(&String::new())
                                         );
                                     }
+                                }
+                                if result.is_ok() {
+                                    poll_foreground_once(
+                                        &policy_poll,
+                                        &protocol_poll,
+                                        &write_tx_poll,
+                                        &live_poll,
+                                        &query_poll,
+                                        &query_gen,
+                                        &gate_poll,
+                                    )
+                                    .await;
+                                }
+                                notify_ui_force(&ui, true);
+                                let _ = event_tx.send(());
+                            });
+                        }
+                        Some(SessionCommand::WriteHolding {
+                            slave_id,
+                            address,
+                            values,
+                            bit,
+                        }) => {
+                            let protocol = protocol_for_write.clone();
+                            let write_tx = write_tx.clone();
+                            let ui = ui_refresh_for_notify.clone();
+                            let event_tx = event_for_notify.clone();
+                            let gate = gate_for_write.clone();
+                            let protocol_poll = protocol.clone();
+                            let write_tx_poll = write_tx.clone();
+                            let live_poll = modbus_live_write.clone();
+                            let query_poll = query_live_write.clone();
+                            let query_gen = query_gen_write.clone();
+                            let policy_poll = poll_policy_notify.clone();
+                            let gate_poll = gate_for_write.clone();
+                            tokio::spawn(async move {
+                                let result = write_holding_registers(
+                                    &protocol,
+                                    &write_tx,
+                                    &gate,
+                                    slave_id,
+                                    address,
+                                    &values,
+                                    bit,
+                                )
+                                .await;
+                                if let Err(err) = &result {
+                                    warn!(
+                                        target: "ble_gui::worker",
+                                        "写保持寄存器 {address} 失败: {err}",
+                                    );
                                 }
                                 if result.is_ok() {
                                     poll_foreground_once(

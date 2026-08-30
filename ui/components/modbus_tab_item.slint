@@ -5,6 +5,8 @@ export component ModbusTabItem inherits Rectangle {
     in property <string> title;
     in property <bool> selected;
     in property <bool> renaming;
+    /// false 时禁止双击改名（固定「常用」标签）
+    in property <bool> renameable: true;
     in-out property <string> edit-title;
     callback switch-tab();
     callback request-rename();
@@ -25,7 +27,9 @@ export component ModbusTabItem inherits Rectangle {
         }
 
         double-clicked => {
-            root.request-rename();
+            if (root.renameable) {
+                root.request-rename();
+            }
         }
 
         Text {

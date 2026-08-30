@@ -7,9 +7,11 @@ use std::sync::{Arc, Mutex};
 use log::warn;
 use slint::{ModelRc, VecModel};
 
+use crate::pages::device_config::DeviceConfigState;
 use crate::pages::modbus_query::ModbusQueryState;
 use crate::services::ble::BleService;
 use crate::services::ble_favorites::{self, FavoriteDevice};
+use crate::services::device_config_store;
 use crate::services::firmware::FirmwareService;
 use crate::services::modbus::ModbusService;
 use crate::services::modbus_query_store;
@@ -24,9 +26,11 @@ pub const PAGE_DASHBOARD: i32 = 0;
 pub const PAGE_MODBUS: i32 = 1;
 pub const PAGE_SETTINGS: i32 = 2;
 pub const PAGE_FIRMWARE: i32 = 3;
+pub const PAGE_DEVICE_CONFIG: i32 = 4;
 
 pub struct AppState {
     pub modbus_query: ModbusQueryState,
+    pub device_config: DeviceConfigState,
 }
 
 #[derive(Clone)]
@@ -40,6 +44,8 @@ pub struct AppContext {
     pub favorites: Arc<Mutex<Vec<FavoriteDevice>>>,
     /// 启动时恢复的 Modbus 标签页索引（来自持久化配置）。
     pub initial_modbus_tab: i32,
+    /// 启动时恢复的设备配置分组索引。
+    pub initial_device_config_group: i32,
 }
 
 impl AppContext {
@@ -60,9 +66,24 @@ impl AppContext {
             ),
         };
 
+        let (config_groups, config_builtin, initial_device_config_group) =
+            match device_config_store::load() {
+                Some(loaded) => (
+                    loaded.groups,
+                    DeviceConfigState::sample_builtin(),
+                    loaded.active_group,
+                ),
+                None => (
+                    DeviceConfigState::sample_groups(),
+                    DeviceConfigState::sample_builtin(),
+                    0,
+                ),
+            };
+
         Self {
             state: Rc::new(RefCell::new(AppState {
                 modbus_query: ModbusQueryState::new(tabs),
+                device_config: DeviceConfigState::new(config_groups, config_builtin),
             })),
             ble: BleService::new(modbus_live, query_live, query_generation),
             modbus,
@@ -70,6 +91,7 @@ impl AppContext {
             theme: ThemeService::new(),
             favorites: Arc::new(Mutex::new(ble_favorites::load())),
             initial_modbus_tab,
+            initial_device_config_group,
         }
     }
 

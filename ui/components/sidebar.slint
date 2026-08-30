@@ -37,6 +37,11 @@ export component Sidebar inherits Rectangle {
             clicked => { root.navigate(1); }
         }
         NavItem {
+            label: "设备配置";
+            selected: root.current-page == 4;
+            clicked => { root.navigate(4); }
+        }
+        NavItem {
             label: "固件升级";
             selected: root.current-page == 3;
             clicked => { root.navigate(3); }

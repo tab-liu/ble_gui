@@ -8,7 +8,7 @@ use std::time::Duration;
 use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 
 use crate::pages;
-use crate::pages::modbus_query;
+use crate::pages::{device_config, modbus_query};
 use crate::services::ble::ensure_dashboard_poll_if_idle;
 use crate::services::poll_sync::{set_app_page, sync_poll_policy};
 use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD};
@@ -84,6 +84,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let poll_gen = ctx_poll.modbus.query_poll_generation();
             if poll_gen != query_gen_applied.get() {
                 modbus_query::apply_query_poll_results(&ui, &ctx_poll);
+                device_config::apply_config_poll_results(&ui, &ctx_poll);
                 query_gen_applied.set(poll_gen);
             }
         }

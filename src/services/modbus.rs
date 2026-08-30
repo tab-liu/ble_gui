@@ -49,6 +49,20 @@ pub struct ModbusLive {
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
 
+/// Modbus 查询页 / 设备配置页轮询结果目标（共用一份 live，前台页互斥）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum QueryPollTarget {
+    #[default]
+    None,
+    ModbusQuery {
+        tab_index: usize,
+    },
+    DeviceConfig {
+        group_index: usize,
+        builtin: bool,
+    },
+}
+
 /// Modbus 查询页单个卡片轮询结果（worker 写入，UI 合并到 Slint 模型）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryItemPollResult {
@@ -60,7 +74,7 @@ pub struct QueryItemPollResult {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryPollSnapshot {
-    pub tab_index: usize,
+    pub target: QueryPollTarget,
     pub items: Vec<QueryItemPollResult>,
 }
 

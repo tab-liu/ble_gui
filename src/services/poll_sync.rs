@@ -3,9 +3,13 @@
 use slint::Model;
 
 use crate::pages::modbus_query;
-use crate::services::ble::modbus::{parse_register_address, parse_scale, parse_value_type};
+use crate::services::ble::modbus::{
+    parse_register_address, parse_scale, parse_value_type, QueryValueType, BUILTIN_SETTINGS,
+};
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS};
+use crate::state::{
+    AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS,
+};
 use crate::ui::MainWindow;
 
 /// 切换页面并同步 Slint 与轮询策略。
@@ -26,6 +30,7 @@ pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
         match ctx.ble.ui_page() {
             PAGE_DASHBOARD => PollForeground::Dashboard,
             PAGE_MODBUS => build_modbus_query_foreground(ui, ctx),
+            PAGE_DEVICE_CONFIG => build_device_config_foreground(ui, ctx),
             PAGE_SETTINGS | PAGE_FIRMWARE => PollForeground::None,
             _ => PollForeground::None,
         }
@@ -67,11 +72,76 @@ fn build_modbus_query_foreground(ui: &MainWindow, ctx: &AppContext) -> PollForeg
             register_count,
             value_type: parse_value_type(&row.value_type.to_string()),
             scale,
+            bit: None,
         });
     }
 
     PollForeground::ModbusQuery {
         tab_index,
+        slave_id,
+        items,
+    }
+}
+
+fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollForeground {
+    let group_index = ui.get_active_config_group() as usize;
+    let st = ctx.state.borrow();
+    let Some(group) = st.device_config.groups.row_data(group_index) else {
+        return PollForeground::None;
+    };
+    let slave_id = group
+        .slave_id
+        .to_string()
+        .trim()
+        .parse::<u8>()
+        .unwrap_or(0);
+    let builtin = group.builtin;
+
+    if builtin {
+        let items = BUILTIN_SETTINGS
+            .iter()
+            .enumerate()
+            .map(|(i, def)| QueryPollItemSpec {
+                item_index: i,
+                register_text: def.register.to_string(),
+                protocol_address: Some(def.register),
+                register_count: 1,
+                value_type: QueryValueType::Integer,
+                scale: 1,
+                bit: def.bit,
+            })
+            .collect();
+        return PollForeground::DeviceConfig {
+            group_index,
+            builtin: true,
+            slave_id,
+            items,
+        };
+    }
+
+    let items_model = group.items.clone();
+    drop(st);
+
+    let mut items = Vec::new();
+    for i in 0..items_model.row_count() {
+        let Some(row) = items_model.row_data(i) else {
+            continue;
+        };
+        let register_text = row.register.to_string();
+        items.push(QueryPollItemSpec {
+            item_index: i,
+            register_text: register_text.clone(),
+            protocol_address: parse_register_address(&register_text).ok(),
+            register_count: row.register_count.max(1) as u16,
+            value_type: parse_value_type(&row.value_type.to_string()),
+            scale: 1,
+            bit: None,
+        });
+    }
+
+    PollForeground::DeviceConfig {
+        group_index,
+        builtin: false,
         slave_id,
         items,
     }
