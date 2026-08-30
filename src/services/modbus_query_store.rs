@@ -1,4 +1,4 @@
-//! Modbus 查询页标签与寄存器配置持久化。
+//! Modbus 查询页标签与寄存器配置持久化（TOML）。
 
 use std::fs;
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ fn config_path() -> Option<PathBuf> {
         std::env::var_os("APPDATA").map(|p| {
             PathBuf::from(p)
                 .join("ble_gui")
-                .join("modbus_query.json")
+                .join("modbus_query.toml")
         })
     }
     #[cfg(not(windows))]
@@ -55,7 +55,7 @@ fn config_path() -> Option<PathBuf> {
             PathBuf::from(h)
                 .join(".config")
                 .join("ble_gui")
-                .join("modbus_query.json")
+                .join("modbus_query.toml")
         })
     }
 }
@@ -101,7 +101,7 @@ fn saved_tab_to_modbus_tab(tab: SavedTab) -> ModbusTab {
 pub fn load() -> Option<LoadedModbusQuery> {
     let path = config_path()?;
     let text = fs::read_to_string(&path).ok()?;
-    let cfg: SavedConfig = serde_json::from_str(&text).ok()?;
+    let cfg: SavedConfig = toml::from_str(&text).ok()?;
     if cfg.version != CONFIG_VERSION || cfg.tabs.is_empty() {
         return None;
     }
@@ -161,9 +161,9 @@ pub fn save(tabs: &Rc<VecModel<ModbusTab>>, active_tab: i32) -> std::io::Result<
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(&cfg).map_err(|e| {
+    let text = toml::to_string_pretty(&cfg).map_err(|e| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, e)
     })?;
-    fs::write(&path, json)?;
+    fs::write(&path, text)?;
     Ok(())
 }
