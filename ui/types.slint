@@ -46,6 +46,8 @@ export struct BleFavoriteDevice {
     seen: bool,
     /// 广播标记为已被其它主机连接
     occupied: bool,
+    /// 绿点状态：附近已发现且可连接
+    selectable: bool,
 }
 
 /// 设备配置项（Modbus 寄存器读写；无倍数，控件决定展示方式）

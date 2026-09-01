@@ -8,33 +8,45 @@ export component FavoriteDeviceRow inherits Rectangle {
     in property <bool> seen;
     in property <bool> occupied;
     in property <bool> selected;
-    in property <bool> enabled: true;
+    in property <bool> selectable: true;
+    in property <bool> unfavorite-enabled: true;
     callback clicked();
     callback unfavorite-clicked();
-    callback connect-clicked();
 
     height: 64px;
     border-radius: 8px;
     background: root.selected ? Theme.bg-nav-selected : Theme.bg-panel-alt;
     border-width: root.selected ? 2px : 1px;
     border-color: root.selected ? Theme.border-accent : Theme.border;
-    opacity: root.enabled ? 1 : 0.5;
+
+    // 状态圆点：绿=附近已发现，橙=可能被占用，灰=未发现
+    Rectangle {
+        x: 12px;
+        y: (parent.height - 10px) / 2;
+        width: 10px;
+        height: 10px;
+        border-radius: 5px;
+        opacity: root.selectable ? 1 : 0.5;
+        background: !root.seen ? Theme.text-dim
+            : (root.occupied ? Theme.warning : Theme.success);
+    }
 
     TouchArea {
         x: 0px;
-        width: parent.width - 76px;
+        width: parent.width - 44px;
         height: 100%;
-        enabled: root.enabled;
+        enabled: root.selectable;
         clicked => {
-            if (root.enabled) {
+            if (root.selectable) {
                 root.clicked();
             }
         }
 
         Text {
-            x: 12px;
+            x: 28px;
             y: 10px;
-            width: parent.width - 24px;
+            width: parent.width - 40px;
+            opacity: root.selectable ? 1 : 0.5;
             text: root.name;
             color: !root.seen ? Theme.text-dim
                 : (root.occupied ? Theme.warning : Theme.text-primary);
@@ -45,9 +57,10 @@ export component FavoriteDeviceRow inherits Rectangle {
         }
 
         Text {
-            x: 12px;
+            x: 28px;
             y: 28px;
-            width: parent.width - 24px;
+            width: parent.width - 40px;
+            opacity: root.selectable ? 1 : 0.5;
             text: root.address;
             color: Theme.text-dim;
             font-size: 11px;
@@ -56,9 +69,10 @@ export component FavoriteDeviceRow inherits Rectangle {
         }
 
         Text {
-            x: 12px;
+            x: 28px;
             y: 44px;
-            width: parent.width - 24px;
+            width: parent.width - 40px;
+            opacity: root.selectable ? 1 : 0.5;
             text: !root.seen ? "未在附近发现"
                 : (root.occupied ? "附近可见·可能已被占用" : root.rssi);
             color: !root.seen ? Theme.text-dim
@@ -69,38 +83,14 @@ export component FavoriteDeviceRow inherits Rectangle {
         }
     }
 
-    // 一键定向连接（无需先广谱扫描；未扫到时也会定向查找）
     TouchArea {
-        x: parent.width - 72px;
+        x: parent.width - 44px;
         y: 8px;
-        width: 28px;
+        width: 36px;
         height: 48px;
-        enabled: root.enabled && !root.occupied;
+        enabled: root.unfavorite-enabled;
         clicked => {
-            if (root.enabled && !root.occupied) {
-                root.connect-clicked();
-            }
-        }
-
-        Text {
-            width: 100%;
-            height: 100%;
-            text: "↗";
-            color: root.occupied ? Theme.text-dim : Theme.accent;
-            font-size: 16px;
-            horizontal-alignment: center;
-            vertical-alignment: center;
-        }
-    }
-
-    TouchArea {
-        x: parent.width - 40px;
-        y: 8px;
-        width: 32px;
-        height: 48px;
-        enabled: root.enabled;
-        clicked => {
-            if (root.enabled) {
+            if (root.unfavorite-enabled) {
                 root.unfavorite-clicked();
             }
         }
@@ -110,7 +100,7 @@ export component FavoriteDeviceRow inherits Rectangle {
             height: 100%;
             text: "★";
             color: Theme.accent;
-            font-size: 18px;
+            font-size: 24px;
             horizontal-alignment: center;
             vertical-alignment: center;
         }

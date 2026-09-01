@@ -21,6 +21,11 @@ struct ScanListCache {
     addresses: Vec<String>,
 }
 
+struct FavoriteListCache {
+    rows: Rc<VecModel<BleFavoriteDevice>>,
+    addresses: Vec<String>,
+}
+
 struct BleUiCache {
     scan_generation: u64,
     filter_key: String,
@@ -29,6 +34,7 @@ struct BleUiCache {
 
 thread_local! {
     static SCAN_LIST_CACHE: RefCell<Option<ScanListCache>> = RefCell::new(None);
+    static FAVORITE_LIST_CACHE: RefCell<Option<FavoriteListCache>> = RefCell::new(None);
     static BLE_UI_CACHE: RefCell<BleUiCache> = RefCell::new(BleUiCache {
         scan_generation: u64::MAX,
         filter_key: String::new(),
@@ -54,6 +60,7 @@ fn prepare_scan_devices(
     let mut result: Vec<BleScanEntry> = devices
         .iter()
         .filter(|d| d.is_target)
+        .filter(|d| d.link_hint != ScanLinkHint::Occupied)
         .filter(|d| !ble_favorites::contains(favorites, &d.address))
         .cloned()
         .collect();
@@ -76,7 +83,11 @@ fn scan_empty_message(snap: &BleSnapshot, filtered_len: usize) -> String {
     if filtered_len > 0 {
         return String::new();
     }
-    let raw = snap.scan_devices.iter().filter(|d| d.is_target).count();
+    let raw = snap
+        .scan_devices
+        .iter()
+        .filter(|d| d.is_target && d.link_hint != ScanLinkHint::Occupied)
+        .count();
     if raw > 0 {
         return "附近设备均已在左侧收藏，或被当前过滤条件隐藏".into();
     }
@@ -100,6 +111,28 @@ fn favorites_fingerprint(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> St
         .map(|d| format!("{}:{}:{:?}", d.address, d.rssi, d.link_hint))
         .collect();
     format!("{}|{}|{}", parts.join(";"), snap.scanning, seen.join(";"))
+}
+
+fn favorite_seen(snap: &BleSnapshot, address: &str) -> bool {
+    snap.scan_devices.iter().any(|d| {
+        d.is_target && ble_favorites::addresses_equal(&d.address, address)
+    })
+}
+
+fn favorite_row_unchanged(existing: &BleFavoriteDevice, row: &BleFavoriteDevice) -> bool {
+    existing.name == row.name
+        && existing.address == row.address
+        && existing.rssi == row.rssi
+        && existing.seen == row.seen
+        && existing.occupied == row.occupied
+        && existing.selectable == row.selectable
+}
+
+fn favorite_addresses_match(a: &[String], b: &[FavoriteDevice]) -> bool {
+    a.len() == b.len()
+        && a.iter()
+            .zip(b.iter())
+            .all(|(left, right)| ble_favorites::addresses_equal(left, &right.address))
 }
 
 fn build_favorite_rows(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> Vec<BleFavoriteDevice> {
@@ -130,14 +163,36 @@ fn build_favorite_rows(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> Vec<
                 rssi: rssi.into(),
                 seen,
                 occupied,
+                selectable: seen && !occupied,
             }
         })
         .collect()
 }
 
 fn sync_favorite_devices(ui: &MainWindow, favorites: &[FavoriteDevice], snap: &BleSnapshot) {
-    let rows = build_favorite_rows(favorites, snap);
-    ui.set_favorite_devices(ModelRc::new(VecModel::from(rows)));
+    let rows_data = build_favorite_rows(favorites, snap);
+    let addresses: Vec<String> = favorites.iter().map(|f| f.address.clone()).collect();
+
+    FAVORITE_LIST_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some(cached) = cache.as_mut() {
+            if favorite_addresses_match(&cached.addresses, favorites) {
+                for (i, row) in rows_data.iter().enumerate() {
+                    let unchanged = cached.rows.row_data(i).is_some_and(|existing| {
+                        favorite_row_unchanged(&existing, row)
+                    });
+                    if !unchanged {
+                        cached.rows.set_row_data(i, row.clone());
+                    }
+                }
+                return;
+            }
+        }
+
+        let rows = Rc::new(VecModel::from(rows_data));
+        ui.set_favorite_devices(ModelRc::new(rows.clone()));
+        *cache = Some(FavoriteListCache { rows, addresses });
+    });
 }
 
 fn scan_filter_key(ui: &MainWindow) -> String {
@@ -248,11 +303,11 @@ fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot, favorites: &[Favor
     ui.set_scan_empty_message(scan_empty_message(snap, filtered.len()).into());
 
     let selected = ui.get_selected_scan_address().to_string();
-    let in_scan = filtered.iter().any(|d| d.address == selected);
-    let in_fav = favorites
+    let in_scan = filtered
         .iter()
         .any(|d| ble_favorites::addresses_equal(&d.address, &selected));
-    if !selected.is_empty() && !in_scan && !in_fav {
+    let in_fav_seen = favorite_seen(snap, &selected);
+    if !selected.is_empty() && !in_scan && !in_fav_seen {
         ui.set_selected_scan_address("".into());
     }
 

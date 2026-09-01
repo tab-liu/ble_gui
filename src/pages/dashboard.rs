@@ -47,8 +47,6 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
         } else {
             ctx_ble.ble.start_scan();
-            ui.set_ble_scan_filter("".into());
-            ui.set_ble_scan_rssi_filter_enabled(false);
             ui.set_selected_scan_address("".into());
             if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
                 set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
@@ -73,13 +71,6 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         let address = ui.get_selected_scan_address().to_string();
         start_connect(&ui, &ctx_connect, &address);
-    });
-
-    let ui_weak = ui.as_weak();
-    let ctx_fav_connect = ctx.clone();
-    ui.on_connect_favorite_clicked(move |address| {
-        let ui = ui_weak.unwrap();
-        start_connect(&ui, &ctx_fav_connect, &address);
     });
 
     let ui_weak = ui.as_weak();

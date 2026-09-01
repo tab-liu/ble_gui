@@ -109,7 +109,6 @@ export component MainWindow inherits Window {
     callback ble-action-clicked();
     callback select-scan-device(string);
     callback connect-selected-clicked();
-    callback connect-favorite-clicked(string);
     callback toggle-favorite-clicked(string);
     callback ble-scan-filters-changed();
     callback ac-output-toggle();
@@ -204,6 +203,7 @@ export component MainWindow inherits Window {
 
                         if root.current-page == 0: DashboardPage {
                             device-connected: root.device-connected;
+                            scanning: root.scanning;
                             ble-connecting: root.ble-connecting;
                             scan-devices: root.scan-devices;
                             favorite-devices: root.favorite-devices;
@@ -227,9 +227,6 @@ export component MainWindow inherits Window {
                             }
                             connect-selected-clicked => {
                                 root.connect-selected-clicked();
-                            }
-                            connect-favorite-clicked(address) => {
-                                root.connect-favorite-clicked(address);
                             }
                             toggle-favorite-clicked(address) => {
                                 root.toggle-favorite-clicked(address);

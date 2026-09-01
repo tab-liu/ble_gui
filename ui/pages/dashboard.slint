@@ -9,6 +9,7 @@ import { OutputControlRow } from "../components/output_control_row.slint";
 
 export component DashboardPage inherits VerticalBox {
     in property <bool> device-connected;
+    in property <bool> scanning;
     in property <bool> ble-connecting;
     in property <[BleScanDevice]> scan-devices;
     in property <[BleFavoriteDevice]> favorite-devices;
@@ -29,7 +30,6 @@ export component DashboardPage inherits VerticalBox {
     in-out property <string> selected-scan-address: "";
     callback select-scan-device(string);
     callback connect-selected-clicked();
-    callback connect-favorite-clicked(string);
     callback toggle-favorite-clicked(string);
     callback scan-filters-changed();
     callback ac-output-toggle();
@@ -108,19 +108,24 @@ export component DashboardPage inherits VerticalBox {
                     ? "正在连接/查找，可点顶部「取消」终止"
                     : (root.selected-scan-address != ""
                         ? ("已选: " + root.selected-scan-address)
-                        : "左侧收藏可直接 ↗ 定向连接；右侧扫描后点 ★ 收藏");
+                        : "选中设备后点「连接所选设备」；右侧扫描结果点 ★ 收藏");
                 color: Theme.text-secondary;
                 font-size: 13px;
                 vertical-alignment: center;
             }
         }
 
-        HorizontalBox {
+        GridLayout {
             spacing: 12px;
+            padding: 0px;
             vertical-stretch: 1;
 
             // 左：收藏
             Rectangle {
+                row: 0;
+                col: 0;
+                min-width: 0px;
+                preferred-width: 0px;
                 horizontal-stretch: 1;
                 border-radius: 10px;
                 background: Theme.bg-panel;
@@ -139,9 +144,10 @@ export component DashboardPage inherits VerticalBox {
                     }
 
                     Text {
-                        text: "点亮=附近已发现；↗=定向连接";
+                        text: "● 绿=附近已发现  ● 灰=未发现  ● 橙=可能被占用";
                         color: Theme.text-dim;
                         font-size: 11px;
+                        overflow: elide;
                     }
 
                     ScrollView {
@@ -157,15 +163,13 @@ export component DashboardPage inherits VerticalBox {
                                 seen: fav.seen;
                                 occupied: fav.occupied;
                                 selected: fav.address == root.selected-scan-address;
-                                enabled: !root.ble-connecting;
+                                selectable: !root.ble-connecting && fav.selectable;
+                                unfavorite-enabled: !root.ble-connecting;
                                 clicked => {
                                     root.select-scan-device(fav.address);
                                 }
                                 unfavorite-clicked => {
                                     root.toggle-favorite-clicked(fav.address);
-                                }
-                                connect-clicked => {
-                                    root.connect-favorite-clicked(fav.address);
                                 }
                             }
 
@@ -186,6 +190,10 @@ export component DashboardPage inherits VerticalBox {
 
             // 右：实时扫描
             Rectangle {
+                row: 0;
+                col: 1;
+                min-width: 0px;
+                preferred-width: 0px;
                 horizontal-stretch: 1;
                 border-radius: 10px;
                 background: Theme.bg-panel;
@@ -207,6 +215,7 @@ export component DashboardPage inherits VerticalBox {
                         text: "未收藏的附近设备";
                         color: Theme.text-dim;
                         font-size: 11px;
+                        overflow: elide;
                     }
 
                     ScrollView {
