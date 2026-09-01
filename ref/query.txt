@@ -1,0 +1,881 @@
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+0			1	10	0	0	10000	0	0		1000	0	0
+1			1	1	0	0	65535	0	0		1000	0	0
+2			1	1	0	0	100	0	0		1000	0	0
+3			1	1	0	0	65535	0	0		1000	0	0
+4			1	1	0	0	65535	0	0		1000	0	0
+5			1	1	0	0	65535	0	0		1000	0	0
+6	Reserved Flag		1	1	0	0	65535	0	0		1000	0	0
+7	L_2B_BLE_PASSWORD		1	1	0	0	65535	0	0		1000	0	0
+8	M_2B_BLE_PASSWORD		1	1	0	0	65535	0	0		1000	0	0
+9	H_2B_BLE_PASSWORD		1	1	0	0	65535	0	0		1000	0	0
+10			1	1	0	0	65535	0	0		1000	0	0
+11			1	1	0	0	65535	0	0		1000	0	0
+12			1	1	0	0	10	0	0		1000	0	0
+13			1	1	0	0	65535	0	0		1000	0	0
+14			1	1	0	0	3	0	0		1000	0	0
+15			1	1	0	0	65535	0	0		1000	0	0
+16	modbus ver		1	1	0	0	65535	0	0		1000	0	0
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+3	iot_state		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+100	TotalVoltage	V	1	10	0	0	10000	0	0		1000	0	0	主控	Integer
+101	TotalCurrent	A	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+102	SOC	%	1	1	0	0	100	0	0		1000	0	0	主控	Integer
+103	ChargingStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+104	ChgFullTime	min	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+105	DsgEmptyTime	min	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+106	Aging_Status		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+107	PackCnts		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+108	PackOnline		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+109	can bus fault		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+110	device model		6	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+116	device sn		4	1	0	0	65535	0	0		1000	0	0	主控	Integer
+120	inv number		1	1	0	0	10	0	0		1000	0	0	主控	Integer
+121	inv online		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+122	inv power type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+123	LineEvent		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+124	CtrlStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+125	GridandMachineSOC		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+126	WarnInformation1		1	1	0	0	65535	0	0	绝缘阻抗ISO异常;	1000	0	0	主控	Integer
+127	WarnInformation2		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+128	WarnInformation3		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+129	WarnInformation4		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+130	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+131	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+132	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+133	FaultInformation1		1	1	0	0	65535	0	0	"电池过压;
+电池欠压;
+电池过流;
+母线过压;
+母线欠压;
+母线过流;继电器故障;电池锁扣故障;直流侧继电器开路;直流侧继电器短路;电网继电器开路;电网继电器短路;负载继电器开路;负载继电器短路;系统高温;系统低温"	1000	0	0	主控	Integer
+134	FaultInformation2		1	1	0	0	65535	0	0	"交流过压;
+交流欠压;
+交流过频;
+交流欠频;
+交流反相;
+保留;
+保留;
+保留;
+离网电压异常;
+离网频率异常;
+交流输出过载;
+保留;
+交流锁相失败;
+交流软起动失败;
+预留;
+预留;"	1000	0	0	主控	Integer
+135	FaultInformation3		1	1	0	0	65535	0	0	PV1过压;PV2过压;PV3过压;PV4过压;PV1过流;PV2过流;PV3过流;PV4过流;PV1过温;PV2过温;PV3过温;PV4过温;预留;预留;预留;预留;	1000	0	0	主控	Integer
+136	FaultInformation4		1	1	0	0	65535	0	0	"采样零点读取异常;
+校准参数读取异常;
+DSP软件版本异常; 
+参数初始化异常;
+参数设置冲突;
+模块机号超限;
+模块机号冲突;
+预留;
+监控485通讯故障; 
+监控CAN通讯故障;
+并机CAN通讯故障;
+内部SPI通讯故障;
+工频同步故障; 
+载波同步故障;
+预留;
+预留;"	1000	0	0	主控	Integer
+137	FaultInformation5		1	1	0	0	65535	0	0	预留;预留;预留;DSP通讯故障;外部FLASH错误;电池组通讯故障;逆变组通讯故障;RTC错误;EEPROM错误;BMS系统故障;预留;预留;预留;预留;预留;预留;	1000	0	0	主控	Integer
+138	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+139	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+140	DCLoadAllTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+142	ACLoadAllTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+144	PVTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+146	GridTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+148	InvTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+150	DCLoadTotalEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+152	ACLoadTotalEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+154	PvTotalChargingEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+156	GridTotalChargingEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+158	FeedbackEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+160	setChargerMode		1	1	0	0	2	0	0		1000	0	0	主控	Integer
+161	InvWorkState		1	1	0	0	5	0	0		1000	0	0	主控	Integer
+162	PVToACloadEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+164	SelfConsumptionPercent	%	1	1	0	0	100	0	0		1000	0	0	主控	Integer
+165	PVToACloadPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+167	PackTotalDsgEnergy	0.1kwh	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+169	Rated_Voltage	1V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+170	Rated_Frequency	0.01HZ	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+171	Online_Component		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+172	故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+173	告警		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+174	IOT_state		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+191	sw_mem_sta		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2013	set_poweron		1	1	0	0	6	0	0		1000	0	0	主控	Integer
+12170	iot_enable_mix1		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12205	lcd_mode		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	ASCII显示
+1100	InvID		1	1	0	0	9	0	0		1000	0	0	0
+1101	InvType		6	1	0	1	12	0	0		1000	0	0	1
+1107	InvSN		4	1	0	0	65535	0	0		1000	0	0	0
+1111	InvPowerType		1	1	0	1	3	0	0		1000	0	0	0
+1112	SoftwareNumber		1	1	0	1	6	0	0		1000	0	0	0
+1113	SoftwareType1		1	1	0	0	10	0	0		1000	0	0	0
+1114	SoftwareVersion1		2	1	0	0	65535	0	0		1000	0	0	0
+1116	SoftwareType2		1	1	0	0	10	0	0		1000	0	0	0
+1117	SoftwareVersion2		2	1	0	0	65535	0	0		1000	0	0	0
+1119	SoftwareType3		1	1	0	0	10	0	0		1000	0	0	0
+1120	SoftwareVersion3		2	1	0	0	65535	0	0		1000	0	0	0
+1122	SoftwareType4		1	1	0	0	10	0	0		1000	0	0	0
+1123	设备read rtn		2	1	0	0	65535	0	0	SoftwareVersion4	1000	0	0	0
+1125	SoftwareType5		1	1	0	0	10	0	0		1000	0	0	0
+1126	设备主动上报		2	1	0	0	65535	0	0	SoftwareVersion5	1000	0	0	0
+1128	SoftwareType6		1	1	0	0	10	0	0		1000	0	0	0
+1129	设备运行时间		2	1	0	0	65535	0	0	SoftwareVersion6	1000	0	0	0
+1131	LineEvent		1	1	0	0	65535	0	0		1000	0	0	0
+1132	CtrlStatus		2	1	0	0	65535	0	0		1000	0	0	0
+1134	WarnInformation1		1	1	0	0	65535	0	0		1000	0	0	0
+1135	WarnInformation2		1	1	0	0	65535	0	0		1000	0	0	0
+1136	WarnInformation3		1	1	0	0	65535	0	0		1000	0	0	0
+1137	WarnInformation4		1	1	0	0	65535	0	0		1000	0	0	0
+1167	grid_l1_ac_input_rated_current		1	1	0	0	65535	0	0		1000	0	0	0
+1168	grid_l2_ac_input_rated_current		1	1	0	0	65535	0	0		1000	0	0	0
+1169	grid_l3_ac_input_rated_current		1	1	0	0	65535	0	0		1000	0	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+1200	PvTotalChargingPower	W	2	1	0	0	65535	0	0		1000	0	0
+1202	PvTotalChargingEnergy	Kwh	2	10	0	0	65535	0	0		1000	0	0
+1204	PVToACloadPower	W	2	1	0	0	65535	0	0		1000	0	0
+1206	PVToACloadEnergy	Kwh	2	10	0	0	65535	0	0		1000	0	0
+1208	SelfConsumptionPercent	%	1	1	0	0	100	0	0		1000	0	0
+1209	PvTotalNumber		1	1	0	0	4	0	0		1000	0	0
+1210	Pv1Status		1	1	0	0	1	0	0		1000	0	0
+1211	Pv1Type		1	1	0	0	3	0	0		1000	0	0
+1212	Pv1InputPower	W	1	1	0	0	65535	0	0		1000	0	0
+1213	Pv1InputVoltage	V	1	10	0	0	65535	0	0		1000	0	0
+1214	Pv1InputCurrent	A	1	10	0	0	65535	0	0		1000	0	0
+1215	Pv1保留		1	1	0	0	65535	0	0		1000	0	0
+1216	Pv1保留		1	1	0	0	65535	0	0		1000	0	0
+1217	Pv1保留		1	1	0	0	65535	0	0		1000	0	0
+1218	Pv2Status		1	1	0	0	1	0	0		1000	0	0
+1219	Pv2Type		1	1	0	0	3	0	0		1000	0	0
+1220	Pv2InputPower	W	1	1	0	0	65535	0	0		1000	0	0
+1221	Pv2InputVoltage	V	1	10	0	0	65535	0	0		1000	0	0
+1222	Pv2InputCurrent	A	1	10	0	0	65535	0	0		1000	0	0
+1223	Pv2保留		1	1	0	0	65535	0	0		1000	0	0
+1224	Pv2保留		1	1	0	0	65535	0	0		1000	0	0
+1225	Pv2保留		1	1	0	0	65535	0	0		1000	0	0
+1226	Pv3Status		1	1	0	0	1	0	0		1000	0	0
+1227	Pv3Type		1	1	0	0	3	0	0		1000	0	0
+1228	Pv3InputPower	W	1	1	0	0	65535	0	0		1000	0	0
+1229	Pv3InputVoltage	V	1	10	0	0	65535	0	0		1000	0	0
+1230	Pv3InputCurrent	A	1	10	0	0	65535	0	0		1000	0	0
+1231	Pv3保留		1	1	0	0	65535	0	0		1000	0	0
+1232	Pv3保留		1	1	0	0	65535	0	0		1000	0	0
+1233	Pv3保留		1	1	0	0	65535	0	0		1000	0	0
+1234	Pv4Status		1	1	0	0	1	0	0		1000	0	0
+1235	Pv4Type		1	1	0	0	3	0	0		1000	0	0
+1236	Pv4InputPower	W	1	1	0	0	65535	0	0		1000	0	0
+1237	Pv4InputVoltage	V	1	10	0	0	65535	0	0		1000	0	0
+1238	Pv4InputCurrent	A	1	10	0	0	65535	0	0		1000	0	0
+1239	Pv4保留		1	1	0	0	65535	0	0		1000	0	0
+1240	Pv4保留		1	1	0	0	65535	0	0		1000	0	0
+1241	Pv4保留		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+1300	GridFrequency	Hz	1	10	0	0	65535	0	0		1000	0	0
+1301	GridTotalChargingPower	W	2	1	0	0	65535	0	0		1000	0	0
+1303	GridTotalChargingEnergy	KWh	2	10	0	0	65535	0	0		1000	0	0
+1305	GridFeedbackEnergy	KWh	2	10	0	0	65535	0	0		1000	0	0
+1307	保留		1	1	0	0	65535	0	0		1000	0	0
+1308	保留		1	1	0	0	65535	0	0		1000	0	0
+1309	保留		1	1	0	0	65535	0	0		1000	0	0
+1310	保留		1	1	0	0	65535	0	0		1000	0	0
+1311	保留		1	1	0	0	65535	0	0		1000	0	0
+1312	SystemPhaseNumber		1	1	0	0	3	0	0		1000	0	0
+1313	Grid1Power	W	1	1	0	0	65535	0	0		1000	0	0
+1314	Grid1Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1315	Grid1Current	A	1	10	0	0	65535	0	0		1000	0	0
+1316	Grid1保留		1	1	0	0	65535	0	0		1000	0	0
+1317	Grid1保留		1	1	0	0	65535	0	0		1000	0	0
+1318	Grid1保留		1	1	0	0	65535	0	0		1000	0	0
+1319	Grid2Power	W	1	1	0	0	65535	0	0		1000	0	0
+1320	Grid2Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1321	Grid2Current	A	1	10	0	0	65535	0	0		1000	0	0
+1322	Grid2保留		1	1	0	0	65535	0	0		1000	0	0
+1323	Grid2保留		1	1	0	0	65535	0	0		1000	0	0
+1324	Grid2保留		1	1	0	0	65535	0	0		1000	0	0
+1325	Grid3Power	W	1	1	0	0	65535	0	0		1000	0	0
+1326	Grid3Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1327	Grid3Current	A	1	10	0	0	65535	0	0		1000	0	0
+1328	Grid3保留		1	1	0	0	65535	0	0		1000	0	0
+1329	Grid3保留		1	1	0	0	65535	0	0		1000	0	0
+1330	Grid3保留		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+1420	ACLoadTotalPowerLo	W	1	1	0	0	65535	0	0		1000	0	0
+1421	ACLoadTotalPowerHi	W	1	1	0	0	65535	0	0		1000	0	0
+1422	ACLoadTotalEnergyLo	KWh	1	10	0	0	65535	0	0		1000	0	0
+1423	ACLoadTotalEnergyHi	KWh	1	10	0	0	65535	0	0		1000	0	0
+1424	ACOpenTimeLo	min	1	1	0	0	65535	0	0		1000	0	0
+1425	ACOpenTimeHi	min	1	1	0	0	65535	0	0		1000	0	0
+1429	SystemPhaseNumber		1	1	0	0	3	0	0		1000	0	0
+1430	ACLoad1Power	W	1	1	0	0	65535	0	0		1000	0	0
+1431	ACLoad1Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1432	ACLoad1Current	A	1	10	0	0	65535	0	0		1000	0	0
+1433	ACLoad1Papparent	VA	1	1	0	0	65535	0	0		1000	0	0
+1434	ACLoad1Preactive	VAR	1	1	0	0	65535	0	0		1000	0	0
+1435	保留		1	1	0	0	65535	0	0		1000	0	0
+1436	ACLoad2Power	W	1	1	0	0	65535	0	0		1000	0	0
+1437	ACLoad2Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1438	ACLoad2Current	A	1	10	0	0	65535	0	0		1000	0	0
+1439	ACLoad2Papparent	VA	1	1	0	0	65535	0	0		1000	0	0
+1440	ACLoad2Preactive	VAR	1	1	0	0	65535	0	0		1000	0	0
+1441	保留		1	1	0	0	65535	0	0		1000	0	0
+1442	ACLoad3Power	W	1	1	0	0	65535	0	0		1000	0	0
+1443	ACLoad3Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1444	ACLoad3Current	A	1	10	0	0	65535	0	0		1000	0	0
+1445	ACLoad3Papparent	VA	1	1	0	0	65535	0	0		1000	0	0
+1446	ACLoad3Preactive	VAR	1	1	0	0	65535	0	0		1000	0	0
+1447	保留		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+1500	InvFrequency	Hz	1	10	0	0	65535	0	0		1000	0	0
+1501	InvTotalEnergy	KWh	2	10	0	0	65535	0	0		1000	0	0
+1503	保留		1	1	0	0	65535	0	0		1000	0	0
+1504	保留		1	1	0	0	65535	0	0		1000	0	0
+1505	保留		1	1	0	0	65535	0	0		1000	0	0
+1506	保留		1	1	0	0	65535	0	0		1000	0	0
+1507	保留		1	1	0	0	65535	0	0		1000	0	0
+1508	SystemPhaseNumber		1	1	0	0	3	0	0		1000	0	0
+1509	Inv1WorkStatus		1	1	0	0	4	0	0		1000	0	0
+1510	Inv1Power	W	1	1	0	0	65535	0	0		1000	0	0
+1511	Inv1Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1512	Inv1Current	A	1	10	0	0	65535	0	0		1000	0	0
+1513	保留		1	1	0	0	65535	0	0		1000	0	0
+1514	保留		1	1	0	0	65535	0	0		1000	0	0
+1515	保留		1	1	0	0	65535	0	0		1000	0	0
+1516	Inv2WorkStatus		1	1	0	0	4	0	0		1000	0	0
+1517	Inv2Power	W	1	1	0	0	65535	0	0		1000	0	0
+1518	Inv2Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1519	Inv2Current	A	1	10	0	0	65535	0	0		1000	0	0
+1520	保留		1	1	0	0	65535	0	0		1000	0	0
+1521	保留		1	1	0	0	65535	0	0		1000	0	0
+1522	保留		1	1	0	0	65535	0	0		1000	0	0
+1523	Inv3WorkStatus		1	1	0	0	4	0	0		1000	0	0
+1524	Inv3Power	W	1	1	0	0	65535	0	0		1000	0	0
+1525	Inv3Voltage	V	1	10	0	0	65535	0	0		1000	0	0
+1526	Inv3Current	A	1	10	0	0	65535	0	0		1000	0	0
+1527	保留		1	1	0	0	65535	0	0		1000	0	0
+1528	保留		1	1	0	0	65535	0	0		1000	0	0
+1529	保留		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+2000	SetInvSelect		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2001	SetTime1		1	1	0	0	255	0	0		1000	0	0	主控	Integer
+2002	SetTime2		1	1	0	0	255	0	0		1000	0	0	主控	Integer
+2003	SetTime3		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2004	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2005	SetCtrlWorkMode		1	1	0	0	6	0	0		1000	0	0	主控	Integer
+2006	SetCtrlEvent		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2007	SetCtrlLed		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2008	SetCtrlMeter		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2009	SetCtrlPv		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2010	SetCtrlInv		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2011	SetCtrlAc		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2012	SetCtrlDc		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2013	SetCtrlPowerOn		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2014	setDC_ECO		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2015	setDC_ECOTime		1	1	0	1	4	0	0		1000	0	0	主控	Integer
+2016	setDC_ECOPower		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2017	setAC_ECO		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2018	setAC_ECOTime		1	1	0	1	4	0	0		1000	0	0	主控	Integer
+2019	setAC_ECOPower		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+2020	setChargerMode		1	1	0	0	2	0	0		1000	0	0	主控	Integer
+2021	setSuperPowerEnable		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2022	SetLowCapacity	%	1	1	1	0	65535	0	0		1000	0	0	主控	Integer
+2023	SetHighCapacity	%	1	1	1	0	65535	0	0		1000	0	0	主控	Integer
+2024	SetMachineType		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2025	MachineAddressSetting		1	1	0	0	255	0	0		1000	0	0	主控	Integer
+2026	SetHistoryEnergyType		1	1	0	1	5	0	0		1000	0	0	主控	Integer
+2027	SetCurrentEnergyType		1	1	0	1	5	0	0		1000	0	0	主控	Integer
+2028	SetLogPage		1	1	0	0	19	0	0		1000	0	0	主控	Integer
+2029	SetTimeCtrlEnable		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2030	SetTimeCtrlLable1		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2031	SetTimeCtrlStart1		1	1	0	0	23	0	0		1000	0	0	主控	Integer
+2032	SetTimeCtrlEnd1		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2033	SetTimeCtrlLable2		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2034	SetTimeCtrlStart2		1	1	0	0	23	0	0		1000	0	0	主控	Integer
+2035	SetTimeCtrlEnd2		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2036	SetTimeCtrlLable3		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2037	SetTimeCtrlStart3		1	1	0	0	23	0	0		1000	0	0	主控	Integer
+2038	SetTimeCtrlEnd3		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2039	SetTimeCtrlLable4		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2040	SetTimeCtrlStart4		1	1	0	0	23	0	0		1000	0	0	主控	Integer
+2041	SetTimeCtrlEnd4		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2042	SetTimeCtrlLable5		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2043	SetTimeCtrlStart5		1	1	0	0	23	0	0		1000	0	0	主控	Integer
+2044	SetTimeCtrlEnd5		1	1	0	0	59	0	0		1000	0	0	主控	Integer
+2060	SetPv1Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2061	SetPv2Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2062	SetPv3Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2063	SetPv4Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2064	SetPv5Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2065	SetPv6Type		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+2066	SetAlarmVoice		1	1	0	0	1	0	0		1000	0	0	主控	Integer
+2067	setLcdActiveTime		1	1	0	0	5	0	0		1000	0	0	主控	Integer
+2068	P_inv_active_target_L1		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2069	P_inv_active_target_L2		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2070	P_inv_active_target_L3		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2071	额定交流功率		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2072	自定义模式		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2073	Remote_set		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2074	Remote_set_soc		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2075	Rv_SOC_Ownership		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2076	LevelSwitch		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2077	休眠剩余时间（暂定）		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2078	LED_SET		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2079	Remote_set_power		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2080	Pack_Set_Show		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2081	INV_Set_Show		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2082	DCDC_Set_Show		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2083	SOC_H		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2084	PV_SET		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2085	DC_output		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2086	Regulatory_set		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2087	Cycle_capacity		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2088	Cycle_max_capacity		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2089	Effective_time_ym		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2090	Effective_time_dh		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2091	Effective_time_ms		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2092	ECO_status		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2093	set_AC_branch		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+2094	set_DC_branch		1	1	1	1	65535	1	1		1000	0	0	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+2200	SetPassword		4	1	0	0	65535	0	0		1000	0	0
+2204	保留		1	1	0	0	65535	0	0		1000	0	0
+2205	保留		1	1	0	0	65535	0	0		1000	0	0
+2206	SetResetFactory		1	1	0	1	5	0	0		1000	0	0
+2207	SetCtrlGrid		1	1	0	0	1	0	0		1000	0	0
+2208	SetCtrlFeedback		1	1	0	0	1	0	0		1000	0	0
+2209	SetInvVoltage		1	1	0	0	2	0	0		1000	0	0
+2210	SetInvFreq		1	1	0	0	1	0	0		1000	0	0
+2211	SetChgMaxVoltage	V	1	1	0	0	65535	0	0		1000	0	0
+2212	SetPvChgMaxCurrent	A	1	1	0	0	65535	0	0		1000	0	0
+2213	SetGridMaxPower	W	1	1	0	0	65535	0	0		1000	0	0
+2214	SetGridMaxCurrent	A	1	1	0	0	65535	0	0		1000	0	0
+2215	SetFdMaxPower	W	1	1	0	0	65535	0	0		1000	0	0
+2216	SetFdMaxCurrent	A	1	1	0	0	65535	0	0		1000	0	0
+2217	保留		1	1	0	0	65535	0	0		1000	0	0
+2218	SetArea		1	1	0	1	6	0	0		1000	0	0
+2219	SetPV1Parallel		1	1	0	0	1	0	0		1000	0	0
+2220	SetPV2Parallel		1	1	0	0	1	0	0		1000	0	0
+2221	SetPV3Parallel		1	1	0	0	1	0	0		1000	0	0
+2222	SetPV4Parallel		1	1	0	0	1	0	0		1000	0	0
+2223	SetPV5Parallel		1	1	0	0	1	0	0		1000	0	0
+2224	SetPV6Parallel		1	1	0	0	1	0	0		1000	0	0
+2225	SetGridPlusMode		1	1	0	0	1	0	0		1000	0	0
+2226	SavePowerOutputState		1	1	0	0	1	0	0		1000	0	0
+2227	SetMeterEnable		1	1	0	0	1	0	0		1000	0	0
+2228	SetMeterType		1	1	0	0	255	0	0		1000	0	0
+2229	SetMultiInvEnable		1	1	0	0	1	0	0		1000	0	0
+2230	SetInvAddrManual		1	1	0	16	96	0	0		1000	0	0
+2231	SetCTTestEnable		1	1	0	0	1	0	0		1000	0	0
+2232	杂项使能		1	1	0	0	2	0	0		1000	0	0
+2233	电池老化帧		1	1	0	0	2	0	0		1000	0	0
+2234	P_inv_active_target_L1	pu(%)	1	1	0	0	65535	0	0		1000	0	0
+2235	P_inv_reactive_target_L1	pu	1	1	0	0	65535	0	0		1000	0	0
+2236	P_inv_active_target_L2	pu	1	1	0	0	65535	0	0		1000	0	0
+2237	P_inv_reactive_target_L2	pu	1	1	0	0	65535	0	0		1000	0	0
+2238	P_inv_active_target_L3	pu	1	1	0	0	65535	0	0		1000	0	0
+2239	P_inv_reactive_target_L3	pu	1	1	0	0	65535	0	0		1000	0	0
+2240	P_PV_Limit	pu	1	1	0	0	65535	0	0		1000	0	0
+2241	EMS_CTRL		1	1	0	0	65535	0	0		1000	0	0
+2266	Grid防逆流功率阈值		1	1	0	0	65535	0	0		1000	0	0
+2267	设置电表开启关闭（电网端）		1	1	0	0	65535	0	0		1000	0	0
+2268	电表接入选择		1	1	0	0	65535	0	0		1000	0	0
+2269	SetCtrlPv		1	1	0	0	65535	0	0		1000	0	0
+2270	Phase_set		1	1	0	0	65535	0	0		1000	0	0
+2271	DCHUB_set		1	1	0	0	65535	0	0		1000	0	0
+2272	SetGridMaxCurrent_in		1	1	0	0	65535	0	0		1000	0	0
+2273	FUNC_set		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+2400	SetGridAdvanceEnable		1	1	0	0	65535	0	0		1000	0	0
+2401	SetGridCountry		1	1	0	0	65535	0	0		1000	0	0
+2402	SetGridUV1Value	V	1	10	0	0	65535	0	0		1000	0	0
+2403	SetGridUV1Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2404	SetGridUV2Value	V	1	10	0	0	65535	0	0		1000	0	0
+2405	SetGridUV2Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2406	保留		1	1	0	0	65535	0	0		1000	0	0
+2407	保留		1	1	0	0	65535	0	0		1000	0	0
+2408	保留		1	1	0	0	65535	0	0		1000	0	0
+2409	保留		1	1	0	0	65535	0	0		1000	0	0
+2410	SetGridAVGOVValue	V	1	10	0	0	65535	0	0		1000	0	0
+2411	SetGridOV1Value	V	1	10	0	0	65535	0	0		1000	0	0
+2412	SetGridOV1Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2413	SetGridOV2Value	V	1	10	0	0	65535	0	0		1000	0	0
+2414	SetGridOV2Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2415	保留		1	1	0	0	65535	0	0		1000	0	0
+2416	保留		1	1	0	0	65535	0	0		1000	0	0
+2417	保留		1	1	0	0	65535	0	0		1000	0	0
+2418	保留		1	1	0	0	65535	0	0		1000	0	0
+2419	SetGridUF1Value	Hz	1	100	0	0	65535	0	0		1000	0	0
+2420	SetGridUF1Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2421	SetGridUF2Value	Hz	1	100	0	0	65535	0	0		1000	0	0
+2422	SetGridUF2Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2423	保留		1	1	0	0	65535	0	0		1000	0	0
+2424	保留		1	1	0	0	65535	0	0		1000	0	0
+2425	保留		1	1	0	0	65535	0	0		1000	0	0
+2426	保留		1	1	0	0	65535	0	0		1000	0	0
+2427	SetGridOF1Value	Hz	1	100	0	0	65535	0	0		1000	0	0
+2428	SetGridOF1Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2429	SetGridOF2Value	Hz	1	100	0	0	65535	0	0		1000	0	0
+2430	SetGridOF2Time	ms	1	1	0	0	65535	0	0		1000	0	0
+2431	保留		1	1	0	0	65535	0	0		1000	0	0
+2432	保留		1	1	0	0	65535	0	0		1000	0	0
+2433	保留		1	1	0	0	65535	0	0		1000	0	0
+2434	保留		1	1	0	0	65535	0	0		1000	0	0
+2435	SetGridVoltMinValue	V	1	10	0	0	65535	0	0		1000	0	0
+2436	SetGridVoltMaxValue	V	1	10	0	0	65535	0	0		1000	0	0
+2437	SetGridFreqMinValue	Hz	1	100	0	0	65535	0	0		1000	0	0
+2438	SetGridFreqMaxValue	Hz	1	100	0	0	65535	0	0		1000	0	0
+2439	SetGridRetryTime	s	1	1	0	0	65535	0	0		1000	0	0
+2440	SetDefault		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+2028	SetLogPage		1	1	0	0	19	0	0		1000	0	0
+3000	TotalLogPage		1	1	0	0	20	0	0		1000	0	0
+3001	CurrentLogPage		1	1	0	0	19	0	0		1000	0	0
+3002	LogTime1_1		1	1	0	1	12	0	0		1000	0	0
+3003	LogTime2_1		1	1	0	1	31	0	0		1000	0	0
+3004	LogTime3_1		1	1	0	0	59	0	0		1000	0	0
+3005	LogFaultSeq_1		1	1	0	0	65535	0	0		1000	0	0
+3006	LogFaultCode_1		1	1	0	0	65535	0	0		1000	0	0
+3007	LogTime1_2		1	1	0	1	12	0	0		1000	0	0
+3008	LogTime2_2		1	1	0	1	31	0	0		1000	0	0
+3009	LogTime3_2		1	1	0	0	59	0	0		1000	0	0
+3010	LogFaultSeq_2		1	1	0	0	65535	0	0		1000	0	0
+3011	LogFaultCode_2		1	1	0	0	65535	0	0		1000	0	0
+3012	LogTime1_3		1	1	0	1	12	0	0		1000	0	0
+3013	LogTime2_3		1	1	0	1	31	0	0		1000	0	0
+3014	LogTime3_3		1	1	0	0	59	0	0		1000	0	0
+3015	LogFaultSeq_3		1	1	0	0	65535	0	0		1000	0	0
+3016	LogFaultCode_3		1	1	0	0	65535	0	0		1000	0	0
+3017	LogTime1_4		1	1	0	1	12	0	0		1000	0	0
+3018	LogTime2_4		1	1	0	1	31	0	0		1000	0	0
+3019	LogTime3_4		1	1	0	0	59	0	0		1000	0	0
+3020	LogFaultSeq_4		1	1	0	0	65535	0	0		1000	0	0
+3021	LogFaultCode_4		1	1	0	0	65535	0	0		1000	0	0
+3022	LogTime1_5		1	1	0	1	12	0	0		1000	0	0
+3023	LogTime2_5		1	1	0	1	31	0	0		1000	0	0
+3024	LogTime3_5		1	1	0	0	59	0	0		1000	0	0
+3025	LogFaultSeq_5		1	1	0	0	65535	0	0		1000	0	0
+3026	LogFaultCode_5		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+6000	PackVoltValue		1	10	0	0	65535	0	0		1000	0	0
+6001	PackCnts		1	1	0	0	16	0	0		1000	0	0
+6002	PackOnline	℃	1	1	0	0	65535	0	0		1000	0	0
+6003	TotalVoltage	~	1	100	0	0	65535	0	0		1000	0	0
+6004	TotalCurrent	~	1	1	0	0	2	0	0		1000	0	0
+6005	SOC	%	1	1	0	0	65535	0	0		1000	0	0
+6006	SOH	%	1	1	0	0	65535	0	0		1000	0	0
+6007	AverageTemp	A	1	10	0	0	65535	0	0		1000	0	0
+6008	PackRunStatus		1	1	0	0	65535	0	0		1000	0	0
+6009	ChargingStatus		1	1	0	0	65535	0	0		1000	0	0
+6010	MaxChgVoltage		1	1	0	0	65535	0	0		1000	0	0
+6011	MaxChgCurrent		1	1	0	0	65535	0	0		1000	0	0
+6012	MaxDsgCurrent	Min	1	1	0	0	65535	0	0		1000	0	0
+6013	CtrlStatus1	1Min	1	1	0	0	65535	0	0		1000	0	0
+6014	CtrlStatus2	kwh	1	10	0	0	65535	0	0		1000	0	0
+6015	保留	kwh	1	10	0	0	65535	0	0		1000	0	0
+6016	PackCapOnline	kwh	1	10	0	0	65535	0	0		1000	0	0
+6017	PackChgFullTime	kwh	1	10	0	0	65535	0	0		1000	0	0
+6018	PackDsgEmptyTime		1	1	0	0	65535	0	0		1000	0	0
+6019	PackTotalChgEnergyLo		1	1	0	0	65535	0	0		1000	0	0
+6020	PackTotalChgEnergyHi	~	1	1	0	0	255	0	0		1000	0	0
+6021	PackTotalDsgEnergyLo	~	1	1	0	0	65535	0	0		1000	0	0
+6022	PackTotalDsgEnergyHi	~	1	1	0	0	65535	0	0		1000	0	0
+6023	保留	~	1	1	0	0	65535	0	0		1000	0	0
+6024	保留	~	1	1	0	0	65535	0	0		1000	0	0
+6025	AllPackControl		1	1	0	0	65535	0	0		1000	0	0
+6026	AllPackBuckleStatus		1	1	0	0	65535	0	0		1000	0	0
+6027	AllPackMergeStatus		1	1	0	0	65535	0	0		1000	0	0
+6028	AllPackHeatStatus		1	10	0	0	65535	0	0		1000	0	0
+6029	AllPackAlarm1		1	1	0	0	16	0	0		1000	0	0
+6030	AllPackAlarm2		1	1	0	0	65535	0	0		1000	0	0
+6031	BCU_State		1	10	0	0	10000	0	0		1000	0	0
+6032	保留		1	10	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+6100	PackID		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6101	PackType		6	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+6107	PackSN		4	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6111	Voltage		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6112	Current		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6113	SOC		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6114	SOH		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6115	AverageTemp		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6116	PackMinCellVoltage		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6117	PackMaxCellVoltage		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6118	PackMinCellIndex		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6119	PackMaxCellIndex		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6120	PackMinTempValue		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6121	PackMaxTempValue		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6122	MinTempIndex		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6123	MaxTempIndex		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6124	PackRunStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6125	ChargingStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6126	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6127	PackOnline		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6128	RelayStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6129	PackCapOnline		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6130	PackCanBusError		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6131	PackCapacityLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6132	PackCapacityHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6133	PackTotalChgEnergyLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6134	PackTotalChgEnergyHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6135	PackTotalDsgEnergyLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6136	PackTotalDsgEnergyHi		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6137	PackChgEnergyLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6138	PackChgEnergyHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6139	PackDsgEnergyLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6140	PackDsgEnergyHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6141	PackSIR		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6142	PackInner		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6143	PackCycle		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6144	PackProtectLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6145	PackProtectHi		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6146	PackSysErr1		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6147	PackSysErr2		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6148	PackSysErr3		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6149	PackAlarm		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6150	PackChgFullTime		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6151	PackDsgEmptyTime		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6152	PackTotalCellCnt		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6153	PackNTCCellCnt		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6154	PackBMUCnt		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6155	BMUFaultOrder		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6156	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6157	PackType		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6158	PackOutSumV		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6159	PackControl		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6160	PackMaxChgCurrent		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6161	PackMaxDchCurrent		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6162	PackMosStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6163	PackSingleStatus		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6164	PackAlarmLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6165	PackAlarmHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6166	PackEvent		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6167	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6168	Iaging		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6169	保留		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6170	保留		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6171	保留		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6172	PackFirmwareVersionDifferences		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6173	SoftwareNumber		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6174	SoftwareType1		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6175	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6176	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6177	SoftwareType2		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6178	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6179	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6180	SoftwareType3		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6181	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6182	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6183	SoftwareType4		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6184	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6185	SoftwareVersionHi		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6186	SoftwareType5		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6187	SoftwareVersionLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6188	SoftwareVersionHi		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6189	SoftwareType6		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6190	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6191	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6192	SoftwareType7		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6193	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6194	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6195	SoftwareType8		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6196	SoftwareVersionLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6197	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6198	SoftwareType9		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6199	SoftwareVersionLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6200	SoftwareVersionHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6201	SoftwareType10		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6202	SoftwareVersionLo		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6203	SoftwareVersionHi		1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+6300	PackTotalCellCnt		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6301	PackNTCCellCnt		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+6302	CellVoltage1		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6303	CellVoltage2		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6304	CellVoltage3		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6305	CellVoltage4		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6306	CellVoltage5		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6307	CellVoltage6		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6308	CellVoltage7		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6309	CellVoltage8		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6310	CellVoltage9		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6311	CellVoltage10		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6312	CellVoltage11		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6313	CellVoltage12		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6314	CellVoltage13		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6315	CellVoltage14		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6316	CellVoltage15		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+6317	CellVoltage16		1	1000	0	0	65535	0	0		1000	0	0	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+7000	SetPackID		1	1	0	0	15	0	0	用于选择Pack	1000	0	0
+7001	SetPvHeat		1	1	0	0	1	0	0	设置Pv加热选项开关	1000	0	0
+7002	SetPackHeat		1	1	0	0	1	0	0	电池高电量电网自动加热	1000	0	0
+7003	SetPackUnlock		1	10	0	0	1	0	0	设置PACK因故障锁死后解锁	1000	0	0
+7004	PACK_Parallel_InOneGroup		1	10	0	0	64	0	0	每套电池包的最大支持数量	1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+15750	DCHUB_Set		1	1	0	0	65535	0	0		1000	0	0
+													
+													
+													
+													
+													
+15751	ACHUB_Set		1	1	0	0	65535	0	0		1000	0	1
+													
+													
+													
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前
+11000	iot model		6	1	0	0	65535	0	0		1000	0	0
+													
+													
+													
+													
+													
+11006	iot sn		4	1	0	0	65535	0	0		1000	0	0
+													
+													
+													
+11010	safetyCode		4	1	0	0	65535	0	0		1000	0	0
+													
+													
+													
+11014	SoftwareLo		1	1	0	0	65535	0	0		1000	0	0
+11015	SoftwareHi		1	1	0	0	65535	0	0		1000	0	0
+11016	预留		1	1	0	0	65535	0	0		1000	0	0
+11017	预留		1	1	0	0	65535	0	0		1000	0	0
+11018	ConnectInfoLo		1	1	0	0	65535	0	0	绝缘阻抗ISO异常;	1000	0	0
+11019	ConnectInfoHi		1	1	0	0	65535	0	0		1000	0	0
+11020	WifiStaIPLo		1	1	0	0	65535	0	0		1000	0	0
+11021	WifiStaIPHi		1	1	0	0	65535	0	0		1000	0	0
+11022	WifiStaGatewayLo		1	1	0	0	65535	0	0		1000	0	0
+11023	WifiStaGatewayHi		1	1	0	0	65535	0	0		1000	0	0
+11024	WifiStaMaskLo		1	1	0	0	65535	0	0		1000	0	0
+11025	WifiStaMaskHi		1	1	0	0	65535	0	0		1000	0	0
+11026	WifiStaRssi		1	1	0	0	65535	0	0		1000	0	0
+11027	WifiMac		3	1	0	0	65535	0	0		1000	0	0
+11030	BleMac		3	1	0	0	65535	0	0		1000	0	0
+11033	mobile_rssi		1	1	0	0	65535	0	0		1000	0	0
+11034	longitude_direct		1	1	0	0	65535	0	0		1000	0	0
+11035	latitude_valueLo		1	1	0	0	65535	0	0		1000	0	0
+11036	latitude_valueHi		1	1	0	0	65535	0	0		1000	0	0
+11037	longitude_valueLo		1	1	0	0	65535	0	0		1000	0	0
+11038	longitude_valueHi		1	1	0	0	65535	0	0		1000	0	0
+11039	Iot CanBusError		1	1	0	0	65535	0	0	绝缘阻抗ISO异常;	1000	0	0
+11040	WIFI_Disconnect_reason		1	1	0	0	65535	0	0		1000	0	0
+11041	4G_IPLo		1	1	0	0	65535	0	0		1000	0	0
+11042	4G_IPHi		1	1	0	0	65535	0	0		1000	0	0
+11043	Wired_Ethernet_IPLo		1	1	0	0	65535	0	0		1000	0	0
+11044	Wired_Ethernet_IPHi		1	1	0	0	65535	0	0		1000	0	0
+11045	Last_Connect_Time		2	1	0	0	65535	0	0		1000	0	0
+11047	Signal_Strength		1	1	0	0	65535	0	0		1000	0	0
+11048	GPS_X 		2	1	0	0	65535	0	0		1000	0	0
+11050	GPS_Y		2	1	0	0	65535	0	0		1000	0	0
+11052	 IMEI_Num		10	1	0	0	65535	0	0		1000	0	0
+11062	 IMSI_Num		10	1	0	0	65535	0	0		1000	0	0
+11072	ICCID_Num		10	1	0	0	65535	0	0		1000	0	0
+11082	Bind_SN		1	1	0	0	65535	0	0		1000	0	0
+11103	IOT_ctrol_19000H		1	1	0	0	65535	0	0		1000	0	0
+11104	IOT_ctrol_19000L		1	1	0	0	65535	0	0		1000	0	0
+11500	Storm_Mode_Begin_L		1	1	0	0	65535	0	0		1000	0	0
+11501	Storm_Mode_Begin_H		1	1	0	0	65535	0	0		1000	0	0
+11502	Storm_Mode_End_L		1	1	0	0	65535	0	0		1000	0	0
+11503	Storm_Mode_End_H		1	1	0	0	65535	0	0		1000	0	0
+11504	Storm_Mode_UrgencySeverity		1	1	0	0	65535	0	0		1000	0	0
+11505	Storm_Mode_Certainty		1	1	0	0	65535	0	0		1000	0	0
+11506	Storm_Mode_AlertEvent		1	1	0	0	65535	0	0		1000	0	0
+11507	Storm_Mode_TargetSoC		1	1	0	0	65535	0	0		1000	0	0
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+12000	factory		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12001	wifi_sta_auth		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12002	wifi_station_ssid		16	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+12018	wifi_station_passward_L		16	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+12034	wifi_station_passward_H		16	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+12050	wifi_station_passward_H32B_Eanble		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12051	预留		16	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12067	cloud_dns		64	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+12131	mobile_apn		30	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12161	IOT_EnableLo		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12162	IOT_EnableHi		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12163	Storm_Mode_Cloud_Ctrl		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12164	Data_Report_Cycle 		2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+12170	IOT_Enable_mix1		1	1	0	0	65535	0	0		1000	0	1	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+15500	"CHARGER 1 型号
+（6）"	"
+"	6	1	0	0	65535	0	0		1000	0	0	主控	ASCII
+15506	"CHARGER 1 SN
+（4）"		4	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15510	DC1输入电压	0.1V	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15511	DC3输出电压	0.1V	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15512	DC3输出电流	0.1A	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15513	DC3输出功率	1W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15514	能量流动条		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15515	输入电池类型		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15516	DC1故障（原CHARGER 1故障）		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15517	DCDC故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15518	DCDC保护		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15519	DC2故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15520	DC3故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15521	DC4故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15522	DC5故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15523	预留DC6故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15524	CHAEGE2汇总故障		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15525	DCDC告警		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15526	Mode		1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15527	TotalInputPower	1W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15529	TotalOutPower	1W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15531	DC1Voltage	V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15532	DC1Current	 A	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15534	DC1Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15535	DC2Voltage	V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15536	DC2Current	A	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15538	DC2Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15539	DC3Voltage	V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15540	DC3Current	A	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15542	DC3Power	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15543	DC4Voltage	V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15544	DC4Current	A	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15546	DC4Power	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15547	DC5Voltage	V	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15548	DC5Current	A	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15550	DC5Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+15553	TotalInputEnergy	0.1KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15555	TotalOutputEnergy	0.1KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15557	DC1EnergyInput	0.1KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15559	DC1EnergyOutput	0.1KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15561	DC2EnergyInput	0.1KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+15563	DC2EnergyOutput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15565	DC3EnergyInput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15567	DC3EnergyOutput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15569	DC4EnergyInput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15571	DC4EnergyOutput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15573	DC5EnergyInput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15575	DC5EnergyOutput	0.1KWh	2	10	0	0	65535	1	1		1000	0	0	主控	Integer
+15581	DCDC_SoftwareType		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15582	DCDC_SoftwareVersion		2	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15583	revd0		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15584	revd1		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15585	revd2		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15586	revd3		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15587	revd4		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15588	revd5		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15589	revd6		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15590	revd7		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15591	revd8		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15592	revd9		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+15600	设置1		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15601	DC1输出电压设置值		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15602	DC1_Current_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15603	DC2_Voltage_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15604	DC2_Current_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15605	DC3_Voltage_set1		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15606	DC3_Current_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15607	DC4_Voltage_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15608	DC4_Current_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15609	DC5_Voltage_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15610	DC5_Current_set		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15611	DC3_Voltage_set2		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15613	设置1		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15614	模式设置2		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15615	模式设置3		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15616	BatteryCapacity_L		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15617	BatteryCapacity_H		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15618	Battery_Type		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15619	DC1_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15620	DC2_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15621	DC3_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15622	DC4_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15623	DC5_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15624	DC_Tatol_Power_set		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15625	设置4		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15626	设置5		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15627	SetCtrlPowerOn		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15628	Remote_set_soc		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15629	DC1_Power_set反向		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15630	DC2_Power_set反向		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15631	DC3_Power_set反向		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15632	DC4_Power_set反向		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15633	DC5_Power_set反向		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15634	IOT和PCS交互模式选择		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15635	交互PCS的代号（仅在手动选型号使用）		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15636	DC1输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15637	DC1输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15638	DC2输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15639	DC2输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15640	DC3输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15641	DC3输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15642	DC4输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15643	DC4输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15644	DC5输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15645	DC5输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15646	DC6输出电压设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15647	DC6输出电流设置值（目标值）		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15648	铅酸电池额定电压		1	10	0	0	65535	0	1		1000	0	0	主控	Integer
+15649	Enable_Parallel		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15650	DC1_Power_set_limit		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15651	DC2_Power_set_limit		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15652	DC3_Power_set_limit		1	1	0	0	65535	0	1		1000	0	0	主控	Integer
+15653	DC4_Power_set_limit		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15654	DC5_Power_set_limit		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+15655	DC6_Power_set_limit		1	1	0	0	65535	1	1		1000	0	0	主控	Integer
+
+
+变量地址	变量名称	变量单位	长度	精度	无符号	正常最小值	正常最大值	权限	读写	位状态	采样周期	值偏移	高位在前	分组信息	变量类型转换
+142	ACLoadAllTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+148	InvAllTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+152	ACLoadTotalEnergy	kwh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1420	ACLoadTotalPower	W	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1422	ACLoadTotalEnergyLo	KWh	2	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1424	ACOpenTimeLo	min	2	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1429	SystemPhaseNumber		1	1	0	0	3	0	0		1000	0	0	主控	Integer
+1430	ACLoad1Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1431	ACLoad1Voltage	V	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1432	ACLoad1Current	A	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1433	ACLoad1Papparent	VA	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1434	ACLoad1Preactive	VAR	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1436	ACLoad2Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1437	ACLoad2Voltage	V	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1438	ACLoad2Current	A	1	10	0	0	65535	0	0		1000	0	0	主控	Integer
+1439	ACLoad2Papparent	VA	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1440	ACLoad2Preactive	VAR	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+1510	Inv1Power	W	1	1	0	0	65535	0	0		1000	0	0	主控	Integer
+
+
