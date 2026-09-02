@@ -71,6 +71,24 @@ export component MainWindow inherits Window {
 
     in-out property <string> firmware-current-version;
     in-out property <string> firmware-status-text;
+    in-out property <string> firmware-file-name;
+    in-out property <string> firmware-file-size;
+    in-out property <string> firmware-md5;
+    in-out property <string> firmware-type-text;
+    in-out property <string> firmware-image-version;
+    in-out property <string> firmware-layout-text;
+    in-out property <string> firmware-parse-source;
+    in-out property <string> firmware-dev-model;
+    in-out property <bool> firmware-has-file;
+    in-out property <int> firmware-phase;
+    in-out property <int> firmware-progress;
+    in-out property <int> firmware-pc-percent;
+    in-out property <int> firmware-device-percent;
+    in-out property <string> firmware-stage-text;
+    in-out property <string> firmware-result-text;
+    in-out property <string> firmware-fail-reason;
+    in-out property <bool> firmware-can-start;
+    in-out property <bool> firmware-can-stop;
 
     in-out property <int> current-page: 0;
     in-out property <int> dialog-kind: 0;
@@ -128,7 +146,10 @@ export component MainWindow inherits Window {
     callback copy-selected-modbus-query();
     callback dialog-pick-copy-tab(int);
     callback modbus-query-layout-width-changed(length);
-    callback firmware-check-update();
+    callback firmware-pick-file();
+    callback firmware-clear-file();
+    callback firmware-start();
+    callback firmware-stop();
     callback dialog-confirm();
     callback dialog-cancel();
     callback set-theme-mode(int);
@@ -309,11 +330,27 @@ export component MainWindow inherits Window {
                         if root.current-page == 3: FirmwarePage {
                             device-connected: root.device-connected;
                             device-name: root.ble-device-name;
-                            firmware-current-version: root.firmware-current-version;
                             firmware-status-text: root.firmware-status-text;
-                            check-update => {
-                                root.firmware-check-update();
-                            }
+                            firmware-file-name: root.firmware-file-name;
+                            firmware-file-size: root.firmware-file-size;
+                            firmware-md5: root.firmware-md5;
+                            firmware-type-text: root.firmware-type-text;
+                            firmware-image-version: root.firmware-image-version;
+                            firmware-dev-model: root.firmware-dev-model;
+                            firmware-has-file: root.firmware-has-file;
+                            firmware-phase: root.firmware-phase;
+                            firmware-progress: root.firmware-progress;
+                            firmware-pc-percent: root.firmware-pc-percent;
+                            firmware-device-percent: root.firmware-device-percent;
+                            firmware-stage-text: root.firmware-stage-text;
+                            firmware-result-text: root.firmware-result-text;
+                            firmware-fail-reason: root.firmware-fail-reason;
+                            firmware-can-start: root.firmware-can-start;
+                            firmware-can-stop: root.firmware-can-stop;
+                            pick-file => { root.firmware-pick-file(); }
+                            clear-file => { root.firmware-clear-file(); }
+                            start-upgrade => { root.firmware-start(); }
+                            stop-upgrade => { root.firmware-stop(); }
                         }
 
                         if root.current-page == 4: DeviceConfigPage {

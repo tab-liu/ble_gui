@@ -9,7 +9,7 @@
 //! | [`device_config_store`] | 设备配置自定义分组 TOML 持久化 |
 //! | [`ble_favorites`] | 收藏设备列表 |
 //! | [`theme`] | 明暗主题 |
-//! | [`firmware`] | 固件升级页占位服务（OTA 后续扩展） |
+//! | [`firmware`] | 固件升级：选文件、自动识别头、MD5（传输后续接入） |
 
 pub mod ble;
 pub mod ble_favorites;

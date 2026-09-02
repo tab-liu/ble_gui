@@ -337,7 +337,7 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     if page == PAGE_DEVICE_CONFIG {
         crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
-    refresh_firmware(ui, &ctx.firmware.snapshot());
+    refresh_firmware(ui, &ctx.firmware.snapshot(connected));
 }
 
 pub fn refresh_modbus_dashboard(ui: &MainWindow, modbus: &crate::services::modbus::ModbusService) {
@@ -393,8 +393,26 @@ pub fn refresh_dashboard(ui: &MainWindow, dash: &DashboardData, output_busy: boo
 }
 
 pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
-    ui.set_firmware_current_version(snap.current_version.clone().into());
+    ui.set_firmware_current_version(snap.device_version.clone().into());
     ui.set_firmware_status_text(snap.status_text.clone().into());
+    ui.set_firmware_file_name(snap.file_name.clone().into());
+    ui.set_firmware_file_size(snap.file_size_text.clone().into());
+    ui.set_firmware_md5(snap.md5.clone().into());
+    ui.set_firmware_type_text(snap.type_text.clone().into());
+    ui.set_firmware_image_version(snap.image_version.clone().into());
+    ui.set_firmware_layout_text(snap.layout_text.clone().into());
+    ui.set_firmware_parse_source(snap.parse_source.clone().into());
+    ui.set_firmware_dev_model(snap.dev_model.clone().into());
+    ui.set_firmware_has_file(snap.has_file);
+    ui.set_firmware_phase(snap.phase);
+    ui.set_firmware_progress(snap.progress);
+    ui.set_firmware_pc_percent(snap.pc_percent);
+    ui.set_firmware_device_percent(snap.device_percent);
+    ui.set_firmware_stage_text(snap.stage_text.clone().into());
+    ui.set_firmware_result_text(snap.result_text.clone().into());
+    ui.set_firmware_fail_reason(snap.fail_reason.clone().into());
+    ui.set_firmware_can_start(snap.can_start);
+    ui.set_firmware_can_stop(snap.can_stop);
 }
 
 pub fn close_dialog(ui: &MainWindow) {
