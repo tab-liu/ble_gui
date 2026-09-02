@@ -83,6 +83,10 @@
 //! | [`state`] | `AppContext`、页面 ID、对话框常量 |
 //! | [`ui`] | Slint 生成类型 + 属性刷新辅助 |
 
+// Windows 默认把 bin 编成控制台程序：从资源管理器启动会再开一个终端。
+// GUI 子系统双击不再弹窗；若已在终端里启动（如 cargo run），再挂到父控制台输出日志。
+#![windows_subsystem = "windows"]
+
 mod app;
 mod pages;
 mod services;
@@ -90,10 +94,65 @@ mod state;
 mod ui;
 
 fn main() -> Result<(), slint::PlatformError> {
+    #[cfg(windows)]
+    attach_parent_console();
+
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn"),
     )
     .format_timestamp_millis()
     .init();
     app::run()
+}
+
+/// 若父进程已有控制台（`cargo run`、cmd 里启动），把 stdout/stderr 接到那里。
+/// 从资源管理器双击时没有父控制台，AttachConsole 失败，也就不会多出一个黑窗口。
+#[cfg(windows)]
+fn attach_parent_console() {
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFF_FFF5; // -11
+    const STD_ERROR_HANDLE: u32 = 0xFFFF_FFF4; // -12
+    const GENERIC_READ: u32 = 0x8000_0000;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_ATTRIBUTE_NORMAL: u32 = 0x80;
+    const INVALID_HANDLE: isize = -1;
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(dw_process_id: u32) -> i32;
+        fn SetStdHandle(n_std_handle: u32, h_handle: isize) -> i32;
+        fn CreateFileA(
+            file_name: *const u8,
+            desired_access: u32,
+            share_mode: u32,
+            security: isize,
+            creation_disposition: u32,
+            flags: u32,
+            template: isize,
+        ) -> isize;
+    }
+
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS) == 0 {
+            return;
+        }
+        let name = b"CONOUT$\0";
+        let handle = CreateFileA(
+            name.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            0,
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            0,
+        );
+        if handle == 0 || handle == INVALID_HANDLE {
+            return;
+        }
+        let _ = SetStdHandle(STD_OUTPUT_HANDLE, handle);
+        let _ = SetStdHandle(STD_ERROR_HANDLE, handle);
+    }
 }
