@@ -15,10 +15,8 @@ fn start_connect(ui: &MainWindow, ctx: &AppContext, address: &str) {
         return;
     }
     ui.set_selected_scan_address(address.into());
-    // 收藏直连：不依赖广谱扫描，内部会定向查找。
-    if ctx.ble.is_scanning() {
-        ctx.ble.stop_scan();
-    }
+    // Connect 命令会在 worker 内停止扫描。不要先发 StopScan，
+    // 否则 Windows 上刚停扫描立刻做 GATT 会 Unreachable（Not connected）。
     ctx.ble.connect(address);
     refresh_ble(ui, &ctx.favorites_snapshot(), &ctx.ble.snapshot(), None);
 }

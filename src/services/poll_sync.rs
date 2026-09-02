@@ -7,7 +7,7 @@ use slint::Model;
 
 use crate::pages::modbus_query;
 use crate::services::ble::modbus::{
-    parse_register_address, parse_scale, parse_value_type, QueryValueType, BUILTIN_SETTINGS,
+    parse_register_address, parse_scale, parse_value_type, BUILTIN_SETTINGS,
 };
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
 use crate::state::{
@@ -108,8 +108,8 @@ fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollFore
                 item_index: i,
                 register_text: def.register.to_string(),
                 protocol_address: Some(def.register),
-                register_count: 1,
-                value_type: QueryValueType::Integer,
+                register_count: def.register_count,
+                value_type: def.value_type,
                 scale: 1,
                 bit: def.bit,
             })

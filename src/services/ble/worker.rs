@@ -11,7 +11,7 @@ use btleplug::api::{
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
 use futures::StreamExt;
-use log::{info, warn};
+use log::{debug, info, warn};
 use tokio::sync::mpsc;
 
 use super::poll::{
@@ -41,6 +41,7 @@ pub enum BleCommand {
         address: u16,
         values: Vec<u16>,
         bit: Option<u8>,
+        field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
 }
 
@@ -51,6 +52,7 @@ enum SessionCommand {
         address: u16,
         values: Vec<u16>,
         bit: Option<u8>,
+        field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
 }
 
@@ -100,6 +102,10 @@ const UI_REFRESH_INTERVAL_MS: u64 = 1000;
 const SCAN_SYNC_INTERVAL_MS: u64 = 1000;
 /// 连接前句柄失效时，定向找回目标设备的超时。
 const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(12);
+/// Windows 停扫描后 radio 尚未释放时，立刻 GetGattServices 常返回 Unreachable（Not connected）。
+const CONNECT_SETTLE_MS: u64 = 400;
+const CONNECT_RETRY_ATTEMPTS: u32 = 4;
+const CONNECT_RETRY_BASE_MS: u64 = 400;
 
 const MSG_DEVICE_NOT_NEARBY: &str =
     "附近未发现该设备（可能已关机、距离过远，或已被其它设备连接后停止广播）";
@@ -145,6 +151,76 @@ fn to_scan_link_hint(hint: AdvLinkHint) -> ScanLinkHint {
 
 fn connect_cancelled(flag: &AtomicBool) -> bool {
     flag.load(Ordering::Acquire)
+}
+
+async fn sleep_unless_cancelled(flag: &AtomicBool, dur: Duration) -> Result<(), String> {
+    let end = tokio::time::Instant::now() + dur;
+    loop {
+        if connect_cancelled(flag) {
+            return Err("已取消连接".into());
+        }
+        let now = tokio::time::Instant::now();
+        if now >= end {
+            return Ok(());
+        }
+        let slice = (end - now).min(Duration::from_millis(50));
+        tokio::time::sleep(slice).await;
+    }
+}
+
+/// Windows 上 btleplug 的 connect() 实际是 Uncached GetGattServices；
+/// 扫描刚停或首次 GATT 常返回 Unreachable → Not connected，第二次即可成功。
+async fn connect_gatt_with_retry(
+    peripheral: &Peripheral,
+    cancel_connect: &AtomicBool,
+    state: &SharedBleState,
+    ui_refresh: &super::UiRefreshSlot,
+    address_text: &str,
+) -> Result<(), String> {
+    sleep_unless_cancelled(cancel_connect, Duration::from_millis(CONNECT_SETTLE_MS)).await?;
+
+    for attempt in 1..=CONNECT_RETRY_ATTEMPTS {
+        if connect_cancelled(cancel_connect) {
+            return Err("已取消连接".into());
+        }
+        if peripheral.is_connected().await.unwrap_or(false) {
+            return Ok(());
+        }
+        match peripheral.connect().await {
+            Ok(()) => {
+                if attempt > 1 {
+                    info!(
+                        target: "ble_gui::services::ble",
+                        "GATT connect succeeded on attempt {attempt}/{CONNECT_RETRY_ATTEMPTS} for {address_text}"
+                    );
+                }
+                return Ok(());
+            }
+            Err(err) => {
+                warn!(
+                    target: "ble_gui::services::ble",
+                    "GATT connect attempt {attempt}/{CONNECT_RETRY_ATTEMPTS} for {address_text} failed: {err}"
+                );
+                if attempt == CONNECT_RETRY_ATTEMPTS {
+                    return Err(format!("BLE 连接失败：{err}"));
+                }
+                set_phase(
+                    state,
+                    LinkPhase::Connecting,
+                    format!(
+                        "连接未就绪，正在重试（{attempt}/{CONNECT_RETRY_ATTEMPTS}）……"
+                    ),
+                );
+                notify_ui_force(ui_refresh, true);
+                sleep_unless_cancelled(
+                    cancel_connect,
+                    Duration::from_millis(CONNECT_RETRY_BASE_MS * u64::from(attempt)),
+                )
+                .await?;
+            }
+        }
+    }
+    Err("BLE 连接失败：Not connected".into())
 }
 
 pub async fn worker_main(
@@ -435,6 +511,7 @@ pub async fn worker_main(
                 address,
                 values,
                 bit,
+                field,
             } => {
                 if let Some(active) = &session {
                     let _ = active.cmd_tx.send(SessionCommand::WriteHolding {
@@ -442,6 +519,7 @@ pub async fn worker_main(
                         address,
                         values,
                         bit,
+                        field,
                     });
                 }
             }
@@ -809,10 +887,14 @@ async fn connect_device(
     );
     notify_ui_force(ui_refresh, true);
 
-    peripheral
-        .connect()
-        .await
-        .map_err(|e| format!("BLE 连接失败：{e}"))?;
+    connect_gatt_with_retry(
+        &peripheral,
+        cancel_connect,
+        state,
+        ui_refresh,
+        address_text,
+    )
+    .await?;
 
     if connect_cancelled(cancel_connect) {
         let _ = peripheral.disconnect().await;
@@ -865,9 +947,9 @@ async fn connect_device(
                 .subscribe(&ff03)
                 .await
                 .map_err(|e| format!("订阅 FF03 通知失败：{e}"))?;
-            info!(target: "ble_gui::worker", "已订阅 FF01 + FF03（TLV 异步数据走 FF03）");
+            debug!(target: "ble_gui::worker", "已订阅 FF01 + FF03（TLV 异步数据走 FF03）");
         } else {
-            info!(target: "ble_gui::worker", "已订阅 FF03（无 FF01，TLV/通知均走 FF03）");
+            debug!(target: "ble_gui::worker", "已订阅 FF03（无 FF01，TLV/通知均走 FF03）");
         }
     } else if notify_char_ff01.is_some() {
         info!(target: "ble_gui::worker", "已订阅 FF01（设备无 FF03 特征）");
@@ -1059,6 +1141,7 @@ async fn connect_device(
                             address,
                             values,
                             bit,
+                            field,
                         }) => {
                             let protocol = protocol_for_write.clone();
                             let write_tx = write_tx.clone();
@@ -1081,6 +1164,7 @@ async fn connect_device(
                                     address,
                                     &values,
                                     bit,
+                                    field,
                                 )
                                 .await;
                                 if let Err(err) = &result {

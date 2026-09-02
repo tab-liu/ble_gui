@@ -1,4 +1,4 @@
-import { LineEdit } from "std-widgets.slint";
+import { LineEdit, ComboBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { ToolbarButton } from "toolbar_button.slint";
 
@@ -6,11 +6,15 @@ import { ToolbarButton } from "toolbar_button.slint";
 export component BuiltinConfigRow inherits Rectangle {
     in property <string> name;
     in property <int> widget-kind;
+    in property <[string]> enum-labels;
+    in property <[string]> enum-values;
+    in property <int> enum-index;
     in property <string> result-display;
     in-out property <string> write-value;
     in property <string> status;
     in property <bool> dirty;
     in property <bool> write-enabled: true;
+    in property <string> disabled-hint: "";
     callback write-value-edited(string);
     callback write-clicked();
 
@@ -47,6 +51,13 @@ export component BuiltinConfigRow inherits Rectangle {
                 text: "未写入";
                 color: Theme.text-dim;
                 font-size: 11px;
+            }
+
+            if !root.write-enabled && root.disabled-hint != "": Text {
+                text: root.disabled-hint;
+                color: Theme.text-dim;
+                font-size: 11px;
+                overflow: elide;
             }
         }
 
@@ -109,7 +120,11 @@ export component BuiltinConfigRow inherits Rectangle {
                     TouchArea {
                         width: 100%;
                         height: 100%;
+                        enabled: root.write-enabled;
                         clicked => {
+                            if (!root.write-enabled) {
+                                return;
+                            }
                             if (root.write-value == "1" || root.write-value == "true") {
                                 root.write-value-edited("0");
                             } else {
@@ -129,7 +144,18 @@ export component BuiltinConfigRow inherits Rectangle {
                 }
             }
 
-            if root.widget-kind == 1: LineEdit {
+            if root.widget-kind == 1 && root.enum-labels.length > 0: ComboBox {
+                width: 280px;
+                model: root.enum-labels;
+                current-index: root.enum-index;
+                selected => {
+                    if (self.current-index >= 0 && self.current-index < root.enum-values.length) {
+                        root.write-value-edited(root.enum-values[self.current-index]);
+                    }
+                }
+            }
+
+            if root.widget-kind == 1 && root.enum-labels.length == 0: LineEdit {
                 width: 120px;
                 text: root.write-value;
                 placeholder-text: "枚举值";

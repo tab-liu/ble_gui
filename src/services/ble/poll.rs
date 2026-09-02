@@ -91,10 +91,10 @@ pub async fn probe_modbus_capabilities(
     {
         Ok(regs) => {
             if iot_status_supports_tlv(regs[0]) {
-                info!(target: "ble_gui::poll", "设备支持 Modbus TLV 读（寄存器 3 bit3=1）");
+                debug!(target: "ble_gui::poll", "设备支持 Modbus TLV 读（寄存器 3 bit3=1）");
                 ModbusReadMode::Tlv
             } else {
-                info!(target: "ble_gui::poll", "设备不支持 Modbus TLV，使用常规读");
+                debug!(target: "ble_gui::poll", "设备不支持 Modbus TLV，使用常规读");
                 ModbusReadMode::Standard
             }
         }
@@ -127,7 +127,7 @@ pub(crate) async fn modbus_tlv_read(
     }
 
     let request = super::modbus::build_tlv_read_request(tl_items);
-    info!(
+    debug!(
         target: "ble_gui::poll",
         "TLV 读请求 {} 项 plain={} hex={}",
         tl_items.len(),
@@ -189,7 +189,7 @@ pub(crate) async fn modbus_tlv_read(
                 continue;
             }
             if let Some(packet) = parse_tlv_response_packet(&resp) {
-                info!(
+                debug!(
                     target: "ble_gui::poll",
                     "TLV 数据包 {}/{} payload={}B frame={}B hex={}",
                     packet.curr_index,
@@ -206,7 +206,7 @@ pub(crate) async fn modbus_tlv_read(
         if collector.is_complete() {
             let assembled = collector.assembled();
             let units = parse_tlv_read_units(&assembled);
-            info!(
+            debug!(
                 target: "ble_gui::poll",
                 "TLV 收包完成 ack={got_ack} frames={rx_frames} assembled={}B units={} [{}] hex={}",
                 assembled.len(),
@@ -336,7 +336,7 @@ async fn poll_dashboard_tlv(
     live: &SharedModbusLive,
     slave_id: u8,
 ) -> bool {
-    info!(
+    debug!(
         target: "ble_gui::poll",
         "主页 TLV 轮询 slave_id={slave_id} 寄存器 100～149, 2011～2012",
     );
@@ -357,7 +357,7 @@ async fn poll_dashboard_tlv(
 
     let dashboard = match tlv_register_values(&results, slave_id, REG_DASHBOARD_START) {
         Ok(regs) => {
-            info!(
+            debug!(
                 target: "ble_gui::poll",
                 "TLV 100～149 原始 {} 个寄存器",
                 regs.len(),
@@ -397,7 +397,7 @@ async fn poll_dashboard_tlv(
         inner.dashboard = dashboard.clone();
         inner.modbus_online = true;
     }
-    info!(
+    debug!(
         target: "ble_gui::poll",
         "主页 TLV 轮询结果 soc={}% ac_out={}W dc_out={}W ac_on={} dc_on={}",
         dashboard.soc,
@@ -409,7 +409,7 @@ async fn poll_dashboard_tlv(
     true
 }
 
-/// 写保持寄存器：单字用 FC06，多字用 FC10；`bit` 为 Some 时先读后改写该位。
+/// 写保持寄存器：单字用 FC06，多字用 FC10；`bit` 为 Some 时先读后改写该位；`field` 为 Some 时先读后改多位域。
 pub async fn write_holding_registers(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -418,13 +418,33 @@ pub async fn write_holding_registers(
     address: u16,
     values: &[u16],
     bit: Option<u8>,
+    field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
 ) -> Result<(), String> {
-    if values.is_empty() {
+    if values.is_empty() && bit.is_none() && field.is_none() {
         return Err("写入值为空".into());
     }
     let _guard = gate.lock().await;
 
-    let to_write = if let Some(bit_idx) = bit {
+    let to_write = if let Some(field) = field {
+        let current = modbus_read(
+            protocol,
+            write_tx,
+            build_read_holding(slave_id, address, 1),
+            slave_id,
+            1,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut word = current.first().copied().unwrap_or(0);
+        let field_mask = ((1u16 << field.width) - 1) << field.start_bit;
+        let val = values
+            .first()
+            .copied()
+            .unwrap_or(field.value)
+            & ((1u16 << field.width) - 1);
+        word = (word & !field_mask) | (val << field.start_bit);
+        vec![word]
+    } else if let Some(bit_idx) = bit {
         let current = modbus_read(
             protocol,
             write_tx,

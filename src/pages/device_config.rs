@@ -15,8 +15,9 @@ use log::{debug, info, warn};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::services::ble::modbus::{
-    encode_write_value, parse_register_address, parse_value_type, BuiltinWidget,
-    BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS,
+    bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, encode_write_value,
+    is_parallel_ha1_device, parse_register_address, parse_value_type, BuiltinSettingDef,
+    BuiltinWidget, BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS, enum_index_for_value,
 };
 use crate::services::device_config_store;
 use crate::services::modbus::QueryPollTarget;
@@ -55,23 +56,102 @@ fn display_for_config(result: &str, widget_kind: i32) -> SharedString {
     }
 }
 
+fn display_for_builtin_result(result: &str, def: &BuiltinSettingDef) -> SharedString {
+    display_for_config(result, def.widget as i32)
+}
+
+fn builtin_availability(
+    def: &BuiltinSettingDef,
+    connected: bool,
+    device_name: &str,
+    write_value: &str,
+) -> (bool, SharedString) {
+    if def.id == "device_bind" {
+        let enabled = builtin_bind_supported(connected, device_name, write_value);
+        let hint = if !connected {
+            "需连接设备".into()
+        } else if bind_option_standalone_only(write_value) && is_parallel_ha1_device(device_name) {
+            "并机(HA1)设备不支持设备绑定".into()
+        } else {
+            "".into()
+        };
+        (enabled, hint)
+    } else {
+        (
+            connected,
+            if connected {
+                "".into()
+            } else {
+                "需连接设备".into()
+            },
+        )
+    }
+}
+
+fn apply_builtin_availability_in_place(ctx: &AppContext) {
+    let snap = ctx.ble.snapshot();
+    let connected = ctx.ble.is_connected();
+    let st = ctx.state.borrow();
+    for i in 0..st.device_config.builtin_items.row_count() {
+        let Some(def) = BUILTIN_SETTINGS.get(i) else {
+            continue;
+        };
+        let Some(mut item) = st.device_config.builtin_items.row_data(i) else {
+            continue;
+        };
+        let (write_enabled, disabled_hint) =
+            builtin_availability(def, connected, &snap.device_name, item.write_value.as_str());
+        if item.write_enabled != write_enabled || item.disabled_hint != disabled_hint {
+            item.write_enabled = write_enabled;
+            item.disabled_hint = disabled_hint;
+            st.device_config.builtin_items.set_row_data(i, item);
+        }
+    }
+}
+
+fn builtin_item_from_def(def: &BuiltinSettingDef) -> BuiltinConfigItem {
+    let default_write = def
+        .enum_options
+        .first()
+        .map(|(_, v)| (*v).to_string())
+        .unwrap_or_default();
+    let enum_labels: Vec<SharedString> = def
+        .enum_options
+        .iter()
+        .map(|(label, _)| (*label).into())
+        .collect();
+    let enum_values: Vec<SharedString> = def
+        .enum_options
+        .iter()
+        .map(|(_, value)| (*value).into())
+        .collect();
+    let enum_index = enum_index_for_value(&default_write, def.enum_options);
+    BuiltinConfigItem {
+        id: def.id.into(),
+        name: def.name.into(),
+        widget_kind: def.widget as i32,
+        enum_labels: ModelRc::new(VecModel::from(enum_labels)),
+        enum_values: ModelRc::new(VecModel::from(enum_values)),
+        enum_index,
+        result_display: "—".into(),
+        write_value: default_write.into(),
+        status: "等待读取".into(),
+        dirty: false,
+        write_enabled: false,
+        disabled_hint: "需连接设备".into(),
+    }
+}
+
 fn builtin_items_from_defs() -> Rc<VecModel<BuiltinConfigItem>> {
     let items: Vec<BuiltinConfigItem> = BUILTIN_SETTINGS
         .iter()
-        .map(|def| BuiltinConfigItem {
-            id: def.id.into(),
-            name: def.name.into(),
-            widget_kind: def.widget as i32,
-            result_display: "—".into(),
-            write_value: match def.widget {
-                BuiltinWidget::Switch => "0".into(),
-                _ => "".into(),
-            },
-            status: "等待读取".into(),
-            dirty: false,
-        })
+        .map(builtin_item_from_def)
         .collect();
     Rc::new(VecModel::from(items))
+}
+
+fn refresh_builtin_enum_index(item: &mut BuiltinConfigItem, options: &[(&str, &str)]) {
+    item.enum_index = enum_index_for_value(item.write_value.as_str(), options);
 }
 
 impl DeviceConfigState {
@@ -111,7 +191,10 @@ fn is_builtin_group(ctx: &AppContext, group_index: usize) -> bool {
 }
 
 fn widget_kind_from_index(index: i32) -> i32 {
-    index.clamp(0, 2)
+    match index {
+        1 => 2,
+        _ => 1,
+    }
 }
 
 fn value_type_from_index(index: i32) -> SharedString {
@@ -138,13 +221,14 @@ fn sync_active_to_ui(ui: &MainWindow, ctx: &AppContext) {
     };
     ui.set_active_group_slave_id(group.slave_id.clone());
     if group.builtin {
-        let builtin: Vec<_> = (0..st.device_config.builtin_items.row_count())
-            .filter_map(|i| st.device_config.builtin_items.row_data(i))
-            .collect();
-        ui.set_builtin_config_items(ModelRc::new(VecModel::from(builtin)));
+        drop(st);
+        apply_builtin_availability_in_place(ctx);
+        let model = ctx.state.borrow().device_config.builtin_items.clone();
+        ui.set_builtin_config_items(ModelRc::new(model));
         ui.set_active_config_items(ModelRc::new(VecModel::from(Vec::<DeviceConfigItem>::new())));
     } else {
         let items = items_vec(&group);
+        drop(st);
         ui.set_active_config_items(ModelRc::new(VecModel::from(items)));
     }
 }
@@ -169,12 +253,10 @@ fn write_group_items(
     );
 }
 
-fn sync_builtin_to_ui(ui: &MainWindow, ctx: &AppContext) {
-    let st = ctx.state.borrow();
-    let builtin: Vec<_> = (0..st.device_config.builtin_items.row_count())
-        .filter_map(|i| st.device_config.builtin_items.row_data(i))
-        .collect();
-    ui.set_builtin_config_items(ModelRc::new(VecModel::from(builtin)));
+/// BLE 连接态或设备名变化时刷新常用项可用性（如 HA1 并机禁用绑定）。
+/// 只就地改 `write_enabled`，不重建 model，避免 ComboBox 无法点选。
+pub fn refresh_builtin_availability(_ui: &MainWindow, ctx: &AppContext) {
+    apply_builtin_availability_in_place(ctx);
 }
 
 fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
@@ -226,25 +308,37 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
 
     if builtin {
         let st = ctx.state.borrow();
-        let mut changed = false;
         for r in &snapshot.items {
             let Some(mut item) = st.device_config.builtin_items.row_data(r.item_index) else {
                 continue;
             };
             let new_status: SharedString = r.status.clone().into();
-            let new_display = display_for_config(&r.result, item.widget_kind);
+            let new_display = BUILTIN_SETTINGS
+                .get(r.item_index)
+                .map(|def| display_for_builtin_result(&r.result, def))
+                .unwrap_or_else(|| display_for_config(&r.result, item.widget_kind));
             if item.status != new_status || item.result_display != new_display {
                 item.status = new_status;
                 item.result_display = new_display;
+                if !item.dirty {
+                    if let Some(def) = BUILTIN_SETTINGS.get(r.item_index) {
+                        if def.widget == BuiltinWidget::Enum
+                            && def.id != "device_bind"
+                            && def.field.is_none()
+                            && !r.result.trim().is_empty()
+                        {
+                            let idx = enum_index_for_value(&r.result, def.enum_options);
+                            if idx >= 0 {
+                                item.write_value = r.result.clone().into();
+                                item.enum_index = idx;
+                            }
+                        }
+                    }
+                }
                 st.device_config
                     .builtin_items
                     .set_row_data(r.item_index, item);
-                changed = true;
             }
-        }
-        drop(st);
-        if changed {
-            sync_builtin_to_ui(ui, ctx);
         }
         return;
     }
@@ -304,7 +398,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.set_active_config_group(ctx.initial_device_config_group);
     sync_active_to_ui(ui, ctx);
     ui.set_show_add_config_form(false);
-    ui.set_config_form_widget_index(2);
+    ui.set_config_form_widget_index(1);
     ui.set_config_form_value_type_index(0);
     ui.set_config_form_register_count("1".into());
     ui.set_renaming_config_group_index(-1);
@@ -482,11 +576,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             result,
             result_display,
             result_font_size,
-            write_value: if ui.get_config_form_widget_index() == 0 {
-                "0".into()
-            } else {
-                "".into()
-            },
+            write_value: "".into(),
             status: "等待读取".into(),
             dirty: false,
         };
@@ -603,7 +693,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         sync_active_to_ui(&ui, &ctx_write);
         ctx_write
             .ble
-            .write_holding(slave_id, address, values, None);
+            .write_holding(slave_id, address, values, None, None);
     });
 
     let ui_weak = ui.as_weak();
@@ -633,10 +723,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         }
     });
 
-    let ui_weak = ui.as_weak();
     let ctx_builtin_edit = ctx.clone();
     ui.on_builtin_config_value_edited(move |index, value| {
-        let ui = ui_weak.unwrap();
         let idx = index as usize;
         let st = ctx_builtin_edit.state.borrow();
         let Some(mut item) = st.device_config.builtin_items.row_data(idx) else {
@@ -645,15 +733,16 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         item.write_value = value;
         item.dirty = true;
         item.status = "未写入".into();
+        if let Some(def) = BUILTIN_SETTINGS.get(idx) {
+            refresh_builtin_enum_index(&mut item, def.enum_options);
+        }
         st.device_config.builtin_items.set_row_data(idx, item);
         drop(st);
-        sync_builtin_to_ui(&ui, &ctx_builtin_edit);
+        apply_builtin_availability_in_place(&ctx_builtin_edit);
     });
 
-    let ui_weak = ui.as_weak();
     let ctx_builtin_write = ctx.clone();
     ui.on_write_builtin_config_item(move |index| {
-        let ui = ui_weak.unwrap();
         if !ctx_builtin_write.ble.is_connected() {
             return;
         }
@@ -666,28 +755,59 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             return;
         };
         let write_text = item.write_value.to_string();
-        let on = parse_switch_on(&write_text);
+        if def.id == "device_bind" {
+            let snap = ctx_builtin_write.ble.snapshot();
+            if bind_option_standalone_only(&write_text)
+                && is_parallel_ha1_device(&snap.device_name)
+            {
+                item.status = "并机(HA1)设备不支持设备绑定".into();
+                st.device_config.builtin_items.set_row_data(idx, item);
+                return;
+            }
+            let Some(field) = bind_trigger_field(&write_text) else {
+                item.status = "未知绑定选项".into();
+                st.device_config.builtin_items.set_row_data(idx, item);
+                return;
+            };
+            item.dirty = false;
+            item.status = "写入中…".into();
+            st.device_config.builtin_items.set_row_data(idx, item);
+            drop(st);
+            ctx_builtin_write.ble.write_holding(
+                BUILTIN_CONFIG_SLAVE_ID,
+                def.register,
+                vec![field.value],
+                None,
+                Some(field),
+            );
+            return;
+        }
         let values = match def.widget {
-            BuiltinWidget::Switch => vec![if on { 1 } else { 0 }],
-            _ => match encode_write_value(&write_text, parse_value_type("integer"), 1) {
-                Ok(v) => v,
-                Err(err) => {
-                    item.status = err.into();
-                    st.device_config.builtin_items.set_row_data(idx, item);
-                    drop(st);
-                    sync_builtin_to_ui(&ui, &ctx_builtin_write);
-                    return;
+            BuiltinWidget::Switch => {
+                vec![if parse_switch_on(&write_text) { 1 } else { 0 }]
+            }
+            BuiltinWidget::Enum | BuiltinWidget::Number => {
+                match encode_write_value(&write_text, def.value_type, def.register_count) {
+                    Ok(v) => v,
+                    Err(err) => {
+                        item.status = err.into();
+                        st.device_config.builtin_items.set_row_data(idx, item);
+                        return;
+                    }
                 }
-            },
+            }
         };
         item.dirty = false;
         item.status = "写入中…".into();
         st.device_config.builtin_items.set_row_data(idx, item);
         drop(st);
-        sync_builtin_to_ui(&ui, &ctx_builtin_write);
 
-        ctx_builtin_write
-            .ble
-            .write_holding(BUILTIN_CONFIG_SLAVE_ID, def.register, values, def.bit);
+        ctx_builtin_write.ble.write_holding(
+            BUILTIN_CONFIG_SLAVE_ID,
+            def.register,
+            values,
+            def.bit,
+            def.field,
+        );
     });
 }

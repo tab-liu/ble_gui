@@ -11,7 +11,7 @@ use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
 use crate::services::modbus::{DashboardData, ModbusReadMode};
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, PAGE_DASHBOARD};
+use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG};
 use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow};
 
 const DEFAULT_RSSI_MIN: i32 = -70;
@@ -333,6 +333,9 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     }
     if connected && page == PAGE_DASHBOARD {
         refresh_modbus_dashboard(ui, &ctx.modbus);
+    }
+    if page == PAGE_DEVICE_CONFIG {
+        crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
     refresh_firmware(ui, &ctx.firmware.snapshot());
 }

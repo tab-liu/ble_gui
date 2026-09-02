@@ -80,13 +80,18 @@ export struct DeviceConfigGroup {
 }
 
 /// 常用设置项（代码映射；可含 bit 域）。读写分离同灵活项。
-/// widget-kind: 0=开关 1=枚举(占位) 2=数值
+/// widget-kind: 0=开关 1=枚举 2=数值
 export struct BuiltinConfigItem {
     id: string,
     name: string,
     widget-kind: int,
+    enum-labels: [string],
+    enum-values: [string],
+    enum-index: int,
     result-display: string,
     write-value: string,
     status: string,
     dirty: bool,
+    write-enabled: bool,
+    disabled-hint: string,
 }

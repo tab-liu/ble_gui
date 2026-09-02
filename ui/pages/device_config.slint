@@ -197,9 +197,9 @@ export component DeviceConfigPage inherits VerticalLayout {
                     min-width: 36px;
                 }
                 LineEdit {
-                    width: 80px;
+                    width: 100px;
                     text <=> root.config-form-register;
-                    placeholder-text: "地址";
+                    placeholder-text: "40001";
                 }
 
                 Text {
@@ -209,8 +209,8 @@ export component DeviceConfigPage inherits VerticalLayout {
                     min-width: 28px;
                 }
                 ComboBox {
-                    width: 88px;
-                    model: ["开关", "文本", "数值"];
+                    width: 100px;
+                    model: ["文本", "数值"];
                     current-index <=> root.config-form-widget-index;
                 }
 
@@ -221,7 +221,7 @@ export component DeviceConfigPage inherits VerticalLayout {
                     min-width: 28px;
                 }
                 ComboBox {
-                    width: 88px;
+                    width: 100px;
                     model: ["整数", "浮点", "字符串"];
                     current-index <=> root.config-form-value-type-index;
                 }
@@ -233,9 +233,19 @@ export component DeviceConfigPage inherits VerticalLayout {
                     min-width: 28px;
                 }
                 LineEdit {
-                    width: 40px;
+                    width: 100px;
                     text <=> root.config-form-register-count;
                     placeholder-text: "1";
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Button {
+                    text: "取消";
+                    clicked => { root.cancel-add-config(); }
                 }
 
                 Button {
@@ -258,13 +268,17 @@ export component DeviceConfigPage inherits VerticalLayout {
                 spacing: 8px;
 
                 for item[index] in root.builtin-config-items: BuiltinConfigRow {
-                    name: item.name;
-                    widget-kind: item.widget-kind;
-                    result-display: item.result-display;
+                                name: item.name;
+                                widget-kind: item.widget-kind;
+                                enum-labels: item.enum-labels;
+                                enum-values: item.enum-values;
+                                enum-index: item.enum-index;
+                                result-display: item.result-display;
                     write-value: item.write-value;
                     status: item.status;
                     dirty: item.dirty;
-                    write-enabled: root.device-connected;
+                    write-enabled: item.write-enabled;
+                    disabled-hint: item.disabled-hint;
                     write-value-edited(v) => { root.builtin-value-edited(index, v); }
                     write-clicked => { root.write-builtin-item(index); }
                 }

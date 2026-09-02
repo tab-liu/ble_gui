@@ -15,7 +15,9 @@ mod rtu;
 mod tlv;
 
 pub use device_config_builtin::{
-    BuiltinWidget, BUILTIN_SETTINGS, DEFAULT_SLAVE_ID as BUILTIN_CONFIG_SLAVE_ID,
+    bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, enum_index_for_value,
+    is_parallel_ha1_device, BuiltinSettingDef, BuiltinWidget, RegisterFieldPatch, BUILTIN_SETTINGS,
+    DEFAULT_SLAVE_ID as BUILTIN_CONFIG_SLAVE_ID,
 };
 
 pub use dashboard::{
