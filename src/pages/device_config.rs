@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::services::ble::modbus::{
@@ -361,14 +361,6 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
         let new_status: SharedString = r.status.clone().into();
         let new_result: SharedString = r.result.clone().into();
         if item.status != new_status || item.result != new_result {
-            info!(
-                target: "ble_gui::config_ui",
-                "配置项更新 [#{}] {} → {} ({})",
-                r.item_index,
-                item.register,
-                new_result,
-                r.status,
-            );
             item.status = new_status;
             item.result = new_result.clone();
             let display = display_for_config(&new_result, item.widget_kind);

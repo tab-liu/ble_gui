@@ -11,7 +11,7 @@
 
 use std::rc::Rc;
 
-use log::{debug, info, warn};
+use log::{debug, warn};
 use slint::language::{DragAction, DropEvent};
 use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecModel};
 
@@ -279,14 +279,6 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
         let new_status: SharedString = r.status.clone().into();
         let new_result: SharedString = r.result.clone().into();
         if item.status != new_status || item.result != new_result {
-            info!(
-                target: "ble_gui::query_ui",
-                "卡片更新 [#{}] 寄存器 {} → {} ({})",
-                r.item_index,
-                item.register,
-                new_result,
-                r.status,
-            );
             item.status = new_status;
             item.result = new_result;
             let display = item.result.to_string();
