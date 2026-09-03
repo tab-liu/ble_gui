@@ -28,6 +28,7 @@ mod poll;
 mod poll_executor;
 mod poll_policy;
 mod protocol;
+mod ota;
 mod runtime;
 mod state;
 mod target;
@@ -42,6 +43,7 @@ use std::rc::Rc;
 
 use tokio::sync::mpsc::UnboundedSender;
 
+use crate::services::firmware::{OtaJob, SharedOtaLive};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 
 use runtime::TokioRuntime;
@@ -78,6 +80,7 @@ impl BleService {
         modbus_live: SharedModbusLive,
         query_live: SharedQueryPollLive,
         query_generation: Arc<AtomicU64>,
+        ota_live: SharedOtaLive,
     ) -> Self {
         let state: SharedBleState = Arc::new(Mutex::new(BleInner::default()));
         let poll_policy = poll_policy::PollPolicy::new_shared();
@@ -105,6 +108,7 @@ impl BleService {
                 worker_query_gen,
                 worker_policy,
                 worker_cancel,
+                ota_live,
             )
             .await;
         });
@@ -124,6 +128,10 @@ impl BleService {
     /// 更新前台轮询目标（由 UI 在页面/标签切换时调用）。
     pub fn set_poll_foreground(&self, foreground: poll_policy::PollForeground) {
         let mut policy = self.inner.poll_policy.lock().expect("poll policy lock");
+        if policy.ota_busy {
+            policy.foreground = poll_policy::PollForeground::None;
+            return;
+        }
         if policy.foreground != foreground {
             log::info!(
                 target: "ble_gui::poll",
@@ -235,6 +243,14 @@ impl BleService {
             bit,
             field,
         });
+    }
+
+    pub fn start_ota(&self, job: OtaJob) {
+        if let Ok(mut p) = self.inner.poll_policy.lock() {
+            p.ota_busy = true;
+            p.foreground = poll_policy::PollForeground::None;
+        }
+        let _ = self.inner.cmd_tx.send(BleCommand::StartOta { job });
     }
 
     pub fn is_connected(&self) -> bool {

@@ -21,6 +21,7 @@ use super::poll::{
 use super::poll_executor::{poll_foreground, poll_foreground_once};
 use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
 use super::protocol::{HandshakePhase, ProtocolSession};
+use super::ota::run_ble_ota;
 use super::state::{LinkPhase, ScanLinkHint, SharedBleState};
 use super::target::{
     adv_link_hint_from_properties, is_target_manufacturer_data, is_target_properties, matches_ff00,
@@ -28,6 +29,7 @@ use super::target::{
 };
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
+use crate::services::firmware::{OtaJob, SharedOtaLive};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
@@ -43,6 +45,7 @@ pub enum BleCommand {
         bit: Option<u8>,
         field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
+    StartOta { job: OtaJob },
 }
 
 enum SessionCommand {
@@ -54,6 +57,7 @@ enum SessionCommand {
         bit: Option<u8>,
         field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
+    StartOta { job: OtaJob },
 }
 
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
@@ -233,6 +237,7 @@ pub async fn worker_main(
     query_generation: Arc<AtomicU64>,
     poll_policy: SharedPollPolicy,
     cancel_connect: Arc<AtomicBool>,
+    ota_live: SharedOtaLive,
 ) {
     let manager = match Manager::new().await {
         Ok(m) => m,
@@ -467,6 +472,7 @@ pub async fn worker_main(
                     &query_generation,
                     &poll_policy,
                     &cancel_connect,
+                    &ota_live,
                 )
                 .await
                 {
@@ -484,6 +490,14 @@ pub async fn worker_main(
                 }
             }
             BleCommand::Disconnect => {
+                if let Ok(mut g) = ota_live.lock() {
+                    if g.running {
+                        g.cancel = true;
+                    }
+                }
+                if let Ok(mut p) = poll_policy.lock() {
+                    p.ota_busy = false;
+                }
                 if let Some(active) = session.take() {
                     abort_session(&active);
                     let _ = active.peripheral.disconnect().await;
@@ -502,6 +516,9 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
             }
             BleCommand::WriteRegister { address, value } => {
+                if poll_policy.lock().map(|p| p.ota_busy).unwrap_or(false) {
+                    continue;
+                }
                 if let Some(active) = &session {
                     let _ = active.cmd_tx.send(SessionCommand::WriteRegister { address, value });
                 }
@@ -513,6 +530,9 @@ pub async fn worker_main(
                 bit,
                 field,
             } => {
+                if poll_policy.lock().map(|p| p.ota_busy).unwrap_or(false) {
+                    continue;
+                }
                 if let Some(active) = &session {
                     let _ = active.cmd_tx.send(SessionCommand::WriteHolding {
                         slave_id,
@@ -521,6 +541,17 @@ pub async fn worker_main(
                         bit,
                         field,
                     });
+                }
+            }
+            BleCommand::StartOta { job } => {
+                if let Some(active) = &session {
+                    let _ = active.cmd_tx.send(SessionCommand::StartOta { job });
+                } else if let Ok(mut g) = ota_live.lock() {
+                    g.running = false;
+                    g.phase = crate::services::firmware::PHASE_FAILED;
+                    g.result_text = "升级失败".into();
+                    g.fail_reason = "未连接设备".into();
+                    g.stage_text = "升级失败".into();
                 }
             }
         }
@@ -876,6 +907,7 @@ async fn connect_device(
     query_generation: &Arc<AtomicU64>,
     poll_policy: &SharedPollPolicy,
     cancel_connect: &AtomicBool,
+    ota_live: &SharedOtaLive,
 ) -> Result<ActiveSession, String> {
     if connect_cancelled(cancel_connect) {
         return Err("已取消连接".into());
@@ -1002,6 +1034,8 @@ async fn connect_device(
     let poll_policy_task = poll_policy.clone();
     let poll_policy_notify = poll_policy.clone();
     let write_tx_poll = write_tx.clone();
+    let ota_live_session = ota_live.clone();
+    let poll_policy_ota = poll_policy.clone();
 
     let modbus_gate: ModbusGate = Arc::new(tokio::sync::Mutex::new(()));
     let gate_for_poll = modbus_gate.clone();
@@ -1187,6 +1221,29 @@ async fn connect_device(
                                 }
                                 notify_ui_force(&ui, true);
                                 let _ = event_tx.send(());
+                            });
+                        }
+                        Some(SessionCommand::StartOta { job }) => {
+                            if let Ok(mut p) = poll_policy_ota.lock() {
+                                p.ota_busy = true;
+                                p.foreground = PollForeground::None;
+                            }
+                            let protocol = protocol_for_write.clone();
+                            let write_tx = write_tx.clone();
+                            let gate = gate_for_write.clone();
+                            let live = modbus_live_write.clone();
+                            let ota = ota_live_session.clone();
+                            let ui = ui_refresh_for_notify.clone();
+                            let policy = poll_policy_ota.clone();
+                            tokio::spawn(async move {
+                                run_ble_ota(
+                                    &protocol, &write_tx, &gate, &live, &ota, &ui, job,
+                                )
+                                .await;
+                                if let Ok(mut p) = policy.lock() {
+                                    p.ota_busy = false;
+                                }
+                                notify_ui_force(&ui, true);
                             });
                         }
                         None => {

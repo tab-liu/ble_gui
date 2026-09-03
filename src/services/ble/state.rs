@@ -49,6 +49,7 @@ pub struct BleSnapshot {
     pub action_text: String,
     pub scan_devices: Vec<BleScanEntry>,
     pub scan_list_generation: u64,
+    pub encryption_ready: bool,
 }
 
 pub struct BleInner {
@@ -176,6 +177,7 @@ impl BleInner {
             },
             scan_devices: self.scan_devices.clone(),
             scan_list_generation: self.scan_list_generation,
+            encryption_ready: self.encryption_ready,
         }
     }
 }

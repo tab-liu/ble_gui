@@ -1,4 +1,4 @@
-//! 固件升级页：选文件、识别头、开始/停止（传输逻辑后续接入 BLE worker）。
+//! 固件升级页：选文件、识别头，开始后由 BLE worker 做 XMODEM 与分发进度。
 
 use slint::ComponentHandle;
 
@@ -27,8 +27,13 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_start = ctx.clone();
     ui.on_firmware_start(move || {
         let ui = ui_weak.unwrap();
-        let connected = ctx_start.ble.snapshot().connected;
-        ctx_start.firmware.start_upgrade(connected);
+        let snap = ctx_start.ble.snapshot();
+        if let Some(job) = ctx_start
+            .firmware
+            .begin_upgrade(snap.connected, snap.encryption_ready)
+        {
+            ctx_start.ble.start_ota(job);
+        }
         refresh(&ui, &ctx_start);
     });
 
@@ -36,7 +41,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_stop = ctx.clone();
     ui.on_firmware_stop(move || {
         let ui = ui_weak.unwrap();
-        ctx_stop.firmware.stop_upgrade();
+        ctx_stop.firmware.request_stop();
         refresh(&ui, &ctx_stop);
     });
 }

@@ -56,6 +56,8 @@ pub struct PollPolicy {
     pub foreground: PollForeground,
     /// UI 当前页面（worker 可读，用于连接后默认主页轮询）。
     pub ui_page: i32,
+    /// OTA 传输中禁止普通 Modbus 轮询。
+    pub ota_busy: bool,
 }
 
 impl Default for PollPolicy {
@@ -63,6 +65,7 @@ impl Default for PollPolicy {
         Self {
             foreground: PollForeground::None,
             ui_page: UI_PAGE_DASHBOARD,
+            ota_busy: false,
         }
     }
 }
@@ -78,6 +81,9 @@ impl PollPolicy {
 /// 连接就绪且策略仍为「无」时，若 UI 在主页则立即启用主页轮询（不依赖 UI 定时器）。
 pub fn ensure_dashboard_poll_if_idle(policy: &SharedPollPolicy) {
     let mut p = policy.lock().expect("poll policy lock");
+    if p.ota_busy {
+        return;
+    }
     if p.foreground != PollForeground::None {
         return;
     }
@@ -93,6 +99,9 @@ pub fn ensure_dashboard_poll_if_idle(policy: &SharedPollPolicy) {
 /// 解析实际执行的轮询策略（`None` + 主页时回退为 Dashboard）。
 pub fn effective_foreground(policy: &SharedPollPolicy) -> PollForeground {
     let p = policy.lock().expect("poll policy lock");
+    if p.ota_busy {
+        return PollForeground::None;
+    }
     if p.foreground != PollForeground::None {
         return p.foreground.clone();
     }

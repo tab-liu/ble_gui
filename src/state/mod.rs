@@ -96,14 +96,15 @@ impl AppContext {
                 ),
             };
 
+        let ota = crate::services::firmware::new_shared_ota();
         Self {
             state: Rc::new(RefCell::new(AppState {
                 modbus_query: ModbusQueryState::new(tabs),
                 device_config: DeviceConfigState::new(config_groups, config_builtin),
             })),
-            ble: BleService::new(modbus_live, query_live, query_generation),
+            ble: BleService::new(modbus_live, query_live, query_generation, ota.clone()),
             modbus,
-            firmware: FirmwareService::new(),
+            firmware: FirmwareService::new(ota),
             theme: ThemeService::new(),
             favorites: Arc::new(Mutex::new(ble_favorites::load())),
             initial_modbus_tab,

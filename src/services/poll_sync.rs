@@ -27,7 +27,7 @@ pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
 
 /// 根据当前页面与激活列表，更新 worker 的 [`PollForeground`]。
 pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
-    let foreground = if !ctx.ble.is_connected() {
+    let foreground = if !ctx.ble.is_connected() || ctx.firmware.is_running() {
         PollForeground::None
     } else {
         match ctx.ble.ui_page() {
