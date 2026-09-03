@@ -3,10 +3,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::future::pending;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use btleplug::api::{
-    BDAddr, Central, CentralEvent, Manager as _, Peripheral as _,
+    BDAddr, Central, CentralEvent, CharPropFlags, Characteristic, Manager as _, Peripheral as _,
     ScanFilter, WriteType,
 };
 use btleplug::platform::{Adapter, Manager, Peripheral, PeripheralId};
@@ -18,8 +19,8 @@ use super::poll::{
     clear_live_on_disconnect, init_live_on_connect, write_control_register, write_holding_registers,
     ModbusGate,
 };
-use super::poll_executor::{poll_foreground, poll_foreground_once};
-use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, PollForeground, SharedPollPolicy};
+use super::poll_executor::poll_foreground_once;
+use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, notify_poll, PollForeground, SharedPollPolicy};
 use super::protocol::{HandshakePhase, ProtocolSession};
 use super::ota::run_ble_ota;
 use super::state::{LinkPhase, ScanLinkHint, SharedBleState};
@@ -29,7 +30,7 @@ use super::target::{
 };
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
-use crate::services::firmware::{OtaJob, SharedOtaLive};
+use crate::services::firmware::{OtaJob, SharedOtaLive, PHASE_SUCCESS};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
@@ -62,16 +63,246 @@ enum SessionCommand {
 
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
 
+/// IOT 升级成功后 Windows 可能仍报已连接；到期则按离线处理，不自动重连。
+type SharedExpectDrop = Arc<Mutex<Option<Instant>>>;
+
 struct ActiveSession {
     notify_task: tokio::task::JoinHandle<()>,
     poll_task: tokio::task::JoinHandle<()>,
+    write_task: tokio::task::JoinHandle<()>,
     peripheral: Peripheral,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
+    /// 必须持有，丢掉后 Windows 可能把连接间隔改回省电档。
+    _win_throughput: Option<super::win_conn::WinThroughputHold>,
 }
 
 fn abort_session(active: &ActiveSession) {
     active.poll_task.abort();
     active.notify_task.abort();
+    active.write_task.abort();
+}
+
+fn on_peer_disconnect(
+    poll_abort: &tokio::task::AbortHandle,
+    write_abort: &tokio::task::AbortHandle,
+    state: &SharedBleState,
+    poll_policy: &SharedPollPolicy,
+    modbus_live: &SharedModbusLive,
+    ota: &crate::services::firmware::SharedOtaLive,
+    ui: &super::UiRefreshSlot,
+    event_tx: &std::sync::mpsc::Sender<()>,
+    detail: &str,
+) {
+    poll_abort.abort();
+    write_abort.abort();
+    stop_polling(poll_policy);
+    if let Ok(mut p) = poll_policy.lock() {
+        p.ota_busy = false;
+    }
+    clear_live_on_disconnect(modbus_live);
+    if let Ok(mut g) = ota.lock() {
+        if g.running {
+            g.running = false;
+            g.phase = crate::services::firmware::PHASE_FAILED;
+            g.result_text = "升级失败".into();
+            g.fail_reason = "升级过程中蓝牙断开".into();
+            g.stage_text = "升级失败".into();
+            g.status_text = g.fail_reason.clone();
+        }
+    }
+    if let Ok(mut inner) = state.lock() {
+        inner.phase = LinkPhase::Idle;
+        inner.device_name.clear();
+        inner.device_address.clear();
+        inner.rssi = 0;
+        inner.encryption_ready = false;
+        inner.status_detail = detail.into();
+    }
+    notify_ui_force(ui, true);
+    let _ = event_tx.send(());
+}
+
+fn still_shows_connected(state: &SharedBleState) -> bool {
+    matches!(
+        state.lock().map(|s| s.phase.clone()).unwrap_or(LinkPhase::Idle),
+        LinkPhase::GattReady | LinkPhase::Handshake | LinkPhase::Encrypted
+    )
+}
+
+fn take_disconnect_detail(expect_drop: &SharedExpectDrop) -> &'static str {
+    if expect_drop
+        .lock()
+        .ok()
+        .and_then(|mut g| g.take())
+        .is_some()
+    {
+        "设备已断开（升级后重启）"
+    } else {
+        "设备已断开"
+    }
+}
+
+fn should_force_drop_after_ota(expect_drop: &SharedExpectDrop) -> bool {
+    expect_drop
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().copied())
+        .is_some_and(|t| Instant::now() >= t)
+}
+
+/// ATT 载荷上限（MTU 247 − 3）。OTA 用无应答写，避免每片都等 ATT 回包。
+const GATT_ATT_PAYLOAD: usize = 244;
+
+async fn write_ff02_air(
+    peripheral: &Peripheral,
+    write_char: &Characteristic,
+    ota_fast: bool,
+    can_without_response: bool,
+    fallback_with_response: &AtomicBool,
+    data: &[u8],
+) {
+    let write_type = if ota_fast
+        && can_without_response
+        && !fallback_with_response.load(Ordering::Relaxed)
+    {
+        WriteType::WithoutResponse
+    } else {
+        WriteType::WithResponse
+    };
+    if ota_fast {
+        static LOGGED: AtomicBool = AtomicBool::new(false);
+        if !LOGGED.swap(true, Ordering::Relaxed) {
+            info!(
+                target: "ble_gui::ota",
+                "OTA GATT 写入: {} 模式, {}B 分 {} 片 (FF02 without_response={can_without_response})",
+                if write_type == WriteType::WithoutResponse {
+                    "无应答"
+                } else {
+                    "有应答"
+                },
+                data.len(),
+                data.len().div_ceil(GATT_ATT_PAYLOAD),
+            );
+        }
+    }
+    if write_type == WriteType::WithoutResponse {
+        write_ota_without_response(
+            peripheral,
+            write_char,
+            fallback_with_response,
+            data,
+        )
+        .await;
+        return;
+    }
+    write_chunks_sequential(
+        peripheral,
+        write_char,
+        write_type,
+        fallback_with_response,
+        data,
+    )
+    .await;
+}
+
+/// 同一 XMODEM 包的 244B 分片同时提交，让控制器在一个连接事件里发出多片。
+/// 若系统只允许 1 个未完成写，则从未成功的那一片起改为串行，已发出的片不重发。
+async fn write_ota_without_response(
+    peripheral: &Peripheral,
+    write_char: &Characteristic,
+    fallback_with_response: &AtomicBool,
+    data: &[u8],
+) {
+    let t0 = std::time::Instant::now();
+    let chunks: Vec<Vec<u8>> = data
+        .chunks(GATT_ATT_PAYLOAD)
+        .map(|c| c.to_vec())
+        .collect();
+    if chunks.is_empty() {
+        return;
+    }
+    let futs: Vec<_> = chunks
+        .iter()
+        .map(|c| peripheral.write(write_char, c, WriteType::WithoutResponse))
+        .collect();
+    let results = futures::future::join_all(futs).await;
+    let first_fail = results.iter().position(|r| r.is_err());
+    match first_fail {
+        None => {
+            static TIMED: AtomicBool = AtomicBool::new(false);
+            if !TIMED.swap(true, Ordering::Relaxed) {
+                info!(
+                    target: "ble_gui::ota",
+                    "OTA 无应答并行提交 {} 片 / {}B, {}ms",
+                    chunks.len(),
+                    data.len(),
+                    t0.elapsed().as_millis(),
+                );
+            }
+        }
+        Some(0) => {
+            warn!(
+                target: "ble_gui::ota",
+                "OTA 并行无应答写不被支持，改为串行: {}",
+                results[0].as_ref().err().map(|e| e.to_string()).unwrap_or_default(),
+            );
+            write_chunks_sequential(
+                peripheral,
+                write_char,
+                WriteType::WithoutResponse,
+                fallback_with_response,
+                data,
+            )
+            .await;
+        }
+        Some(i) => {
+            warn!(
+                target: "ble_gui::ota",
+                "OTA 并行写在第 {}/{} 片失败，其余串行补发",
+                i + 1,
+                chunks.len(),
+            );
+            let rest: Vec<u8> = chunks[i..].iter().flatten().copied().collect();
+            write_chunks_sequential(
+                peripheral,
+                write_char,
+                WriteType::WithoutResponse,
+                fallback_with_response,
+                &rest,
+            )
+            .await;
+        }
+    }
+}
+
+async fn write_chunks_sequential(
+    peripheral: &Peripheral,
+    write_char: &Characteristic,
+    mut write_type: WriteType,
+    fallback_with_response: &AtomicBool,
+    data: &[u8],
+) {
+    for chunk in data.chunks(GATT_ATT_PAYLOAD) {
+        match peripheral.write(write_char, chunk, write_type).await {
+            Ok(()) => {}
+            Err(err) if write_type == WriteType::WithoutResponse => {
+                warn!(
+                    target: "ble_gui::worker",
+                    "OTA 无应答写入失败，后续改回有应答（会明显变慢）: {err}",
+                );
+                fallback_with_response.store(true, Ordering::Relaxed);
+                write_type = WriteType::WithResponse;
+                if let Err(err) = peripheral.write(write_char, chunk, write_type).await {
+                    warn!(target: "ble_gui::worker", "GATT 写入失败: {err}");
+                    return;
+                }
+            }
+            Err(err) => {
+                warn!(target: "ble_gui::worker", "GATT 写入失败: {err}");
+                return;
+            }
+        }
+    }
 }
 
 fn stop_polling(poll_policy: &SharedPollPolicy) {
@@ -110,6 +341,7 @@ const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(12);
 const CONNECT_SETTLE_MS: u64 = 400;
 const CONNECT_RETRY_ATTEMPTS: u32 = 4;
 const CONNECT_RETRY_BASE_MS: u64 = 400;
+const LINK_WATCH_MS: u64 = 500;
 
 const MSG_DEVICE_NOT_NEARBY: &str =
     "附近未发现该设备（可能已关机、距离过远，或已被其它设备连接后停止广播）";
@@ -273,8 +505,37 @@ pub async fn worker_main(
     let mut scan_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut session: Option<ActiveSession> = None;
     let known: KnownMap = Arc::new(Mutex::new(HashMap::new()));
+    let expect_drop: SharedExpectDrop = Arc::new(Mutex::new(None));
 
-    while let Some(cmd) = cmd_rx.recv().await {
+    loop {
+        if session
+            .as_ref()
+            .is_some_and(|s| s.notify_task.is_finished())
+        {
+            info!(target: "ble_gui::worker", "会话已结束，刷新连接状态");
+            if let Some(active) = session.take() {
+                abort_session(&active);
+                let _ = active.peripheral.disconnect().await;
+            }
+            stop_polling(&poll_policy);
+            clear_live_on_disconnect(&modbus_live);
+            if still_shows_connected(&state) {
+                set_phase(&state, LinkPhase::Idle, "设备已断开");
+                notify_ui_force(&ui_refresh, true);
+            }
+            continue;
+        }
+
+        let maybe_cmd = tokio::select! {
+            cmd = cmd_rx.recv() => cmd,
+            _ = tokio::time::sleep(Duration::from_millis(250)), if session.is_some() => {
+                continue;
+            }
+        };
+        let Some(cmd) = maybe_cmd else {
+            break;
+        };
+
         match cmd {
             BleCommand::StartScan => {
                 if state.lock().expect("ble state lock").phase == LinkPhase::Scanning
@@ -347,6 +608,9 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
             }
             BleCommand::Connect { address } => {
+                if let Ok(mut g) = expect_drop.lock() {
+                    *g = None;
+                }
                 cancel_connect.store(false, Ordering::Release);
                 set_phase(
                     &state,
@@ -462,6 +726,7 @@ pub async fn worker_main(
                 }
 
                 match connect_device(
+                    adapter.clone(),
                     peripheral,
                     &state,
                     &event_tx,
@@ -473,6 +738,7 @@ pub async fn worker_main(
                     &poll_policy,
                     &cancel_connect,
                     &ota_live,
+                    expect_drop.clone(),
                 )
                 .await
                 {
@@ -490,6 +756,9 @@ pub async fn worker_main(
                 }
             }
             BleCommand::Disconnect => {
+                if let Ok(mut g) = expect_drop.lock() {
+                    *g = None;
+                }
                 if let Ok(mut g) = ota_live.lock() {
                     if g.running {
                         g.cancel = true;
@@ -897,6 +1166,7 @@ async fn resolve_device_name(
 }
 
 async fn connect_device(
+    adapter: Adapter,
     peripheral: Peripheral,
     state: &SharedBleState,
     event_tx: &std::sync::mpsc::Sender<()>,
@@ -908,6 +1178,7 @@ async fn connect_device(
     poll_policy: &SharedPollPolicy,
     cancel_connect: &AtomicBool,
     ota_live: &SharedOtaLive,
+    expect_drop: SharedExpectDrop,
 ) -> Result<ActiveSession, String> {
     if connect_cancelled(cancel_connect) {
         return Err("已取消连接".into());
@@ -1043,19 +1314,26 @@ async fn connect_device(
     let event_for_poll = event_tx.clone();
     let protocol_for_poll_task = protocol.clone();
     let poll_task = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(900)).await;
-        let mut poll_timer = tokio::time::interval(Duration::from_millis(POLL_INTERVAL_MS));
-        poll_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let wake = poll_policy_task
+            .lock()
+            .map(|p| p.wake.clone())
+            .unwrap_or_else(|_| std::sync::Arc::new(tokio::sync::Notify::new()));
         loop {
-            poll_timer.tick().await;
-            let ready = protocol_for_poll_task
-                .lock()
-                .expect("protocol lock")
-                .modbus_ready();
-            if !ready {
-                continue;
+            loop {
+                let ready = protocol_for_poll_task
+                    .lock()
+                    .expect("protocol lock")
+                    .modbus_ready();
+                if ready {
+                    break;
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(50)) => {}
+                    _ = wake.notified() => {}
+                }
             }
-            let _ok = poll_foreground(
+
+            let _ok = poll_foreground_once(
                 &poll_policy_task,
                 &protocol_for_poll_task,
                 &write_tx_poll,
@@ -1067,25 +1345,143 @@ async fn connect_device(
             .await;
             notify_ui_force(&ui_refresh_for_poll, true);
             let _ = event_for_poll.send(());
+
+            loop {
+                let ota_busy = poll_policy_task
+                    .lock()
+                    .map(|p| p.ota_busy)
+                    .unwrap_or(false);
+                tokio::select! {
+                    _ = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)), if !ota_busy => {}
+                    _ = wake.notified() => {}
+                }
+                let ready = protocol_for_poll_task
+                    .lock()
+                    .expect("protocol lock")
+                    .modbus_ready();
+                if !ready {
+                    break;
+                }
+                if poll_policy_task
+                    .lock()
+                    .map(|p| p.ota_busy)
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                let _ok = poll_foreground_once(
+                    &poll_policy_task,
+                    &protocol_for_poll_task,
+                    &write_tx_poll,
+                    &modbus_live_poll,
+                    &query_live_poll,
+                    &query_gen_poll,
+                    &gate_for_poll,
+                )
+                .await;
+                notify_ui_force(&ui_refresh_for_poll, true);
+                let _ = event_for_poll.send(());
+            }
         }
     });
 
     let poll_abort = poll_task.abort_handle();
     let peripheral_for_session = peripheral.clone();
+    let win_throughput = super::win_conn::request_throughput(address_text).await;
+    let can_write_without_response = write_char
+        .properties
+        .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE);
+    info!(
+        target: "ble_gui::worker",
+        "FF02 写特征 properties={:?} without_response={can_write_without_response}",
+        write_char.properties,
+    );
+    let ota_wr_fallback = Arc::new(AtomicBool::new(false));
+    let poll_policy_write = poll_policy.clone();
+    let write_task = tokio::spawn(async move {
+        while let Some(data) = write_rx.recv().await {
+            let ota_fast = poll_policy_write
+                .lock()
+                .map(|p| p.ota_busy)
+                .unwrap_or(false);
+            write_ff02_air(
+                &peripheral_for_write,
+                &write_char_for_task,
+                ota_fast,
+                can_write_without_response,
+                &ota_wr_fallback,
+                &data,
+            )
+            .await;
+        }
+    });
+    let write_abort_notify = write_task.abort_handle();
+    let ota_live_notify = ota_live.clone();
+    let expect_drop_notify = expect_drop.clone();
+    let peripheral_watch = peripheral.clone();
+    let adapter_watch = adapter.clone();
+    let our_id = peripheral.id();
     let notify_task = tokio::spawn(async move {
         let mut notifications = match peripheral.notifications().await {
             Ok(stream) => stream,
             Err(_) => {
                 poll_abort.abort();
+                write_abort_notify.abort();
                 return;
             }
         };
+        let mut adapter_events = adapter_watch.events().await.ok();
+        let mut link_tick = tokio::time::interval(Duration::from_millis(LINK_WATCH_MS));
+        link_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let plain_timer = tokio::time::sleep(Duration::from_secs(6));
         tokio::pin!(plain_timer);
 
         loop {
             tokio::select! {
+                _ = link_tick.tick() => {
+                    if !peripheral_watch.is_connected().await.unwrap_or(false)
+                        || should_force_drop_after_ota(&expect_drop_notify)
+                    {
+                        info!(target: "ble_gui::worker", "链路轮询：设备已离线");
+                        on_peer_disconnect(
+                            &poll_abort,
+                            &write_abort_notify,
+                            &state_for_notify,
+                            &poll_policy_notify,
+                            &modbus_live_write,
+                            &ota_live_notify,
+                            &ui_refresh_for_notify,
+                            &event_for_notify,
+                            take_disconnect_detail(&expect_drop_notify),
+                        );
+                        break;
+                    }
+                }
+                maybe_central = async {
+                    match adapter_events.as_mut() {
+                        Some(stream) => stream.next().await,
+                        None => pending().await,
+                    }
+                } => {
+                    if let Some(CentralEvent::DeviceDisconnected(id)) = maybe_central {
+                        if id == our_id {
+                            info!(target: "ble_gui::worker", "收到 DeviceDisconnected");
+                            on_peer_disconnect(
+                                &poll_abort,
+                                &write_abort_notify,
+                                &state_for_notify,
+                                &poll_policy_notify,
+                                &modbus_live_write,
+                                &ota_live_notify,
+                                &ui_refresh_for_notify,
+                                &event_for_notify,
+                                take_disconnect_detail(&expect_drop_notify),
+                            );
+                            break;
+                        }
+                    }
+                }
                 _ = &mut plain_timer => {
                     let session = protocol_for_notify.lock().expect("protocol lock");
                     if session.phase == HandshakePhase::WaitingAuth && !session.auth_started() {
@@ -1097,21 +1493,7 @@ async fn connect_device(
                             inner.status_detail = "设备未触发加密握手，按明文 Modbus 模式".into();
                         }
                         let _ = event_for_plain.send(());
-                        let p = protocol_for_notify.clone();
-                        let w = write_tx.clone();
-                        let l = modbus_live_write.clone();
-                        let q = query_live_write.clone();
-                        let poll_gen = query_gen_write.clone();
-                        let pol = poll_policy_notify.clone();
-                        let g = gate_for_write.clone();
-                        let ui = ui_refresh_for_notify.clone();
-                        let ev = event_for_notify.clone();
-                        tokio::spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(300)).await;
-                            poll_foreground_once(&pol, &p, &w, &l, &q, &poll_gen, &g).await;
-                            notify_ui_force(&ui, true);
-                            let _ = ev.send(());
-                        });
+                        notify_poll(&poll_policy_notify);
                     }
                 }
                 maybe_cmd = session_cmd_rx.recv() => {
@@ -1228,6 +1610,7 @@ async fn connect_device(
                                 p.ota_busy = true;
                                 p.foreground = PollForeground::None;
                             }
+                            notify_poll(&poll_policy_ota);
                             let protocol = protocol_for_write.clone();
                             let write_tx = write_tx.clone();
                             let gate = gate_for_write.clone();
@@ -1235,6 +1618,7 @@ async fn connect_device(
                             let ota = ota_live_session.clone();
                             let ui = ui_refresh_for_notify.clone();
                             let policy = poll_policy_ota.clone();
+                            let expect_drop = expect_drop_notify.clone();
                             tokio::spawn(async move {
                                 run_ble_ota(
                                     &protocol, &write_tx, &gate, &live, &ota, &ui, job,
@@ -1243,30 +1627,25 @@ async fn connect_device(
                                 if let Ok(mut p) = policy.lock() {
                                     p.ota_busy = false;
                                 }
+                                notify_poll(&policy);
+                                let iot_ok = ota.lock().ok().is_some_and(|g| {
+                                    g.phase == PHASE_SUCCESS && g.ble_only
+                                });
+                                if iot_ok {
+                                    info!(
+                                        target: "ble_gui::ota",
+                                        "IOT 升级成功，等待设备重启后刷新连接状态",
+                                    );
+                                    if let Ok(mut slot) = expect_drop.lock() {
+                                        *slot = Some(Instant::now() + Duration::from_secs(2));
+                                    }
+                                }
                                 notify_ui_force(&ui, true);
                             });
                         }
                         None => {
                             poll_abort.abort();
-                            break;
-                        }
-                    }
-                }
-                maybe_write = write_rx.recv() => {
-                    match maybe_write {
-                        Some(data) => {
-                            match peripheral_for_write
-                                .write(&write_char_for_task, &data, WriteType::WithResponse)
-                                .await
-                            {
-                                Ok(()) => {}
-                                Err(err) => {
-                                    warn!(target: "ble_gui::worker", "GATT 写入失败: {err}");
-                                }
-                            }
-                        }
-                        None => {
-                            poll_abort.abort();
+                            write_abort_notify.abort();
                             break;
                         }
                     }
@@ -1311,22 +1690,7 @@ async fn connect_device(
                                     inner.status_detail = "加密链路已完成".into();
                                 }
                                 let _ = event_for_notify.send(());
-                                // 仅首次加密就绪时拉一次仪表板（周期任务也会轮询）。
-                                let p = protocol_for_notify.clone();
-                                let w = write_tx.clone();
-                                let l = modbus_live_write.clone();
-                                let q = query_live_write.clone();
-                                let poll_gen = query_gen_write.clone();
-                                let pol = poll_policy_notify.clone();
-                                let g = gate_for_write.clone();
-                                let ui = ui_refresh_for_notify.clone();
-                                let ev = event_for_notify.clone();
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(Duration::from_millis(900)).await;
-                                    poll_foreground_once(&pol, &p, &w, &l, &q, &poll_gen, &g).await;
-                                    notify_ui_force(&ui, true);
-                                    let _ = ev.send(());
-                                });
+                                notify_poll(&poll_policy_notify);
                             } else if response.2 == HandshakePhase::AuthDone {
                                 if let Ok(mut inner) = state_for_notify.lock() {
                                     inner.phase = LinkPhase::Handshake;
@@ -1335,10 +1699,25 @@ async fn connect_device(
                                 let _ = event_for_notify.send(());
                             } else if response.3 {
                                 let _ = event_for_notify.send(());
+                                notify_poll(&poll_policy_notify);
                             }
                         }
                         None => {
-                            poll_abort.abort();
+                            info!(
+                                target: "ble_gui::worker",
+                                "GATT 通知流结束，判定设备已断开",
+                            );
+                            on_peer_disconnect(
+                                &poll_abort,
+                                &write_abort_notify,
+                                &state_for_notify,
+                                &poll_policy_notify,
+                                &modbus_live_write,
+                                &ota_live_notify,
+                                &ui_refresh_for_notify,
+                                &event_for_notify,
+                                take_disconnect_detail(&expect_drop_notify),
+                            );
                             break;
                         }
                     }
@@ -1350,8 +1729,10 @@ async fn connect_device(
     Ok(ActiveSession {
         notify_task,
         poll_task,
+        write_task,
         peripheral: peripheral_for_session,
         cmd_tx: session_cmd_tx,
+        _win_throughput: win_throughput,
     })
 }
 

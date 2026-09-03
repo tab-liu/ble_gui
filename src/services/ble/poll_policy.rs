@@ -9,6 +9,7 @@
 use std::sync::{Arc, Mutex};
 
 use log::info;
+use tokio::sync::Notify;
 
 use crate::services::ble::modbus::QueryValueType;
 
@@ -51,13 +52,15 @@ pub struct QueryPollItemSpec {
     pub bit: Option<u8>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PollPolicy {
     pub foreground: PollForeground,
     /// UI 当前页面（worker 可读，用于连接后默认主页轮询）。
     pub ui_page: i32,
     /// OTA 传输中禁止普通 Modbus 轮询。
     pub ota_busy: bool,
+    /// 换页 / OTA 结束时唤醒轮询任务，避免先空等一个周期。
+    pub wake: Arc<Notify>,
 }
 
 impl Default for PollPolicy {
@@ -66,6 +69,7 @@ impl Default for PollPolicy {
             foreground: PollForeground::None,
             ui_page: UI_PAGE_DASHBOARD,
             ota_busy: false,
+            wake: Arc::new(Notify::new()),
         }
     }
 }
@@ -75,6 +79,13 @@ pub type SharedPollPolicy = Arc<Mutex<PollPolicy>>;
 impl PollPolicy {
     pub fn new_shared() -> SharedPollPolicy {
         Arc::new(Mutex::new(Self::default()))
+    }
+}
+
+/// 打断周期等待，立刻进入下一轮（或从握手等待中醒来）。
+pub fn notify_poll(policy: &SharedPollPolicy) {
+    if let Ok(p) = policy.lock() {
+        p.wake.notify_one();
     }
 }
 

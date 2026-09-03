@@ -99,6 +99,18 @@ impl ProtocolSession {
         self.rx.clear_pending_responses();
     }
 
+    pub fn set_ota_rx_diag(&mut self, enabled: bool) {
+        self.rx.set_ota_diag(enabled);
+    }
+
+    pub fn set_ota_rx_verbose(&mut self, enabled: bool) {
+        self.rx.set_ota_verbose(enabled);
+    }
+
+    pub fn rx_pending_debug(&self) -> (usize, String) {
+        self.rx.pending_debug()
+    }
+
     /// 处理 GATT 通知；返回需写入 FF02 的握手响应（若有）。
     pub fn on_notification(&mut self, data: &[u8]) -> io::Result<Option<Vec<u8>>> {
         if data.is_empty() {

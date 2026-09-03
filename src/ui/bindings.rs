@@ -337,6 +337,31 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     if page == PAGE_DEVICE_CONFIG {
         crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
+    let (versions, iot_ver, dev_type, sn, software) = if connected {
+        ctx.modbus
+            .shared_live()
+            .lock()
+            .map(|l| {
+                (
+                    l.device_versions_text.clone(),
+                    l.iot_software_version,
+                    l.device_type.clone(),
+                    l.device_sn.clone(),
+                    l.device_software.clone(),
+                )
+            })
+            .unwrap_or_default()
+    } else {
+        (
+            String::new(),
+            None,
+            String::new(),
+            String::new(),
+            Vec::new(),
+        )
+    };
+    ctx.firmware
+        .apply_device_info(versions, iot_ver, dev_type, sn, software);
     refresh_firmware(ui, &ctx.firmware.snapshot(connected));
 }
 
@@ -394,16 +419,22 @@ pub fn refresh_dashboard(ui: &MainWindow, dash: &DashboardData, output_busy: boo
 
 pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
     ui.set_firmware_current_version(snap.device_version.clone().into());
+    ui.set_firmware_device_type(snap.device_type.clone().into());
+    ui.set_firmware_device_sn(snap.device_sn.clone().into());
     ui.set_firmware_status_text(snap.status_text.clone().into());
     ui.set_firmware_file_name(snap.file_name.clone().into());
     ui.set_firmware_file_size(snap.file_size_text.clone().into());
     ui.set_firmware_md5(snap.md5.clone().into());
     ui.set_firmware_type_text(snap.type_text.clone().into());
     ui.set_firmware_image_version(snap.image_version.clone().into());
+    if ui.get_firmware_ota_version().as_str() != snap.ota_version_text {
+        ui.set_firmware_ota_version(snap.ota_version_text.clone().into());
+    }
     ui.set_firmware_layout_text(snap.layout_text.clone().into());
     ui.set_firmware_parse_source(snap.parse_source.clone().into());
     ui.set_firmware_dev_model(snap.dev_model.clone().into());
     ui.set_firmware_has_file(snap.has_file);
+    ui.set_firmware_part_mismatch(snap.part_mismatch);
     ui.set_firmware_phase(snap.phase);
     ui.set_firmware_progress(snap.progress);
     ui.set_firmware_stage_text(snap.stage_text.clone().into());

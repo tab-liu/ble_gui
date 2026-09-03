@@ -35,6 +35,7 @@ mod target;
 mod transport;
 mod uuids;
 mod worker;
+mod win_conn;
 mod win_name;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -140,6 +141,7 @@ impl BleService {
                 poll_policy::describe_poll_foreground(&foreground),
             );
             policy.foreground = foreground;
+            policy.wake.notify_one();
         }
     }
 
@@ -249,6 +251,7 @@ impl BleService {
         if let Ok(mut p) = self.inner.poll_policy.lock() {
             p.ota_busy = true;
             p.foreground = poll_policy::PollForeground::None;
+            p.wake.notify_one();
         }
         let _ = self.inner.cmd_tx.send(BleCommand::StartOta { job });
     }

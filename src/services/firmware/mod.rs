@@ -3,7 +3,7 @@
 //! - `> 1MB`：视为 IOT 整包，不解析 POWEROAK 头，类型固定为 [`header`] 中的 IOT=0
 //! - 否则先按 8 位头、再按 TI 16 位 Word 头识别 `POWEROAK`
 //!
-//! 总进度一条 0–100%：蓝牙 XMODEM 占 0–50，设备内部 CAN 占 50–100。
+//! 进度：IOT 自升级只有蓝牙阶段（0–100）；子设备固件蓝牙占 0–50，IOT→CAN 占 50–100。
 //! 当前阶段写在 `stage_text`。
 
 use std::cell::RefCell;
@@ -15,8 +15,9 @@ use md5::{Digest, Md5};
 
 pub mod header;
 
-use header::{classify, FirmwareInfo, FIRMWARE_MAX_BYTES};
+use header::{classify, part_number_wire, FirmwareInfo, FIRMWARE_MAX_BYTES};
 
+pub const IOT_DEFAULT_OTA_VERSION: u32 = 100600199;
 pub const PHASE_IDLE: i32 = 0;
 pub const PHASE_READY: i32 = 1;
 pub const PHASE_RUNNING: i32 = 2;
@@ -31,6 +32,8 @@ pub struct OtaLive {
     pub phase: i32,
     pub pc_percent: i32,
     pub device_percent: i32,
+    /// IOT 自身升级只有蓝牙阶段，总进度不按 50/50 折算。
+    pub ble_only: bool,
     pub stage_text: String,
     pub result_text: String,
     pub fail_reason: String,
@@ -45,6 +48,7 @@ impl Default for OtaLive {
             phase: PHASE_IDLE,
             pc_percent: 0,
             device_percent: 0,
+            ble_only: false,
             stage_text: String::new(),
             result_text: String::new(),
             fail_reason: String::new(),
@@ -69,6 +73,8 @@ pub struct OtaJob {
 #[derive(Clone, Debug)]
 pub struct FirmwareSnapshot {
     pub device_version: String,
+    pub device_type: String,
+    pub device_sn: String,
     pub status_text: String,
     pub file_name: String,
     pub file_size_text: String,
@@ -78,6 +84,7 @@ pub struct FirmwareSnapshot {
     pub layout_text: String,
     pub parse_source: String,
     pub dev_model: String,
+    pub ota_version_text: String,
     pub has_file: bool,
     pub phase: i32,
     pub progress: i32,
@@ -86,6 +93,7 @@ pub struct FirmwareSnapshot {
     pub fail_reason: String,
     pub can_start: bool,
     pub can_stop: bool,
+    pub part_mismatch: bool,
 }
 
 struct SelectedFile {
@@ -100,8 +108,15 @@ struct SelectedFile {
 
 struct FirmwareInner {
     device_version: String,
+    device_type: String,
+    device_sn: String,
+    device_iot_version: Option<u32>,
+    device_software: Vec<(u16, u32)>,
     selected: Option<SelectedFile>,
     parse_error: Option<String>,
+    ota_version_text: String,
+    /// 自动填入的料号可被后续设备信息覆盖；用户手改后不再覆盖。
+    ota_version_auto: bool,
     phase: i32,
     stage_text: String,
     result_text: String,
@@ -120,8 +135,14 @@ impl FirmwareService {
         Self {
             inner: Rc::new(RefCell::new(FirmwareInner {
                 device_version: "—".into(),
+                device_type: "—".into(),
+                device_sn: "—".into(),
+                device_iot_version: None,
+                device_software: Vec::new(),
                 selected: None,
                 parse_error: None,
+                ota_version_text: String::new(),
+                ota_version_auto: true,
                 phase: PHASE_IDLE,
                 stage_text: "等待选择固件".into(),
                 result_text: "—".into(),
@@ -148,6 +169,7 @@ impl FirmwareService {
     pub fn snapshot(&self, device_connected: bool) -> FirmwareSnapshot {
         let inner = self.inner.borrow();
         let ota = self.ota.lock().ok();
+        let version_ok = parse_ota_version_text(&inner.ota_version_text).is_ok();
         let parse_ok = inner.selected.is_some();
         let running = ota.as_ref().is_some_and(|g| g.running);
         let ota_phase = ota.as_ref().map(|g| g.phase).unwrap_or(PHASE_IDLE);
@@ -160,6 +182,7 @@ impl FirmwareService {
         };
         let pc = ota.as_ref().map(|g| g.pc_percent).unwrap_or(0);
         let device = ota.as_ref().map(|g| g.device_percent).unwrap_or(0);
+        let ble_only = ota.as_ref().map(|g| g.ble_only).unwrap_or(false);
         let (file_name, file_size_text, md5, type_text, image_version, layout_text, parse_source, dev_model) =
             if let Some(sel) = &inner.selected {
                 (
@@ -193,12 +216,17 @@ impl FirmwareService {
                 )
             };
 
+        let mismatch = inner.selected.as_ref().and_then(|sel| {
+            part_mismatch_message(sel.info.type_code, sel.info.version, &inner.device_software)
+        });
         let status_text = if let Some(err) = &inner.parse_error {
             err.clone()
         } else if running || ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
             ota.as_ref()
                 .map(|g| g.status_text.clone())
                 .unwrap_or_default()
+        } else if let Some(msg) = &mismatch {
+            msg.clone()
         } else {
             inner.status_text.clone()
         };
@@ -226,6 +254,8 @@ impl FirmwareService {
 
         FirmwareSnapshot {
             device_version: inner.device_version.clone(),
+            device_type: inner.device_type.clone(),
+            device_sn: inner.device_sn.clone(),
             status_text,
             file_name,
             file_size_text,
@@ -235,14 +265,20 @@ impl FirmwareService {
             layout_text,
             parse_source,
             dev_model,
+            ota_version_text: inner.ota_version_text.clone(),
             has_file: parse_ok,
             phase,
-            progress: overall_progress(pc, device),
+            progress: overall_progress(pc, device, ble_only),
             stage_text,
             result_text,
             fail_reason,
-            can_start: parse_ok && device_connected && !running,
+            can_start: parse_ok && version_ok && device_connected && !running,
             can_stop: running,
+            part_mismatch: mismatch.is_some()
+                && inner.parse_error.is_none()
+                && !running
+                && ota_phase != PHASE_SUCCESS
+                && ota_phase != PHASE_FAILED,
         }
     }
 
@@ -270,6 +306,8 @@ impl FirmwareService {
         let mut inner = self.inner.borrow_mut();
         inner.selected = None;
         inner.parse_error = None;
+        inner.ota_version_text.clear();
+        inner.ota_version_auto = true;
         inner.phase = PHASE_IDLE;
         inner.stage_text = "等待选择固件".into();
         inner.result_text = "—".into();
@@ -305,14 +343,22 @@ impl FirmwareService {
                 inner.status_text = inner.fail_reason.clone();
                 return None;
             }
+            if parse_ota_version_text(&inner.ota_version_text).is_err() {
+                inner.phase = PHASE_FAILED;
+                inner.result_text = "升级失败".into();
+                inner.fail_reason = "请填写料号版本号（IOT 整包读不到，需手填设备当前软件版本）".into();
+                inner.status_text = inner.fail_reason.clone();
+                return None;
+            }
         }
         let job = {
             let inner = self.inner.borrow();
             let sel = inner.selected.as_ref()?;
+            let version = parse_ota_version_text(&inner.ota_version_text).ok()?;
             OtaJob {
                 firmware: sel.bytes.clone(),
                 firmware_type: sel.info.type_code,
-                version: sel.info.version,
+                version,
             }
         };
         if let Ok(mut g) = self.ota.lock() {
@@ -322,6 +368,7 @@ impl FirmwareService {
                 phase: PHASE_RUNNING,
                 pc_percent: 0,
                 device_percent: 0,
+                ble_only: job.firmware_type == 0,
                 stage_text: "准备升级".into(),
                 result_text: String::new(),
                 fail_reason: String::new(),
@@ -341,23 +388,77 @@ impl FirmwareService {
         }
     }
 
+    pub fn set_ota_version_text(&self, text: String) {
+        if self.is_running() {
+            return;
+        }
+        let mut inner = self.inner.borrow_mut();
+        inner.ota_version_auto = false;
+        inner.ota_version_text = text;
+    }
+
+    /// 连接后 1100 / 11000 段读到的机型、SN、软件版本。
+    /// IOT 文件在用户未手改料号时，用设备当前版本自动填 xx99。
+    pub fn apply_device_info(
+        &self,
+        summary: String,
+        iot_version: Option<u32>,
+        device_type: String,
+        device_sn: String,
+        device_software: Vec<(u16, u32)>,
+    ) {
+        let running = self.is_running();
+        let mut inner = self.inner.borrow_mut();
+        inner.device_version = if summary.is_empty() {
+            "—".into()
+        } else {
+            summary
+        };
+        inner.device_type = if device_type.is_empty() {
+            "—".into()
+        } else {
+            device_type
+        };
+        inner.device_sn = if device_sn.is_empty() {
+            "—".into()
+        } else {
+            device_sn
+        };
+        inner.device_iot_version = iot_version;
+        inner.device_software = device_software;
+        if running {
+            return;
+        }
+        let iot_file = inner.selected.as_ref().is_some_and(|s| {
+            s.info.layout == header::HeaderLayout::IotRaw || s.info.version == 0
+        });
+        if iot_file && inner.ota_version_auto {
+            if let Some(v) = iot_version {
+                inner.ota_version_text = part_number_wire(v).to_string();
+            }
+        }
+    }
+
     fn load_path(&self, path: &Path) {
         self.reset_ota_outcome();
         match inspect_file(path) {
             Ok(selected) => {
                 let mut inner = self.inner.borrow_mut();
-                let status = format!("已识别 {}", selected.info.type_name());
+                inner.ota_version_auto = true;
+                inner.ota_version_text = auto_ota_version_text(&selected.info, inner.device_iot_version);
                 inner.selected = Some(selected);
                 inner.parse_error = None;
                 inner.phase = PHASE_READY;
                 inner.stage_text = "已验证，等待升级".into();
                 inner.result_text = "待升级".into();
                 inner.fail_reason.clear();
-                inner.status_text = status;
+                inner.status_text.clear();
             }
             Err(err) => {
                 let mut inner = self.inner.borrow_mut();
                 inner.selected = None;
+                inner.ota_version_text.clear();
+                inner.ota_version_auto = true;
                 inner.parse_error = Some(err.clone());
                 inner.phase = PHASE_FAILED;
                 inner.stage_text = "识别失败".into();
@@ -396,6 +497,66 @@ fn inspect_file(path: &Path) -> Result<SelectedFile, String> {
     })
 }
 
+fn auto_ota_version_text(info: &FirmwareInfo, device_iot: Option<u32>) -> String {
+    if info.version != 0 {
+        part_number_wire(info.version).to_string()
+    } else if let Some(v) = device_iot {
+        part_number_wire(v).to_string()
+    } else {
+        IOT_DEFAULT_OTA_VERSION.to_string()
+    }
+}
+
+/// ARM / DSP / BMS：设备上报了同类（含 BOOT 对 BOOT）版本时，按 version/100 核对产品线。
+fn part_mismatch_message(
+    file_type: u8,
+    file_version: u32,
+    device_software: &[(u16, u32)],
+) -> Option<String> {
+    if !matches!(file_type, 1 | 2 | 3) {
+        return None;
+    }
+    let file_boot = header::software_is_boot(u16::from(file_type), file_version);
+    let peers: Vec<u32> = device_software
+        .iter()
+        .filter(|(type_code, version)| {
+            header::software_base_type(*type_code) == file_type
+                && header::software_is_boot(*type_code, *version) == file_boot
+        })
+        .map(|(_, version)| *version)
+        .collect();
+    if peers.is_empty() {
+        return None;
+    }
+    let file_family = file_version / 100;
+    if peers.iter().any(|version| *version / 100 == file_family) {
+        return None;
+    }
+    let name = header::format_software_name(u16::from(file_type), file_version);
+    let device_list = peers
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("、");
+    Some(format!(
+        "料号不匹配：固件 {name} {file_version} 与设备当前 {device_list} 不是同一产品线，请确认后再升级"
+    ))
+}
+
+fn parse_ota_version_text(text: &str) -> Result<u32, String> {
+    let trimmed = text.trim().replace([' ', '_', ',', '-'], "");
+    if trimmed.is_empty() {
+        return Err("版本号为空".into());
+    }
+    let value = trimmed
+        .parse::<u32>()
+        .map_err(|_| "版本号须为数字，例如 100620109".to_string())?;
+    if value == 0 {
+        return Err("版本号不能为 0".into());
+    }
+    Ok(value)
+}
+
 fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = 1024 * 1024;
@@ -408,7 +569,63 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-/// 蓝牙 XMODEM 与设备 CAN 各占一半。
-fn overall_progress(pc_percent: i32, device_percent: i32) -> i32 {
-    (pc_percent.clamp(0, 100) + device_percent.clamp(0, 100)) / 2
+/// IOT 自升级进度等于蓝牙进度；子设备则蓝牙与 CAN 各占一半。
+fn overall_progress(pc_percent: i32, device_percent: i32, ble_only: bool) -> i32 {
+    if ble_only {
+        pc_percent.clamp(0, 100)
+    } else {
+        (pc_percent.clamp(0, 100) + device_percent.clamp(0, 100)) / 2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_version_rejects_empty_and_zero() {
+        assert!(parse_ota_version_text("").is_err());
+        assert!(parse_ota_version_text("0").is_err());
+        assert_eq!(parse_ota_version_text("100620109").unwrap(), 100620109);
+        assert_eq!(parse_ota_version_text(" 100_620_109 ").unwrap(), 100620109);
+        assert_eq!(overall_progress(40, 0, true), 40);
+        assert_eq!(overall_progress(40, 0, false), 20);
+        assert_eq!(overall_progress(100, 0, true), 100);
+        assert_eq!(overall_progress(100, 100, false), 100);
+    }
+
+    #[test]
+    fn auto_fill_uses_last_two_digits_99() {
+        let mut info = FirmwareInfo {
+            layout: header::HeaderLayout::Packed8,
+            type_code: 1,
+            version: 100650103,
+            image_size: 1,
+            crc32: 0,
+            dev_model: String::new(),
+            esp_version: String::new(),
+            parse_source: String::new(),
+        };
+        assert_eq!(auto_ota_version_text(&info, None), "100650199");
+        info.version = 0;
+        info.layout = header::HeaderLayout::IotRaw;
+        assert_eq!(auto_ota_version_text(&info, Some(100600108)), "100600199");
+        assert_eq!(auto_ota_version_text(&info, None), IOT_DEFAULT_OTA_VERSION.to_string());
+    }
+
+    #[test]
+    fn arm_dsp_bms_mismatch_only_when_device_has_same_kind() {
+        assert!(part_mismatch_message(1, 100650103, &[]).is_none());
+        assert!(part_mismatch_message(1, 100650103, &[(1, 100650108)]).is_none());
+        let msg = part_mismatch_message(1, 100650103, &[(1, 200650108)]).unwrap();
+        assert!(msg.contains("料号不匹配"));
+        assert!(msg.contains("200650108"));
+        // BOOT 只和 BOOT 比，设备只有 APP 时不提示
+        assert!(part_mismatch_message(1, 100650100, &[(1, 100650103)]).is_none());
+        let boot_msg = part_mismatch_message(1, 100650100, &[(1, 200650100)]).unwrap();
+        assert!(boot_msg.contains("ARM-BOOT"));
+        assert!(part_mismatch_message(3, 8026103, &[(3, 8026108)]).is_none());
+        assert!(part_mismatch_message(3, 8026103, &[(3, 9026108)]).is_some());
+        assert!(part_mismatch_message(0, 100600108, &[(0, 200600108)]).is_none());
+    }
 }

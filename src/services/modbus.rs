@@ -50,6 +50,14 @@ pub struct ModbusLive {
     pub modbus_online: bool,
     pub read_mode: ModbusReadMode,
     pub capabilities_probed: bool,
+    /// 连接后读一次 1100 段得到的版本摘要，周期轮询不再刷新。
+    pub device_info_loaded: bool,
+    pub device_type: String,
+    pub device_sn: String,
+    pub device_versions_text: String,
+    pub iot_software_version: Option<u32>,
+    /// 1100 段软件类型与版本（含 IOT 合并后的 11000 料号）。
+    pub device_software: Vec<(u16, u32)>,
 }
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
@@ -143,6 +151,12 @@ impl ModbusService {
             live.modbus_online = false;
             live.read_mode = ModbusReadMode::Unknown;
             live.capabilities_probed = false;
+            live.device_info_loaded = false;
+            live.device_type.clear();
+            live.device_sn.clear();
+            live.device_versions_text.clear();
+            live.iot_software_version = None;
+            live.device_software.clear();
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();

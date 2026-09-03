@@ -13,7 +13,7 @@ use super::modbus::{
     build_read_holding, chunk_tl_batches, format_query_value, tlv_batch_start_index,
     tlv_item_batch_index, tlv_register_values, TlReadSpec,
 };
-use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, probe_modbus_capabilities, ModbusGate};
+use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, probe_modbus_capabilities, read_device_info_once, ModbusGate};
 use super::poll_policy::{
     describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground,
     QueryPollItemSpec, SharedPollPolicy,
@@ -368,7 +368,8 @@ async fn poll_register_items_tlv(
     any_ok || !items.is_empty()
 }
 
-/// Modbus 链路就绪后：探测 TLV 能力（仅一次）并立即拉一次数据。
+/// Modbus 链路就绪后：先探测 TLV（寄存器 3），再读 1100 版本，再拉当前页数据。
+/// 三次请求收到回复后立刻发下一笔，中间不加周期间隔。
 pub async fn poll_foreground_once(
     policy: &SharedPollPolicy,
     protocol: &Arc<Mutex<ProtocolSession>>,
@@ -382,8 +383,15 @@ pub async fn poll_foreground_once(
     if !ready {
         return;
     }
-    if !probe_modbus_capabilities(protocol, write_tx, modbus_live).await {
+    if policy.lock().map(|p| p.ota_busy).unwrap_or(false) {
         return;
+    }
+    {
+        let _guard = gate.lock().await;
+        if !probe_modbus_capabilities(protocol, write_tx, modbus_live).await {
+            return;
+        }
+        read_device_info_once(protocol, write_tx, modbus_live).await;
     }
     ensure_dashboard_poll_if_idle(policy);
     poll_foreground(

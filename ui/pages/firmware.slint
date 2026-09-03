@@ -1,4 +1,4 @@
-import { VerticalBox } from "std-widgets.slint";
+import { VerticalBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 
 component FwActionButton inherits Rectangle {
@@ -72,13 +72,18 @@ export component FirmwarePage inherits VerticalBox {
     in property <bool> device-connected;
     in property <string> device-name;
     in property <string> firmware-status-text;
+    in property <string> firmware-current-version;
+    in property <string> firmware-device-type;
+    in property <string> firmware-device-sn;
     in property <string> firmware-file-name;
     in property <string> firmware-file-size;
     in property <string> firmware-md5;
     in property <string> firmware-type-text;
     in property <string> firmware-image-version;
+    in-out property <string> firmware-ota-version;
     in property <string> firmware-dev-model;
     in property <bool> firmware-has-file;
+    in property <bool> firmware-part-mismatch;
     in property <int> firmware-phase;
     in property <int> firmware-progress;
     in property <string> firmware-stage-text;
@@ -91,6 +96,7 @@ export component FirmwarePage inherits VerticalBox {
     callback clear-file();
     callback start-upgrade();
     callback stop-upgrade();
+    callback ota-version-edited(string);
 
     property <color> result-color: root.firmware-phase == 3 ? Theme.success
         : (root.firmware-phase == 4 ? Theme.error
@@ -122,15 +128,49 @@ export component FirmwarePage inherits VerticalBox {
     }
 
     // 剩余高度按 5:8 分（约黄金比 0.38 / 0.62）：上排准备区，下排进度主操作。
-    VerticalLayout {
+        VerticalLayout {
         vertical-stretch: 1;
         spacing: 12px;
+
+        FwCard {
+            width: 100%;
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 12px;
+                padding-bottom: 12px;
+                spacing: 6px;
+
+                Text {
+                    text: "当前设备";
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                    font-weight: 600;
+                    height: 18px;
+                }
+                HorizontalLayout {
+                    spacing: 16px;
+                    FwInfoRow {
+                        label: "机型";
+                        value: root.device-connected ? root.firmware-device-type : "未连接";
+                    }
+                    FwInfoRow {
+                        label: "SN";
+                        value: root.device-connected ? root.firmware-device-sn : "—";
+                    }
+                }
+                FwInfoRow {
+                    label: "软件版本";
+                    value: root.device-connected ? root.firmware-current-version : "—";
+                }
+            }
+        }
 
         HorizontalLayout {
             width: 100%;
             spacing: 12px;
             vertical-stretch: 5;
-            min-height: 176px;
+            min-height: 220px;
 
             FwCard {
                 min-width: 0px;
@@ -196,10 +236,30 @@ export component FirmwarePage inherits VerticalBox {
                         Rectangle { horizontal-stretch: 1; }
                     }
 
-                    Text {
+                    HorizontalLayout {
+                        spacing: 8px;
+                        min-height: 32px;
+
+                        Text {
+                            text: "料号版本";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            width: 72px;
+                            vertical-alignment: center;
+                        }
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                            text <=> root.firmware-ota-version;
+                            enabled: root.firmware-has-file && root.firmware-phase != 2;
+                            edited => { root.ota-version-edited(self.text); }
+                        }
+                    }
+
+                    if root.firmware-part-mismatch || root.firmware-phase == 4: Text {
                         min-height: 18px;
                         text: root.firmware-status-text;
-                        color: root.firmware-phase == 4 ? Theme.error : Theme.text-secondary;
+                        color: root.firmware-phase == 4 ? Theme.error : Theme.warning;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
@@ -224,7 +284,7 @@ export component FirmwarePage inherits VerticalBox {
                     }
 
                     FwInfoRow { label: "类型"; value: root.firmware-type-text; }
-                    FwInfoRow { label: "版本"; value: root.firmware-image-version; }
+                    FwInfoRow { label: "文件版本"; value: root.firmware-image-version; }
                     FwInfoRow { label: "项目代号"; value: root.firmware-dev-model; }
                     FwInfoRow { label: "MD5"; value: root.firmware-md5; }
                 }

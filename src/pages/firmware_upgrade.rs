@@ -24,6 +24,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     });
 
     let ui_weak = ui.as_weak();
+    let ctx_ver = ctx.clone();
+    ui.on_firmware_ota_version_edited(move |text| {
+        let ui = ui_weak.unwrap();
+        ctx_ver.firmware.set_ota_version_text(text.to_string());
+        refresh(&ui, &ctx_ver);
+    });
+
+    let ui_weak = ui.as_weak();
     let ctx_start = ctx.clone();
     ui.on_firmware_start(move || {
         let ui = ui_weak.unwrap();

@@ -69,7 +69,7 @@ pub struct FirmwareInfo {
 
 impl FirmwareInfo {
     pub fn type_name(&self) -> String {
-        type_name(self.type_code)
+        format_software_name(self.type_code as u16, self.version)
     }
 
     pub fn version_text(&self) -> String {
@@ -89,6 +89,43 @@ pub fn type_name(code: u8) -> String {
         .get(code as usize)
         .map(|s| (*s).to_string())
         .unwrap_or_else(|| format!("未知({code})"))
+}
+
+/// 料号大于 4 位且末两位为 00：ARM / DSP 的 BOOT 版本。
+pub fn is_boot_part_number(version: u32) -> bool {
+    version >= 10_000 && version % 100 == 0
+}
+
+/// type≥1000 为协议里的 BOOT 类型；ARM=1 / DSP=2 再按末两位 00 判断。
+pub fn software_is_boot(type_code: u16, version: u32) -> bool {
+    if type_code >= 1000 {
+        return true;
+    }
+    let base = software_base_type(type_code);
+    (base == 1 || base == 2) && is_boot_part_number(version)
+}
+
+pub fn software_base_type(type_code: u16) -> u8 {
+    let raw = if type_code >= 1000 {
+        type_code - 1000
+    } else {
+        type_code
+    };
+    raw.min(255) as u8
+}
+
+pub fn format_software_name(type_code: u16, version: u32) -> String {
+    let name = type_name(software_base_type(type_code));
+    if software_is_boot(type_code, version) {
+        format!("{name}-BOOT")
+    } else {
+        name
+    }
+}
+
+/// 下发料号：末两位改为 99，设备按 version/100 匹配。
+pub fn part_number_wire(version: u32) -> u32 {
+    version / 100 * 100 + 99
 }
 
 /// 按文件大小 + 开头字节分类。`data` 至少应覆盖头区（IOT 建议 ≥256 字节）。
@@ -429,6 +466,19 @@ mod tests {
     fn packed8_and_ti16_magic_do_not_collide() {
         assert!(parse_ti16(&packed8_sample()).is_none());
         assert!(parse_packed8(&ti16_sample()).is_none());
+    }
+
+    #[test]
+    fn boot_part_number_uses_last_two_zeros() {
+        assert!(!is_boot_part_number(1100));
+        assert!(!is_boot_part_number(100650103));
+        assert!(is_boot_part_number(100650100));
+        assert_eq!(format_software_name(1, 100650100), "ARM-BOOT");
+        assert_eq!(format_software_name(1, 100650103), "ARM");
+        assert_eq!(format_software_name(2, 802600), "DSP-BOOT");
+        assert_eq!(format_software_name(1001, 100650103), "ARM-BOOT");
+        assert_eq!(part_number_wire(100650103), 100650199);
+        assert_eq!(part_number_wire(100650100), 100650199);
     }
 
     #[test]

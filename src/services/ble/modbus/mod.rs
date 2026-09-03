@@ -6,10 +6,12 @@
 //! | [`query`] | 地址记法、整数/浮点/字符串格式化与写入编码 |
 //! | [`tlv`] | 组合读（写 21000）批量 TL |
 //! | [`dashboard`] | 主页 100～149 / 2011～2012 映射 |
+//! | [`device_info`] | 1100～1130 机型 / SN / 软件版本 |
 //! | [`device_config_builtin`] | 设备配置「常用」静态寄存器表 |
 
 mod dashboard;
 mod device_config_builtin;
+mod device_info;
 mod query;
 mod rtu;
 mod tlv;
@@ -23,6 +25,10 @@ pub use device_config_builtin::{
 pub use dashboard::{
     merge_control_states, parse_dashboard_registers, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS,
     POLL_INTERVAL_MS, REG_AC_OUTPUT, REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DC_OUTPUT,
+};
+pub use device_info::{
+    format_regs_hex, parse_device_info, parse_iot_software_ver, parse_iot_type,
+    REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START, REG_IOT_INFO_COUNT, REG_IOT_INFO_START,
 };
 pub use query::{
     encode_write_value, format_query_value, parse_register_address, parse_register_count,

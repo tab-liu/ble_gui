@@ -1,12 +1,12 @@
-//! BLE OTA：OTA Start（寄存器 700）+ XMODEM-1K + 读 720～768 分发进度。
+//! BLE OTA：OTA Start（寄存器 700）+ XMODEM-1K。
 //!
-//! 对齐 `ref/tool/BLUETTI_BLE_Bridge.cs`：
+//! - IOT（type=0）：只有蓝牙阶段。EOT ACK 后设备 `iot_ota_end()` 并重启，不再读 720 分发。
+//! - 子设备：EOT 后再读 720～768，等 IOT 经 CAN 刷完。
 //! - Start 后不等 0x10 应答，等 `'C'`(0x43)
 //! - 数据块 1029 字节（STX + 序号 + 反码 + 1024 + CRC16-XMODEM）
-//! - EOT(0x04) 后读 IOT→MCU 进度；总进度前 50% / 后 50%
 
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use log::{info, warn};
 use tokio::sync::mpsc::UnboundedSender;
@@ -20,6 +20,7 @@ use super::modbus::{
 };
 use super::poll::{modbus_read, ModbusGate};
 use super::protocol::ProtocolSession;
+use super::transport::{classify_ota_payload, hex_preview};
 use crate::services::modbus::SharedModbusLive;
 
 const XMODEM_BLOCK: usize = 1024;
@@ -38,20 +39,55 @@ const GATT_CHUNK: usize = 244;
 const START_ATTEMPTS: u32 = 5;
 const PACKET_ATTEMPTS: u32 = 5;
 const CTRL_WAIT: Duration = Duration::from_secs(5);
+const CTRL_WAIT_IOT_START: Duration = Duration::from_secs(15);
 const DIST_POLL: Duration = Duration::from_secs(1);
 const DIST_STALL: Duration = Duration::from_secs(90);
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum CtrlResult {
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum CtrlResult {
     Match,
     Nak,
     Can,
     Timeout,
 }
 
-/// 十进制版本末两位改成 99，与旧上位机一致。
+/// 十进制版本末两位改成 99，与旧上位机一致。设备用 `version/100` 匹配机内软件。
 pub fn ota_wire_version(version: u32) -> u32 {
     version / 100 * 100 + 99
+}
+
+/// OTA Start 寄存器 705：高字节 = GROUP_*（1 INV / 2 PACK / 3 IOT / 4 LCD / 7 CHARGE）。
+pub fn ota_group_word(firmware_type: u8) -> u16 {
+    match firmware_type {
+        0 => 0x0300,      // DEVICE_IOT → GROUP_IOT
+        3..=10 => 0x0200, // BMS / PACK* → GROUP_PACK
+        11 | 12 => 0x0400, // HMI → GROUP_LCD
+        16 => 0x0700,     // DEVICE_DC_DC → GROUP_CHARGE
+        _ => 0x0100,      // ARM / DSP / HUB → GROUP_INV
+    }
+}
+
+/// type=0 且 Group=IOT 时设备走 `iot_ota_end()` + `esp_restart()`，没有 CAN 分发。
+fn is_iot_self_upgrade(firmware_type: u8) -> bool {
+    firmware_type == 0
+}
+
+/// 设备经 BLE 回的 C/ACK/NAK/CAN 是 1 字节业务包，不能在 Modbus 载荷里扫 0x43。
+pub(crate) fn match_ota_control(chunk: &[u8], expected: u8) -> Option<CtrlResult> {
+    if chunk.is_empty() || chunk.len() > 4 {
+        return None;
+    }
+    let b = chunk[0];
+    if b == expected {
+        return Some(CtrlResult::Match);
+    }
+    if (expected == XMODEM_ACK || expected == XMODEM_C) && b == XMODEM_NAK {
+        return Some(CtrlResult::Nak);
+    }
+    if b == XMODEM_CAN {
+        return Some(CtrlResult::Can);
+    }
+    None
 }
 
 pub fn crc16_xmodem(data: &[u8]) -> u16 {
@@ -95,6 +131,7 @@ pub fn build_ota_start_request(slave_id: u8, firmware_type: u8, version: u32, fi
         return Err("XMODEM 1K 包数量超出协议范围".into());
     }
     let ota_version = ota_wire_version(version);
+    let group = ota_group_word(firmware_type);
     Ok(build_write_multiple(
         slave_id,
         OTA_START_REG,
@@ -104,7 +141,7 @@ pub fn build_ota_start_request(slave_id: u8, firmware_type: u8, version: u32, fi
             (ota_version & 0xFFFF) as u16,
             (ota_version >> 16) as u16,
             packet_count as u16,
-            0x0100,
+            group,
         ],
     ))
 }
@@ -171,11 +208,45 @@ fn succeed(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, stage: String) {
     }
 }
 
+struct OtaRxGuard {
+    protocol: Arc<Mutex<ProtocolSession>>,
+}
+
+impl OtaRxGuard {
+    fn enable(protocol: &Arc<Mutex<ProtocolSession>>) -> Self {
+        if let Ok(mut session) = protocol.lock() {
+            session.set_ota_rx_diag(true);
+        }
+        Self {
+            protocol: Arc::clone(protocol),
+        }
+    }
+}
+
+impl Drop for OtaRxGuard {
+    fn drop(&mut self) {
+        if let Ok(mut session) = self.protocol.lock() {
+            session.set_ota_rx_diag(false);
+        }
+    }
+}
+
+fn expected_name(expected: u8) -> &'static str {
+    match expected {
+        XMODEM_C => "C",
+        XMODEM_ACK => "ACK",
+        XMODEM_NAK => "NAK",
+        XMODEM_CAN => "CAN",
+        _ => "CTRL",
+    }
+}
+
 async fn send_air(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &UnboundedSender<Vec<u8>>,
     ota: &SharedOtaLive,
     plain: &[u8],
+    stage: &str,
 ) -> Result<(), String> {
     if cancelled(ota) {
         return Err("用户终止".into());
@@ -186,15 +257,30 @@ async fn send_air(
             .wrap_modbus_request(plain)
             .map_err(|e| e.to_string())?
     };
-    for chunk in air.chunks(GATT_CHUNK) {
-        if cancelled(ota) {
-            return Err("用户终止".into());
-        }
-        write_tx
-            .send(chunk.to_vec())
-            .map_err(|_| "写通道已关闭".to_string())?;
+    let chunks = air.len().div_ceil(GATT_CHUNK);
+    let verbose = stage.starts_with("START") || stage == "EOT";
+    if verbose {
+        warn!(
+            target: "ble_gui::ota",
+            "TX-OTA[{stage}] plain={}B [{}] {} | air={}B chunks={chunks}",
+            plain.len(),
+            classify_ota_payload(plain),
+            hex_preview(plain, 48),
+            air.len(),
+        );
     }
+    write_tx
+        .send(air)
+        .map_err(|_| "写通道已关闭".to_string())?;
     Ok(())
+}
+
+struct WaitStats {
+    chunks: u32,
+    bytes: usize,
+    saw_fc10_start_ack: bool,
+    saw_c: bool,
+    last_class: &'static str,
 }
 
 async fn wait_control(
@@ -202,11 +288,18 @@ async fn wait_control(
     ota: &SharedOtaLive,
     expected: u8,
     timeout: Duration,
-) -> CtrlResult {
+) -> (CtrlResult, WaitStats) {
     let deadline = tokio::time::Instant::now() + timeout;
+    let mut stats = WaitStats {
+        chunks: 0,
+        bytes: 0,
+        saw_fc10_start_ack: false,
+        saw_c: false,
+        last_class: "none",
+    };
     loop {
         if cancelled(ota) {
-            return CtrlResult::Timeout;
+            return (CtrlResult::Timeout, stats);
         }
         loop {
             let chunk = protocol
@@ -216,22 +309,50 @@ async fn wait_control(
             let Some(chunk) = chunk else {
                 break;
             };
-            for &b in &chunk {
-                if b == expected {
-                    return CtrlResult::Match;
-                }
-                if (expected == XMODEM_ACK || expected == XMODEM_C) && b == XMODEM_NAK {
-                    return CtrlResult::Nak;
-                }
-                if b == XMODEM_CAN {
-                    return CtrlResult::Can;
-                }
+            stats.chunks += 1;
+            stats.bytes += chunk.len();
+            let class = classify_ota_payload(&chunk);
+            stats.last_class = class;
+            if class == "FC10-OTA-Start-ACK" {
+                stats.saw_fc10_start_ack = true;
+            }
+            if class == "XMODEM-C" {
+                stats.saw_c = true;
+            }
+            if expected == XMODEM_C || class != "XMODEM-ACK" {
+                warn!(
+                    target: "ble_gui::ota",
+                    "wait {} 扫到 {}B [{}] {}",
+                    expected_name(expected),
+                    chunk.len(),
+                    class,
+                    hex_preview(&chunk, 48),
+                );
+            }
+            if let Some(result) = match_ota_control(&chunk, expected) {
+                return (result, stats);
             }
         }
         if tokio::time::Instant::now() >= deadline {
-            return CtrlResult::Timeout;
+            let (pending, preview) = protocol
+                .lock()
+                .expect("protocol lock")
+                .rx_pending_debug();
+            warn!(
+                target: "ble_gui::ota",
+                "wait {} 超时：已解码 {} 包 / {}B last={} fc10_ack={} saw_C={} leftover={}B {}",
+                expected_name(expected),
+                stats.chunks,
+                stats.bytes,
+                stats.last_class,
+                stats.saw_fc10_start_ack,
+                stats.saw_c,
+                pending,
+                preview,
+            );
+            return (CtrlResult::Timeout, stats);
         }
-        tokio::time::sleep(Duration::from_millis(25)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 }
 
@@ -332,6 +453,9 @@ pub async fn run_ble_ota(
         fail(ota, ui, "加密通道尚未完成，不能启动升级");
         return;
     }
+    if let Ok(mut g) = ota.lock() {
+        g.ble_only = is_iot_self_upgrade(job.firmware_type);
+    }
 
     let slave_id = modbus_live
         .lock()
@@ -350,13 +474,41 @@ pub async fn run_ble_ota(
 
     info!(
         target: "ble_gui::ota",
-        "开始升级 type={} version={} size={} packets={}",
+        "开始升级 type={} version={} size={} packets={} iot_self={}",
         job.firmware_type,
         job.version,
         file_len,
         packet_total,
+        is_iot_self_upgrade(job.firmware_type),
     );
 
+    let wire_version = ota_wire_version(job.version);
+    let packet_count = (file_len + 1023) / 1024;
+    let group = ota_group_word(job.firmware_type);
+    warn!(
+        target: "ble_gui::ota",
+        "OTA Start 参数 slave={} type={} version={} wire_ver={} size={} packets={} group=0x{group:04X}",
+        slave_id,
+        job.firmware_type,
+        job.version,
+        wire_version,
+        file_len,
+        packet_count,
+    );
+    warn!(
+        target: "ble_gui::ota",
+        "OTA Start 明文 {}B {}",
+        start_req.len(),
+        hex_preview(&start_req, 64),
+    );
+    if job.firmware_type == 0 && job.version / 100 == 0 {
+        warn!(
+            target: "ble_gui::ota",
+            "IOT 下发 version/100=0，设备 vXmodemCmdCheck 会因版本前缀不匹配直接 return 0，不会发 C",
+        );
+    }
+
+    let _rx_guard = OtaRxGuard::enable(protocol);
     let _guard = gate.lock().await;
     {
         let mut session = protocol.lock().expect("protocol lock");
@@ -377,11 +529,32 @@ pub async fn run_ble_ota(
             fail(ota, ui, "用户终止");
             return;
         }
-        if send_air(protocol, write_tx, ota, &start_req).await.is_err() {
+        {
+            let mut session = protocol.lock().expect("protocol lock");
+            session.clear_modbus_responses();
+        }
+        let wait = if job.firmware_type == 0 {
+            CTRL_WAIT_IOT_START
+        } else {
+            CTRL_WAIT
+        };
+        warn!(
+            target: "ble_gui::ota",
+            "OTA Start 第 {attempt}/{START_ATTEMPTS} 次发送，等待 C(0x43) 最长 {}s",
+            wait.as_secs(),
+        );
+        if send_air(protocol, write_tx, ota, &start_req, &format!("START-{attempt}")).await.is_err() {
+            warn!(target: "ble_gui::ota", "OTA Start 第 {attempt} 次空口发送失败");
             continue;
         }
-        match wait_control(protocol, ota, XMODEM_C, CTRL_WAIT).await {
+        let (result, stats) = wait_control(protocol, ota, XMODEM_C, wait).await;
+        match result {
             CtrlResult::Match => {
+                warn!(
+                    target: "ble_gui::ota",
+                    "OTA Start 成功：收到 C(0x43)，fc10_ack={}",
+                    stats.saw_fc10_start_ack,
+                );
                 got_c = true;
                 break;
             }
@@ -393,7 +566,17 @@ pub async fn run_ble_ota(
                 return;
             }
             CtrlResult::Timeout => {
-                warn!(target: "ble_gui::ota", "OTA Start 等待 C 超时 ({attempt}/{START_ATTEMPTS})");
+                let hint = if stats.saw_fc10_start_ack {
+                    "已收到 700 的 FC10 ACK，但设备未回 C：vXmodemCmdCheck 可能因 Group/类型/版本前缀不匹配直接 return 0"
+                } else if stats.chunks == 0 {
+                    "等待期间没有任何已解码业务包：要么设备没回，要么加密重组把包丢掉了"
+                } else {
+                    "有解密数据但其中没有 C(0x43)"
+                };
+                warn!(
+                    target: "ble_gui::ota",
+                    "OTA Start 等待 C 超时 ({attempt}/{START_ATTEMPTS})：{hint}",
+                );
             }
         }
     }
@@ -410,23 +593,32 @@ pub async fn run_ble_ota(
         return;
     }
 
+    if let Ok(mut session) = protocol.lock() {
+        session.set_ota_rx_verbose(false);
+    }
+
+    let xfer_start = Instant::now();
+    let mut last_ui = Instant::now() - Duration::from_secs(1);
     for packet_index in 0..packet_total {
         if cancelled(ota) {
             fail(ota, ui, "用户终止");
             return;
         }
         let pc = ((packet_index as i64) * 100 / packet_total.max(1) as i64) as i32;
-        publish(
-            ota,
-            ui,
-            format!(
-                "蓝牙传输 XMODEM-1K  {}/{}",
-                packet_index + 1,
-                packet_total
-            ),
-            Some(pc),
-            Some(0),
-        );
+        let done_kb = packet_index + 1;
+        let total_kb = packet_total.max(1);
+        let stage = format!("蓝牙传输  {done_kb} / {total_kb} KB");
+        if packet_index == 0
+            || packet_index + 1 == packet_total
+            || last_ui.elapsed() >= Duration::from_millis(200)
+        {
+            publish(ota, ui, stage, Some(pc), Some(0));
+            last_ui = Instant::now();
+        } else if let Ok(mut g) = ota.lock() {
+            g.stage_text = stage;
+            g.pc_percent = pc;
+            g.device_percent = 0;
+        }
         let packet = build_xmodem_1k_packet(&job.firmware, packet_index);
         let mut acked = false;
         for _attempt in 1..=PACKET_ATTEMPTS {
@@ -438,10 +630,20 @@ pub async fn run_ble_ota(
                 let mut session = protocol.lock().expect("protocol lock");
                 session.clear_modbus_responses();
             }
-            if send_air(protocol, write_tx, ota, &packet).await.is_err() {
+            if send_air(
+                protocol,
+                write_tx,
+                ota,
+                &packet,
+                &format!("XMODEM-{}", packet_index + 1),
+            )
+            .await
+            .is_err()
+            {
                 continue;
             }
-            match wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await {
+            let (result, _) = wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await;
+            match result {
                 CtrlResult::Match => {
                     acked = true;
                     break;
@@ -472,6 +674,16 @@ pub async fn run_ble_ota(
         if let Ok(mut g) = ota.lock() {
             g.pc_percent = pc;
         }
+        let done_packets = packet_index + 1;
+        if done_packets == 1 || done_packets % 32 == 0 || done_packets == packet_total {
+            let secs = xfer_start.elapsed().as_secs_f32().max(0.001);
+            let kb = (done_packets * XMODEM_BLOCK) as f32 / 1024.0;
+            info!(
+                target: "ble_gui::ota",
+                "XMODEM {done_packets}/{packet_total} 已传 {kb:.0}KB / {secs:.1}s ({:.1} KB/s)",
+                kb / secs,
+            );
+        }
     }
 
     publish(ota, ui, "蓝牙传输：发送结束符", Some(100), Some(0));
@@ -485,10 +697,14 @@ pub async fn run_ble_ota(
             let mut session = protocol.lock().expect("protocol lock");
             session.clear_modbus_responses();
         }
-        if send_air(protocol, write_tx, ota, &[XMODEM_EOT]).await.is_err() {
+        if send_air(protocol, write_tx, ota, &[XMODEM_EOT], "EOT")
+            .await
+            .is_err()
+        {
             continue;
         }
-        match wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await {
+        let (result, _) = wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await;
+        match result {
             CtrlResult::Match => {
                 eot_ok = true;
                 break;
@@ -506,6 +722,16 @@ pub async fn run_ble_ota(
     }
 
     drop(_guard);
+
+    if is_iot_self_upgrade(job.firmware_type) {
+        succeed(
+            ota,
+            ui,
+            "升级成功：蓝牙传输完成，设备即将重启".to_string(),
+        );
+        info!(target: "ble_gui::ota", "IOT 自升级完成，等待设备重启断链");
+        return;
+    }
 
     publish(
         ota,
@@ -652,6 +878,31 @@ mod tests {
     }
 
     #[test]
+    fn iot_start_uses_group_iot() {
+        let frame = build_ota_start_request(0, 0, 100620109, 1_870_580).unwrap();
+        assert_eq!(&frame[9..11], &[0x00, 0x00]);
+        assert_eq!(&frame[17..19], &[0x03, 0x00]);
+        assert_eq!(ota_group_word(0), 0x0300);
+        assert_eq!(ota_group_word(2), 0x0100);
+    }
+
+    #[test]
+    fn control_match_ignores_c_inside_modbus() {
+        let leaked = [
+            0x00, 0x10, 0x52, 0x08, 0x00, 0x1A, 0x34, 0x00, 0x03, 0x5F, 0xE3, 0x43, 0x71,
+        ];
+        assert_eq!(match_ota_control(&leaked, XMODEM_C), None);
+        assert_eq!(
+            match_ota_control(&[XMODEM_C], XMODEM_C),
+            Some(CtrlResult::Match)
+        );
+        assert_eq!(
+            match_ota_control(&[XMODEM_NAK], XMODEM_C),
+            Some(CtrlResult::Nak)
+        );
+    }
+
+    #[test]
     fn xmodem_packet_pads_and_sequences() {
         let data = vec![0xAAu8; 10];
         let pkt = build_xmodem_1k_packet(&data, 0);
@@ -677,5 +928,13 @@ mod tests {
         assert_eq!(found.progress, 42);
         assert_eq!(found.depth, 1);
         assert_eq!(found.error_code, 0);
+    }
+
+    #[test]
+    fn iot_self_upgrade_has_no_can_stage() {
+        assert!(is_iot_self_upgrade(0));
+        assert!(!is_iot_self_upgrade(1));
+        assert!(!is_iot_self_upgrade(2));
+        assert!(!is_iot_self_upgrade(11));
     }
 }

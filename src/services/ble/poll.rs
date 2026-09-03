@@ -10,10 +10,12 @@ use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
     build_read_holding, build_write_multiple, build_write_single, iot_status_supports_tlv,
-    is_fc10_write_ack, merge_control_states, parse_dashboard_registers, parse_read_holding,
-    parse_tlv_response_packet, parse_tlv_read_units, describe_tlv_units, tlv_register_values,
-    TlReadSpec, TlvPacketCollector, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT,
-    REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_IOT_STATUS,
+    is_fc10_write_ack, merge_control_states, parse_dashboard_registers, parse_device_info,
+    parse_iot_software_ver, parse_iot_type, parse_read_holding, parse_tlv_response_packet,
+    parse_tlv_read_units, describe_tlv_units, format_regs_hex, tlv_register_values, TlReadSpec,
+    TlvPacketCollector, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT,
+    REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START,
+    REG_IOT_INFO_COUNT, REG_IOT_INFO_START, REG_IOT_STATUS,
 };
 
 const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
@@ -102,9 +104,9 @@ pub async fn probe_modbus_capabilities(
         Err(err) => {
             warn!(
                 target: "ble_gui::poll",
-                "探测 Modbus TLV 能力失败（寄存器 3）: {err}，回退常规读",
+                "探测 Modbus TLV 能力失败（寄存器 3）: {err}，本轮不读后续寄存器，下一轮再试",
             );
-            ModbusReadMode::Standard
+            return false;
         }
     };
 
@@ -114,6 +116,105 @@ pub async fn probe_modbus_capabilities(
         inner.capabilities_probed = true;
     }
     true
+}
+
+/// 连接会话内读一次 1100～1130。失败不阻塞主页数据，下一轮再试。
+pub async fn read_device_info_once(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    live: &SharedModbusLive,
+) {
+    {
+        let inner = live.lock().expect("modbus live lock");
+        if inner.device_info_loaded {
+            return;
+        }
+    }
+
+    let slave_id = live.lock().expect("modbus live lock").slave_id;
+    info!(
+        target: "ble_gui::poll",
+        "读取设备信息 1100～1130 slave_id={slave_id}",
+    );
+
+    match modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, REG_DEVICE_INFO_START, REG_DEVICE_INFO_COUNT),
+        slave_id,
+        REG_DEVICE_INFO_COUNT,
+    )
+    .await
+    {
+        Ok(regs) => match parse_device_info(&regs) {
+            Ok(mut info) => {
+                info!(
+                    target: "ble_gui::poll",
+                    "1100～1130 原始 {} 个: {}",
+                    regs.len(),
+                    format_regs_hex(&regs),
+                );
+                match modbus_read(
+                    protocol,
+                    write_tx,
+                    build_read_holding(slave_id, REG_IOT_INFO_START, REG_IOT_INFO_COUNT),
+                    slave_id,
+                    REG_IOT_INFO_COUNT,
+                )
+                .await
+                {
+                    Ok(iot_regs) => {
+                        info!(
+                            target: "ble_gui::poll",
+                            "11000～11015 原始 {} 个: {}",
+                            iot_regs.len(),
+                            format_regs_hex(&iot_regs),
+                        );
+                        if let Some(ver) = parse_iot_software_ver(&iot_regs) {
+                            info!(
+                                target: "ble_gui::poll",
+                                "IOT software_ver(11014～11015)={ver} (u32 低字在前)",
+                            );
+                            info.merge_iot_version(ver);
+                        }
+                        if info.device_type.is_empty() {
+                            info.device_type = parse_iot_type(&iot_regs);
+                        }
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {}
+                    Err(err) => {
+                        warn!(target: "ble_gui::poll", "读寄存器 11000～11015 失败: {err}");
+                    }
+                }
+                let summary = info.summary_text();
+                info!(
+                    target: "ble_gui::poll",
+                    "设备信息 type={} sn={} versions={summary}",
+                    info.device_type,
+                    if info.sn.is_empty() { "—" } else { &info.sn },
+                );
+                if let Ok(mut inner) = live.lock() {
+                    inner.device_software = info
+                        .software
+                        .iter()
+                        .map(|s| (s.type_code, s.version))
+                        .collect();
+                    inner.iot_software_version = info.iot_version();
+                    inner.device_type = info.device_type;
+                    inner.device_sn = info.sn;
+                    inner.device_versions_text = summary;
+                    inner.device_info_loaded = true;
+                }
+            }
+            Err(err) => {
+                warn!(target: "ble_gui::poll", "解析 1100 段失败: {err}");
+            }
+        },
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {}
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "读寄存器 1100～1130 失败: {err}");
+        }
+    }
 }
 
 /// TLV 组合读：一次写 21000，经 FF03 收齐多包后解析。
@@ -616,6 +717,12 @@ pub fn init_live_on_connect(live: &SharedModbusLive) {
     inner.modbus_online = false;
     inner.read_mode = ModbusReadMode::Unknown;
     inner.capabilities_probed = false;
+    inner.device_info_loaded = false;
+    inner.device_type.clear();
+    inner.device_sn.clear();
+    inner.device_versions_text.clear();
+    inner.iot_software_version = None;
+    inner.device_software.clear();
 }
 
 pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
@@ -625,4 +732,10 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.modbus_online = false;
     inner.read_mode = ModbusReadMode::Unknown;
     inner.capabilities_probed = false;
+    inner.device_info_loaded = false;
+    inner.device_type.clear();
+    inner.device_sn.clear();
+    inner.device_versions_text.clear();
+    inner.iot_software_version = None;
+    inner.device_software.clear();
 }
