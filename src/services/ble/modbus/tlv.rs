@@ -70,7 +70,7 @@ pub fn tlv_register_values(
     let unit = find_tlv_result(results, slave_addr, reg_addr).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("TLV 响应缺少寄存器 {reg_addr}"),
+            format!("TLV 响应缺少寄存器 {reg_addr}（从站 {slave_addr}）"),
         )
     })?;
     tlv_data_to_u16(&unit.data)
@@ -171,8 +171,9 @@ pub fn parse_tlv_read_units(data: &[u8]) -> Vec<TlvReadResult> {
     let mut out = Vec::new();
     let mut offset = 0;
     while offset + TL_HEADER_LEN <= data.len() {
-        let slave_addr = data[offset];
-        // 设备 memcpy TL 后对整段 payload 做 U16_TO_BE；reg_addr/len 在链路上为 Modbus 大端。
+        // 设备对 payload 逐 u16 做 U16_TO_BE：原生 [slave, reserved] 在链路上变成 [reserved, slave]。
+        // 从站 0 时两字节都是 0，旧解析碰巧正确；从站 1 会变成 00 01，必须取低字节。
+        let slave_addr = data[offset + 1];
         let reg_addr = u16::from_be_bytes([data[offset + 2], data[offset + 3]]);
         let len = u16::from_be_bytes([data[offset + 4], data[offset + 5]]) as usize;
         offset += TL_HEADER_LEN;
@@ -204,7 +205,7 @@ pub fn describe_tlv_units(units: &[TlvReadResult]) -> String {
     }
     units
         .iter()
-        .map(|u| format!("reg{}:{}B", u.reg_addr, u.data.len()))
+        .map(|u| format!("s{}:reg{}:{}B", u.slave_addr, u.reg_addr, u.data.len()))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -433,7 +434,22 @@ mod tests {
         let payload = hex::decode("00000064000400640100").unwrap();
         let units = parse_tlv_read_units(&payload);
         assert_eq!(units.len(), 1);
+        assert_eq!(units[0].slave_addr, 0);
         assert_eq!(units[0].reg_addr, 100);
         assert_eq!(tlv_data_to_u16(&units[0].data).unwrap(), vec![100, 256]);
+    }
+
+    #[test]
+    fn parse_tlv_units_slave_addr_after_u16_be() {
+        // 设备 U16_TO_BE 后：reserved=0, slave=1, reg=100, len=4, V=[100,256]
+        let payload = hex::decode("00010064000400640100").unwrap();
+        let units = parse_tlv_read_units(&payload);
+        assert_eq!(units.len(), 1);
+        assert_eq!(units[0].slave_addr, 1);
+        assert_eq!(units[0].reg_addr, 100);
+        assert_eq!(units[0].data.len(), 4);
+        assert_eq!(tlv_data_to_u16(&units[0].data).unwrap(), vec![100, 256]);
+        assert!(tlv_register_values(&units, 1, 100).is_ok());
+        assert!(tlv_register_values(&units, 0, 100).is_err());
     }
 }
