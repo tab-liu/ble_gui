@@ -82,8 +82,6 @@ export component MainWindow inherits Window {
     in-out property <bool> firmware-has-file;
     in-out property <int> firmware-phase;
     in-out property <int> firmware-progress;
-    in-out property <int> firmware-pc-percent;
-    in-out property <int> firmware-device-percent;
     in-out property <string> firmware-stage-text;
     in-out property <string> firmware-result-text;
     in-out property <string> firmware-fail-reason;
@@ -340,8 +338,6 @@ export component MainWindow inherits Window {
                             firmware-has-file: root.firmware-has-file;
                             firmware-phase: root.firmware-phase;
                             firmware-progress: root.firmware-progress;
-                            firmware-pc-percent: root.firmware-pc-percent;
-                            firmware-device-percent: root.firmware-device-percent;
                             firmware-stage-text: root.firmware-stage-text;
                             firmware-result-text: root.firmware-result-text;
                             firmware-fail-reason: root.firmware-fail-reason;

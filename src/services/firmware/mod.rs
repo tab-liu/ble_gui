@@ -2,6 +2,9 @@
 //!
 //! - `> 1MB`：视为 IOT 整包，不解析 POWEROAK 头，类型固定为 [`header`] 中的 IOT=0
 //! - 否则先按 8 位头、再按 TI 16 位 Word 头识别 `POWEROAK`
+//!
+//! 总进度一条 0–100%：蓝牙 XMODEM 占 0–50，设备内部 CAN 占 50–100。
+//! 当前阶段写在 `stage_text`，不再拆两条百分比。
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -35,8 +38,6 @@ pub struct FirmwareSnapshot {
     pub has_file: bool,
     pub phase: i32,
     pub progress: i32,
-    pub pc_percent: i32,
-    pub device_percent: i32,
     pub stage_text: String,
     pub result_text: String,
     pub fail_reason: String,
@@ -58,7 +59,6 @@ struct FirmwareInner {
     selected: Option<SelectedFile>,
     parse_error: Option<String>,
     phase: i32,
-    progress: i32,
     pc_percent: i32,
     device_percent: i32,
     stage_text: String,
@@ -80,7 +80,6 @@ impl FirmwareService {
                 selected: None,
                 parse_error: None,
                 phase: PHASE_IDLE,
-                progress: 0,
                 pc_percent: 0,
                 device_percent: 0,
                 stage_text: "等待选择固件".into(),
@@ -147,9 +146,7 @@ impl FirmwareService {
             dev_model,
             has_file: parse_ok,
             phase: inner.phase,
-            progress: inner.progress,
-            pc_percent: inner.pc_percent,
-            device_percent: inner.device_percent,
+            progress: overall_progress(inner.pc_percent, inner.device_percent),
             stage_text: inner.stage_text.clone(),
             result_text: inner.result_text.clone(),
             fail_reason: inner.fail_reason.clone(),
@@ -179,7 +176,6 @@ impl FirmwareService {
         inner.selected = None;
         inner.parse_error = None;
         inner.phase = PHASE_IDLE;
-        inner.progress = 0;
         inner.pc_percent = 0;
         inner.device_percent = 0;
         inner.stage_text = "等待选择固件".into();
@@ -208,7 +204,6 @@ impl FirmwareService {
             return;
         }
         inner.phase = PHASE_READY;
-        inner.progress = 0;
         inner.pc_percent = 0;
         inner.device_percent = 0;
         inner.result_text = "待升级".into();
@@ -234,20 +229,9 @@ impl FirmwareService {
             Ok(selected) => {
                 let mut inner = self.inner.borrow_mut();
                 let status = format!("已识别 {}", selected.info.type_name());
-                log::info!(
-                    target: "ble_gui::firmware",
-                    "固件已加载 name={} size={} md5={} type={} source={} esp_version={:?}",
-                    selected.name,
-                    selected.size,
-                    selected.md5,
-                    selected.info.type_name(),
-                    selected.info.parse_source,
-                    selected.info.esp_version
-                );
                 inner.selected = Some(selected);
                 inner.parse_error = None;
                 inner.phase = PHASE_READY;
-                inner.progress = 0;
                 inner.pc_percent = 0;
                 inner.device_percent = 0;
                 inner.stage_text = "已验证，等待升级".into();
@@ -260,7 +244,6 @@ impl FirmwareService {
                 inner.selected = None;
                 inner.parse_error = Some(err.clone());
                 inner.phase = PHASE_FAILED;
-                inner.progress = 0;
                 inner.pc_percent = 0;
                 inner.device_percent = 0;
                 inner.stage_text = "识别失败".into();
@@ -308,4 +291,9 @@ fn format_size(bytes: u64) -> String {
     } else {
         format!("{bytes} 字节")
     }
+}
+
+/// 蓝牙 XMODEM 与设备 CAN 各占一半。
+fn overall_progress(pc_percent: i32, device_percent: i32) -> i32 {
+    (pc_percent.clamp(0, 100) + device_percent.clamp(0, 100)) / 2
 }

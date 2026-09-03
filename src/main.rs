@@ -98,7 +98,7 @@ fn main() -> Result<(), slint::PlatformError> {
     attach_parent_console();
 
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn,ble_gui::firmware=info"),
+        env_logger::Env::default().default_filter_or("warn"),
     )
     .format_timestamp_millis()
     .init();

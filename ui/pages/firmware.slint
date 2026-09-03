@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+import { VerticalBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 
 component FwActionButton inherits Rectangle {
@@ -81,8 +81,6 @@ export component FirmwarePage inherits VerticalBox {
     in property <bool> firmware-has-file;
     in property <int> firmware-phase;
     in property <int> firmware-progress;
-    in property <int> firmware-pc-percent;
-    in property <int> firmware-device-percent;
     in property <string> firmware-stage-text;
     in property <string> firmware-result-text;
     in property <string> firmware-fail-reason;
@@ -123,174 +121,61 @@ export component FirmwarePage inherits VerticalBox {
         }
     }
 
-    ScrollView {
+    // 剩余高度按 5:8 分（约黄金比 0.38 / 0.62）：上排准备区，下排进度主操作。
+    VerticalLayout {
         vertical-stretch: 1;
+        spacing: 12px;
 
-        VerticalLayout {
+        HorizontalLayout {
+            width: 100%;
             spacing: 12px;
-            padding-right: 4px;
-
-            HorizontalLayout {
-                spacing: 12px;
-
-                FwCard {
-                    horizontal-stretch: 1;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 10px;
-
-                        Text {
-                            text: "选择固件";
-                            color: Theme.text-primary;
-                            font-size: 14px;
-                            font-weight: 600;
-                        }
-
-                        Rectangle {
-                            height: 44px;
-                            border-radius: 8px;
-                            background: Theme.bg-panel-alt;
-                            border-width: 1px;
-                            border-color: Theme.border;
-
-                            HorizontalLayout {
-                                padding-left: 12px;
-                                padding-right: 12px;
-                                spacing: 8px;
-
-                                Text {
-                                    text: root.firmware-has-file ? root.firmware-file-name : "尚未选择文件";
-                                    color: root.firmware-has-file ? Theme.text-primary : Theme.text-dim;
-                                    font-size: 13px;
-                                    vertical-alignment: center;
-                                    overflow: elide;
-                                    horizontal-stretch: 1;
-                                }
-                                Text {
-                                    text: root.firmware-has-file ? root.firmware-file-size : "";
-                                    color: Theme.text-muted;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-
-                        HorizontalLayout {
-                            spacing: 8px;
-                            height: 36px;
-
-                            FwActionButton {
-                                text: "选择文件";
-                                primary: true;
-                                enabled: root.firmware-phase != 2;
-                                clicked => { root.pick-file(); }
-                            }
-                            FwActionButton {
-                                text: "清除";
-                                enabled: root.firmware-has-file && root.firmware-phase != 2;
-                                clicked => { root.clear-file(); }
-                            }
-                            Rectangle { horizontal-stretch: 1; }
-                        }
-
-                        if root.firmware-status-text != "": Text {
-                            text: root.firmware-status-text;
-                            color: root.firmware-phase == 4 ? Theme.error : Theme.text-secondary;
-                            font-size: 12px;
-                            wrap: word-wrap;
-                        }
-                    }
-                }
-
-                FwCard {
-                    horizontal-stretch: 1;
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 4px;
-
-                        Text {
-                            text: "固件信息";
-                            color: Theme.text-primary;
-                            font-size: 14px;
-                            font-weight: 600;
-                        }
-
-                        FwInfoRow { label: "类型"; value: root.firmware-type-text; }
-                        FwInfoRow { label: "版本"; value: root.firmware-image-version; }
-                        FwInfoRow { label: "项目代号"; value: root.firmware-dev-model; }
-                        FwInfoRow { label: "MD5"; value: root.firmware-md5; }
-                    }
-                }
-            }
+            vertical-stretch: 5;
+            min-height: 176px;
 
             FwCard {
+                min-width: 0px;
+                preferred-width: 0px;
+                horizontal-stretch: 1;
                 VerticalLayout {
                     padding: 16px;
                     spacing: 10px;
+                    alignment: start;
 
-                    HorizontalLayout {
-                        spacing: 12px;
-                        height: 22px;
-
-                        Text {
-                            text: "升级进度";
-                            color: Theme.text-primary;
-                            font-size: 14px;
-                            font-weight: 600;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: root.firmware-stage-text;
-                            color: Theme.text-secondary;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                            horizontal-stretch: 1;
-                        }
+                    Text {
+                        text: "选择固件";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 600;
+                        height: 20px;
                     }
 
-                    HorizontalLayout {
-                        spacing: 10px;
-                        height: 16px;
+                    Rectangle {
+                        height: 44px;
+                        border-radius: 8px;
+                        background: Theme.bg-panel-alt;
+                        border-width: 1px;
+                        border-color: Theme.border;
 
-                        Rectangle {
-                            horizontal-stretch: 1;
-                            height: 12px;
-                            y: 2px;
-                            border-radius: 6px;
-                            background: Theme.bg-panel-alt;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            spacing: 8px;
 
-                            Rectangle {
-                                x: 0px;
-                                y: 0px;
-                                height: 100%;
-                                width: parent.width * root.firmware-progress / 100;
-                                border-radius: 6px;
-                                background: root.bar-color;
+                            Text {
+                                text: root.firmware-has-file ? root.firmware-file-name : "尚未选择文件";
+                                color: root.firmware-has-file ? Theme.text-primary : Theme.text-dim;
+                                font-size: 13px;
+                                vertical-alignment: center;
+                                overflow: elide;
+                                horizontal-stretch: 1;
+                            }
+                            Text {
+                                text: root.firmware-has-file ? root.firmware-file-size : "";
+                                color: Theme.text-muted;
+                                font-size: 12px;
+                                vertical-alignment: center;
                             }
                         }
-                        Text {
-                            text: root.firmware-progress + "%";
-                            color: root.bar-color;
-                            font-size: 13px;
-                            font-weight: 600;
-                            width: 44px;
-                            vertical-alignment: center;
-                        }
-                    }
-
-                    HorizontalLayout {
-                        spacing: 16px;
-                        Text {
-                            text: "PC → IOT  " + root.firmware-pc-percent + "%";
-                            color: Theme.text-muted;
-                            font-size: 12px;
-                        }
-                        Text {
-                            text: "IOT → MCU  " + root.firmware-device-percent + "%";
-                            color: Theme.text-muted;
-                            font-size: 12px;
-                        }
-                        Rectangle { horizontal-stretch: 1; }
                     }
 
                     HorizontalLayout {
@@ -298,32 +183,141 @@ export component FirmwarePage inherits VerticalBox {
                         height: 36px;
 
                         FwActionButton {
-                            text: "开始升级";
+                            text: "选择文件";
                             primary: true;
-                            enabled: root.firmware-can-start;
-                            clicked => { root.start-upgrade(); }
+                            enabled: root.firmware-phase != 2;
+                            clicked => { root.pick-file(); }
                         }
                         FwActionButton {
-                            text: "停止";
-                            danger: true;
-                            enabled: root.firmware-can-stop;
-                            clicked => { root.stop-upgrade(); }
+                            text: "清除";
+                            enabled: root.firmware-has-file && root.firmware-phase != 2;
+                            clicked => { root.clear-file(); }
                         }
                         Rectangle { horizontal-stretch: 1; }
                     }
 
-                    if root.firmware-phase == 3 || root.firmware-phase == 4: HorizontalLayout {
-                        spacing: 24px;
-                        FwInfoRow {
-                            label: "结果";
-                            value: root.firmware-result-text;
-                            value-color: root.result-color;
-                        }
-                        if root.firmware-phase == 4 && root.firmware-fail-reason != "": FwInfoRow {
-                            label: "失败原因";
-                            value: root.firmware-fail-reason;
-                            value-color: Theme.error;
-                        }
+                    Text {
+                        min-height: 18px;
+                        text: root.firmware-status-text;
+                        color: root.firmware-phase == 4 ? Theme.error : Theme.text-secondary;
+                        font-size: 12px;
+                        wrap: word-wrap;
+                    }
+                }
+            }
+
+            FwCard {
+                min-width: 0px;
+                preferred-width: 0px;
+                horizontal-stretch: 1;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 4px;
+                    alignment: start;
+
+                    Text {
+                        text: "固件信息";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 600;
+                        height: 20px;
+                    }
+
+                    FwInfoRow { label: "类型"; value: root.firmware-type-text; }
+                    FwInfoRow { label: "版本"; value: root.firmware-image-version; }
+                    FwInfoRow { label: "项目代号"; value: root.firmware-dev-model; }
+                    FwInfoRow { label: "MD5"; value: root.firmware-md5; }
+                }
+            }
+        }
+
+        FwCard {
+            width: 100%;
+            vertical-stretch: 8;
+            min-height: 200px;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+
+                HorizontalLayout {
+                    spacing: 12px;
+                    height: 22px;
+
+                    Text {
+                        text: "升级进度";
+                        color: Theme.text-primary;
+                        font-size: 14px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: root.firmware-stage-text;
+                        color: Theme.text-secondary;
+                        font-size: 12px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 72px;
+                    border-radius: 10px;
+                    clip: true;
+                    background: Theme.bg-panel-alt;
+                    border-width: 1px;
+                    border-color: Theme.border;
+
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        height: 100%;
+                        width: parent.width * root.firmware-progress / 100;
+                        background: root.bar-color;
+                    }
+
+                    Text {
+                        width: 100%;
+                        height: 100%;
+                        text: root.firmware-progress + "%";
+                        color: root.firmware-progress >= 50 ? #ffffff : root.bar-color;
+                        font-size: 32px;
+                        font-weight: 700;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    height: 36px;
+
+                    FwActionButton {
+                        text: "开始升级";
+                        primary: true;
+                        enabled: root.firmware-can-start;
+                        clicked => { root.start-upgrade(); }
+                    }
+                    FwActionButton {
+                        text: "停止";
+                        danger: true;
+                        enabled: root.firmware-can-stop;
+                        clicked => { root.stop-upgrade(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                }
+
+                if root.firmware-phase == 3 || root.firmware-phase == 4: HorizontalLayout {
+                    spacing: 24px;
+                    FwInfoRow {
+                        label: "结果";
+                        value: root.firmware-result-text;
+                        value-color: root.result-color;
+                    }
+                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": FwInfoRow {
+                        label: "失败原因";
+                        value: root.firmware-fail-reason;
+                        value-color: Theme.error;
                     }
                 }
             }

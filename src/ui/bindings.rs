@@ -406,8 +406,6 @@ pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
     ui.set_firmware_has_file(snap.has_file);
     ui.set_firmware_phase(snap.phase);
     ui.set_firmware_progress(snap.progress);
-    ui.set_firmware_pc_percent(snap.pc_percent);
-    ui.set_firmware_device_percent(snap.device_percent);
     ui.set_firmware_stage_text(snap.stage_text.clone().into());
     ui.set_firmware_result_text(snap.result_text.clone().into());
     ui.set_firmware_fail_reason(snap.fail_reason.clone().into());

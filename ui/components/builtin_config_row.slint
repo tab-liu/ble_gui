@@ -5,6 +5,9 @@ import { ToolbarButton } from "toolbar_button.slint";
 /// 常用设置行：无删除；读回与设置分离。
 export component BuiltinConfigRow inherits Rectangle {
     in property <string> name;
+    in property <string> register;
+    in property <string> value-type;
+    in property <int> register-count;
     in property <int> widget-kind;
     in property <[string]> enum-labels;
     in property <[string]> enum-values;
@@ -47,10 +50,14 @@ export component BuiltinConfigRow inherits Rectangle {
                 overflow: elide;
             }
 
-            if root.dirty: Text {
-                text: "未写入";
+            Text {
+                text: "寄存器 " + root.register
+                    + " · " + root.value-type
+                    + (root.register-count > 1 ? (" ×" + root.register-count) : "")
+                    + (root.dirty ? " · 未写入" : "");
                 color: Theme.text-dim;
                 font-size: 11px;
+                overflow: elide;
             }
 
             if !root.write-enabled && root.disabled-hint != "": Text {

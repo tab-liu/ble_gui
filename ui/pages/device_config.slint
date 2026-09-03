@@ -268,8 +268,11 @@ export component DeviceConfigPage inherits VerticalLayout {
                 spacing: 8px;
 
                 for item[index] in root.builtin-config-items: BuiltinConfigRow {
-                                name: item.name;
-                                widget-kind: item.widget-kind;
+                    name: item.name;
+                    register: item.register;
+                    value-type: item.value-type;
+                    register-count: item.register-count;
+                    widget-kind: item.widget-kind;
                                 enum-labels: item.enum-labels;
                                 enum-values: item.enum-values;
                                 enum-index: item.enum-index;

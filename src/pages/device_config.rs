@@ -68,23 +68,17 @@ fn builtin_availability(
 ) -> (bool, SharedString) {
     if def.id == "device_bind" {
         let enabled = builtin_bind_supported(connected, device_name, write_value);
-        let hint = if !connected {
-            "需连接设备".into()
-        } else if bind_option_standalone_only(write_value) && is_parallel_ha1_device(device_name) {
+        let hint = if connected
+            && bind_option_standalone_only(write_value)
+            && is_parallel_ha1_device(device_name)
+        {
             "并机(HA1)设备不支持设备绑定".into()
         } else {
             "".into()
         };
         (enabled, hint)
     } else {
-        (
-            connected,
-            if connected {
-                "".into()
-            } else {
-                "需连接设备".into()
-            },
-        )
+        (connected, "".into())
     }
 }
 
@@ -129,6 +123,9 @@ fn builtin_item_from_def(def: &BuiltinSettingDef) -> BuiltinConfigItem {
     BuiltinConfigItem {
         id: def.id.into(),
         name: def.name.into(),
+        register: def.register.to_string().into(),
+        value_type: def.value_type.as_str().into(),
+        register_count: def.register_count.max(1) as i32,
         widget_kind: def.widget as i32,
         enum_labels: ModelRc::new(VecModel::from(enum_labels)),
         enum_values: ModelRc::new(VecModel::from(enum_values)),
@@ -138,7 +135,7 @@ fn builtin_item_from_def(def: &BuiltinSettingDef) -> BuiltinConfigItem {
         status: "等待读取".into(),
         dirty: false,
         write_enabled: false,
-        disabled_hint: "需连接设备".into(),
+        disabled_hint: "".into(),
     }
 }
 

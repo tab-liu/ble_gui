@@ -84,6 +84,9 @@ export struct DeviceConfigGroup {
 export struct BuiltinConfigItem {
     id: string,
     name: string,
+    register: string,
+    value-type: string,
+    register-count: int,
     widget-kind: int,
     enum-labels: [string],
     enum-values: [string],

@@ -104,12 +104,12 @@ pub fn classify(file_size: u64, data: &[u8]) -> Result<FirmwareInfo, String> {
         ));
     }
     if file_size > IOT_MIN_BYTES {
-        log::info!(
+        log::debug!(
             target: "ble_gui::firmware",
             "按大小判定为 IOT 整包：{file_size} 字节 > {IOT_MIN_BYTES}，跳过 POWEROAK 头"
         );
         if let Some(pos) = find_bytes(data, MAGIC) {
-            log::info!(
+            log::debug!(
                 target: "ble_gui::firmware",
                 "文件中仍发现 POWEROAK（未使用）@ 0x{pos:X}（{pos}）"
             );
@@ -226,7 +226,7 @@ struct EspAppDesc {
 fn extract_esp_app_desc(data: &[u8]) -> EspAppDesc {
     let hits = find_u32_le(data, ESP_APP_DESC_MAGIC);
     if hits.is_empty() {
-        log::info!(
+        log::debug!(
             target: "ble_gui::firmware",
             "未找到 ESP app_desc magic 0x{ESP_APP_DESC_MAGIC:08X}，IOT 版本留空（仅按文件大小分类）"
         );
@@ -244,7 +244,7 @@ fn extract_esp_app_desc(data: &[u8]) -> EspAppDesc {
         .map(|o| format!("0x{o:X}"))
         .collect::<Vec<_>>()
         .join(", ");
-    log::info!(
+    log::debug!(
         target: "ble_gui::firmware",
         "ESP app_desc magic 0x{ESP_APP_DESC_MAGIC:08X} 共 {} 处：{listed}{}",
         hits.len(),
@@ -257,7 +257,7 @@ fn extract_esp_app_desc(data: &[u8]) -> EspAppDesc {
         hits[0]
     };
     if desc_off != ESP_APP_DESC_STD_OFF {
-        log::info!(
+        log::debug!(
             target: "ble_gui::firmware",
             "标准 app.bin 位置 0x{ESP_APP_DESC_STD_OFF:X} 无 magic，改用第一处 0x{desc_off:X}（可能是带 bootloader 的整片镜像）"
         );
@@ -273,23 +273,23 @@ fn extract_esp_app_desc(data: &[u8]) -> EspAppDesc {
     let project_name = ascii_trim(project_raw);
     let idf_ver = ascii_trim(idf_raw);
 
-    log::info!(
+    log::debug!(
         target: "ble_gui::firmware",
         "使用 esp_app_desc_t @ 文件偏移 0x{desc_off:X}（{desc_off}）"
     );
-    log::info!(
+    log::debug!(
         target: "ble_gui::firmware",
         "  version[32]      @ 0x{version_off:X} = {:?}  hex[{}]",
         version,
         hex_bytes(version_raw)
     );
-    log::info!(
+    log::debug!(
         target: "ble_gui::firmware",
         "  project_name[32] @ 0x{project_off:X} = {:?}  hex[{}]",
         project_name,
         hex_bytes(project_raw)
     );
-    log::info!(
+    log::debug!(
         target: "ble_gui::firmware",
         "  idf_ver[32]      @ 0x{idf_off:X} = {:?}",
         idf_ver
