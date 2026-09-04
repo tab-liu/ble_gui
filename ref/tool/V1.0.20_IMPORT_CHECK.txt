@@ -1,0 +1,10 @@
+BLUETTI Device Studio V1.0.20 PE Import Check
+=============================================
+PE32 / Intel i386
+USER32.dll: 29 imports
+KERNEL32.dll: 35 imports
+GDI32.dll: 18 imports
+COMDLG32.dll: 1 import
+TOTAL: 83 imports
+
+The executable is derived from the V1.0.19 PE image with a narrowly scoped register-address/UI-version correction; import tables are unchanged.

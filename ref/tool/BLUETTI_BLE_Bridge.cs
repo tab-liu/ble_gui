@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -97,6 +97,10 @@ internal sealed class BluettiBleBridge
     private readonly string _manualModbusPath;
     private readonly string _trafficPath;
     private readonly string _otaStatusPath;
+    private readonly string _settingsPath;
+    private readonly string _advancedPath;
+    private readonly string _batteryPath;
+    private readonly string _packPath;
     private readonly string _baseDirectory;
     private readonly string _logPath;
 
@@ -170,6 +174,49 @@ internal sealed class BluettiBleBridge
     private string _pendingWriteName = string.Empty;
     private int _lastAcState = -1;
     private int _lastDcState = -1;
+
+    /* V1.0.4: 设置页按用户最终UI需求收敛；继续复用现有Dashboard/AC-DC/自定义Modbus的_modbusBusy互斥。 */
+    private bool _settingsPollingEnabled;
+    private DateTime _nextSettingsPollUtc = DateTime.MaxValue;
+    private int _settingsPollStep;
+    private readonly ushort[] _settingsValues = new ushort[13];
+    private int _settingsValidMask;
+    private long _settingsSequence;
+    private int _pendingSettingAddress = -1;
+    private int _pendingSettingValue;
+    private int _pendingSettingMask = 0xFFFF;
+    private string _pendingSettingName = string.Empty;
+
+    /* V1.0.20: Advanced Settings + stable current slider drafts on native UI. */
+    private bool _advancedPollingEnabled;
+    private DateTime _nextAdvancedPollUtc = DateTime.MaxValue;
+    private int _advancedPollStep;
+    /* index: 0=2209 InvV,1=2210 Freq,2=2214 GridMaxCurrent(used as ChgMaxI),3=2218 Area,4=2225 GridPlus,5=2226 Memory,6=2272 GridMaxI */
+    private readonly ushort[] _advancedValues = new ushort[7];
+    private int _advancedValidMask;
+    private long _advancedSequence;
+    private int _pendingAdvancedAddress = -1;
+    private int _pendingAdvancedValue;
+    private string _pendingAdvancedName = string.Empty;
+
+    /* V1.0.15: Battery Center + robust single PACK page. Main Modbus route is tried first; implausible zero blocks are rejected. */
+    private bool _batteryPollingEnabled;
+    private DateTime _nextBatteryPollUtc = DateTime.MaxValue;
+    private DateTime _nextBatteryDiagnosticUtc = DateTime.MinValue;
+    private long _batterySequence;
+    private readonly ushort[] _batteryValues = new ushort[49];
+    private int _batteryValidMask; /* bit0=6000~6018核心，bit1=6019~6048诊断 */
+    private DateTime _nextBatteryDashboardUtc = DateTime.MinValue;
+
+    private bool _packPollingEnabled;
+    private DateTime _nextPackPollUtc = DateTime.MaxValue;
+    private long _packSequence;
+    private readonly ushort[] _packValues = new ushort[77]; /* 6100..6176: includes SoftwareType1 + Version1 */
+    private int _packSelectedIndex;
+    private int _packResolvedSlaveId = -1;
+    /* V1.0.20: cache the Modbus route that actually returned each 6100 PackID. */
+    private readonly int[] _packRouteCache = new int[16];
+
     private int _pendingManualSlave = -1;
     private int _pendingManualFunction = -1;
     private int _pendingManualRegister;
@@ -194,6 +241,10 @@ internal sealed class BluettiBleBridge
         _manualModbusPath = manualModbusPath;
         _trafficPath = trafficPath;
         _otaStatusPath = otaStatusPath;
+        _settingsPath = Path.Combine(Path.GetDirectoryName(_dataPath) ?? baseDirectory, "BLUETTI_BLE_Settings.tmp");
+        _advancedPath = Path.Combine(Path.GetDirectoryName(_dataPath) ?? baseDirectory, "BLUETTI_BLE_Advanced.tmp");
+        _batteryPath = Path.Combine(Path.GetDirectoryName(_dataPath) ?? baseDirectory, "BLUETTI_BLE_Battery.tmp");
+        _packPath = Path.Combine(Path.GetDirectoryName(_dataPath) ?? baseDirectory, "BLUETTI_BLE_Pack.tmp");
         _baseDirectory = baseDirectory;
         string cacheDirectory = Path.Combine(Path.GetTempPath(), "BLUETTI_Firmware_Studio", "BLE");
         Directory.CreateDirectory(cacheDirectory);
@@ -206,8 +257,12 @@ internal sealed class BluettiBleBridge
         Application.ThreadException += OnThreadException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         WriteLog("----------------------------------------");
-        WriteLog("启动 V1.3.5 Direct WinRT BLE + BLE OTA bridge");
+        WriteLog("启动 V1.0.20 Advanced Charge Current Register Fix Direct WinRT BLE + BLE OTA bridge（V1.0正式版增量开发）");
         WriteAtomicLines(_trafficPath, new string[] { "FLOWSEQ\t0", "Direct BLE ready" });
+        WriteAtomicLines(_settingsPath, new string[] { "SETTINGSWAIT\t0\t等待进入设备设置页面" });
+        WriteAtomicLines(_advancedPath, new string[] { "ADVANCEDWAIT\t0\t等待进入高级设置页面" });
+        WriteAtomicLines(_batteryPath, new string[] { "BATTERYWAIT\t0\t等待进入电池信息页面" });
+        WriteAtomicLines(_packPath, new string[] { "PACKWAIT\t0\t等待进入单PACK页面" });
         WriteStatus("READY\t蓝牙后台已就绪（Windows WinRT Direct BLE + 旧版加密协议）");
         _notificationThread = new Thread(NotificationWorker);
         _notificationThread.IsBackground = true;
@@ -258,7 +313,7 @@ internal sealed class BluettiBleBridge
         WriteLog("收到命令：" + command);
 
         // 只有真正开始OTA传输后才独占BLE业务通道。进入OTA页面本身不会停止正常SOC/版本轮询。
-        if (_otaRunning && (command == "INTERVAL" || command == "READNOW" || command == "SLAVE" || command == "MODBUS" || command == "WRITE_AC" || command == "WRITE_DC"))
+        if (_otaRunning && (command == "INTERVAL" || command == "READNOW" || command == "SLAVE" || command == "MODBUS" || command == "WRITE_AC" || command == "WRITE_DC" || command == "SETTINGS_PAGE" || command == "SETTINGS_READNOW" || command == "SETTING_WRITE" || command == "SETTING_MASK_WRITE" || command == "ADVANCED_PAGE" || command == "ADVANCED_READNOW" || command == "ADVANCED_WRITE" || command == "BATTERY_PAGE" || command == "BATTERY_READNOW" || command == "PACK_PAGE" || command == "PACK_READNOW"))
         {
             WriteLog("OTA传输中：忽略普通查询/控制命令 " + command);
             WriteStatus("INFO\tOTA升级进行中，普通Modbus查询/控制已暂停");
@@ -329,6 +384,171 @@ internal sealed class BluettiBleBridge
         {
             int slaveId; if (parts.Length >= 4 && int.TryParse(parts[3], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
             QueueControlWrite(2012, parts[2] == "0" ? 0 : 1, "DC输出");
+        }
+        else if (command == "SETTINGS_PAGE" && parts.Length >= 3)
+        {
+            int enable;
+            int slaveId;
+            if (parts.Length >= 4 && int.TryParse(parts[3], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out enable) && enable != 0)
+            {
+                _advancedPollingEnabled = false;
+                _nextAdvancedPollUtc = DateTime.MaxValue;
+                _settingsPollingEnabled = true;
+                _settingsPollStep = 0;
+                _settingsValidMask = 0;
+                _nextSettingsPollUtc = DateTime.UtcNow;
+                WriteAtomicLines(_settingsPath, new string[] { "SETTINGSWAIT\t" + _settingsSequence.ToString() + "\t正在同步设备设置" });
+                WriteStatus("INFO\t设备设置页面已进入，开始轮询设置寄存器");
+            }
+            else
+            {
+                _settingsPollingEnabled = false;
+                _nextSettingsPollUtc = DateTime.MaxValue;
+                WriteStatus("INFO\t设备设置轮询已暂停");
+            }
+        }
+        else if (command == "SETTINGS_READNOW")
+        {
+            int slaveId;
+            if (parts.Length >= 3 && int.TryParse(parts[2], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            _settingsPollingEnabled = true;
+            _settingsPollStep = 0;
+            _settingsValidMask = 0;
+            _nextSettingsPollUtc = DateTime.UtcNow;
+        }
+        else if (command == "SETTING_WRITE" && parts.Length >= 4)
+        {
+            int registerAddress, value, slaveId;
+            if (parts.Length >= 5 && int.TryParse(parts[4], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out registerAddress) && int.TryParse(parts[3], out value))
+            {
+                QueueSettingWrite(registerAddress, value, 0xFFFF);
+            }
+            else { WriteStatus("INFO\t设置参数格式错误"); }
+        }
+        else if (command == "SETTING_MASK_WRITE" && parts.Length >= 5)
+        {
+            int registerAddress, mask, value, slaveId;
+            if (parts.Length >= 6 && int.TryParse(parts[5], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out registerAddress) && int.TryParse(parts[3], out mask) && int.TryParse(parts[4], out value))
+            {
+                QueueSettingWrite(registerAddress, value, mask);
+            }
+            else { WriteStatus("INFO\t设置参数格式错误"); }
+        }
+        else if (command == "ADVANCED_PAGE" && parts.Length >= 3)
+        {
+            int enable;
+            int slaveId;
+            if (parts.Length >= 4 && int.TryParse(parts[3], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out enable) && enable != 0)
+            {
+                _settingsPollingEnabled = false;
+                _batteryPollingEnabled = false;
+                _packPollingEnabled = false;
+                _advancedPollingEnabled = true;
+                _advancedPollStep = 0;
+                _advancedValidMask = 0;
+                _nextAdvancedPollUtc = DateTime.UtcNow;
+                WriteAtomicLines(_advancedPath, new string[] { "ADVANCEDWAIT\t" + _advancedSequence.ToString() + "\t正在同步高级设置" });
+                WriteStatus("INFO\t高级设置页面已进入，开始轮询高级设置寄存器");
+            }
+            else
+            {
+                _advancedPollingEnabled = false;
+                _nextAdvancedPollUtc = DateTime.MaxValue;
+                WriteStatus("INFO\t高级设置轮询已暂停");
+            }
+        }
+        else if (command == "ADVANCED_READNOW")
+        {
+            int slaveId;
+            if (parts.Length >= 3 && int.TryParse(parts[2], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            _advancedPollingEnabled = true;
+            _advancedPollStep = 0;
+            _advancedValidMask = 0;
+            _nextAdvancedPollUtc = DateTime.UtcNow;
+            WriteAtomicLines(_advancedPath, new string[] { "ADVANCEDWAIT\t" + _advancedSequence.ToString() + "\t正在重新同步高级设置" });
+        }
+        else if (command == "ADVANCED_WRITE" && parts.Length >= 4)
+        {
+            int registerAddress, value, slaveId;
+            if (parts.Length >= 5 && int.TryParse(parts[4], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out registerAddress) && int.TryParse(parts[3], out value))
+            {
+                QueueAdvancedWrite(registerAddress, value);
+            }
+            else { WriteStatus("INFO\t高级设置参数格式错误"); }
+        }
+        else if (command == "BATTERY_PAGE" && parts.Length >= 3)
+        {
+            int enable;
+            int slaveId;
+            if (parts.Length >= 4 && int.TryParse(parts[3], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (int.TryParse(parts[2], out enable) && enable != 0)
+            {
+                _advancedPollingEnabled = false;
+                _nextAdvancedPollUtc = DateTime.MaxValue;
+                _packPollingEnabled = false;
+                _nextPackPollUtc = DateTime.MaxValue;
+                _batteryPollingEnabled = true;
+                _batteryValidMask = 0;
+                _nextBatteryPollUtc = DateTime.UtcNow;
+                _nextBatteryDiagnosticUtc = DateTime.MinValue;
+                _nextBatteryDashboardUtc = DateTime.UtcNow;
+                WriteAtomicLines(_batteryPath, new string[] { "BATTERYWAIT\t" + _batterySequence.ToString() + "\t正在同步PACK汇总信息" });
+                WriteStatus("INFO\tBattery Center已进入，开始轮询6000～6048");
+            }
+            else
+            {
+                _batteryPollingEnabled = false;
+                _nextBatteryPollUtc = DateTime.MaxValue;
+                _nextBatteryDashboardUtc = DateTime.MinValue;
+                _nextPollUtc = DateTime.UtcNow;
+                WriteStatus("INFO\tBattery Center轮询已暂停");
+            }
+        }
+        else if (command == "BATTERY_READNOW")
+        {
+            int slaveId;
+            if (parts.Length >= 3 && int.TryParse(parts[2], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            _batteryPollingEnabled = true;
+            _nextBatteryPollUtc = DateTime.UtcNow;
+        }
+        else if (command == "PACK_PAGE" && parts.Length >= 3)
+        {
+            int enable;
+            int slaveId;
+            int packIndex = 0;
+            if (parts.Length >= 4 && int.TryParse(parts[3], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            if (parts.Length >= 5) { int.TryParse(parts[4], out packIndex); }
+            if (int.TryParse(parts[2], out enable) && enable != 0)
+            {
+                _advancedPollingEnabled = false;
+                _nextAdvancedPollUtc = DateTime.MaxValue;
+                _batteryPollingEnabled = false;
+                _nextBatteryPollUtc = DateTime.MaxValue;
+                _packPollingEnabled = true;
+                _packSelectedIndex = Math.Max(0, Math.Min(15, packIndex));
+                _nextPackPollUtc = DateTime.UtcNow;
+                WriteAtomicLines(_packPath, new string[] { "PACKWAIT\t" + _packSequence.ToString() + "\t正在同步单PACK信息" });
+                _packResolvedSlaveId = -1;
+                WriteStatus("INFO\t单PACK页面已进入：优先按6002/6016在线ID映射PackID，再扫描独立Modbus路由并校验6100 PackID");
+            }
+            else
+            {
+                _packPollingEnabled = false;
+                _nextPackPollUtc = DateTime.MaxValue;
+                WriteStatus("INFO\t单PACK轮询已暂停");
+            }
+        }
+        else if (command == "PACK_READNOW")
+        {
+            int slaveId;
+            if (parts.Length >= 3 && int.TryParse(parts[2], out slaveId) && slaveId >= 0 && slaveId <= 247) { _modbusSlaveId = slaveId; }
+            _packPollingEnabled = true;
+            _nextPackPollUtc = DateTime.UtcNow;
         }
         else if (command == "OTA_START" && parts.Length >= 3)
         {
@@ -1373,6 +1593,162 @@ internal sealed class BluettiBleBridge
         WriteStatus("INFO\t正在" + (value != 0 ? "开启" : "关闭") + name + "……");
     }
 
+    private static string SettingName(int registerAddress)
+    {
+        switch (registerAddress)
+        {
+            case 2014: return "DC ECO";
+            case 2015: return "DC ECO关机时间";
+            case 2016: return "DC ECO触发功率";
+            case 2017: return "AC ECO";
+            case 2018: return "AC ECO关机时间";
+            case 2019: return "AC ECO触发功率";
+            case 2020: return "充电模式";
+            case 2021: return "大力士模式";
+            case 2067: return "LCD显示时间";
+            case 2072: return "童锁开关";
+            case 2076: return "童锁等级";
+            case 2083: return "充电上限";
+            default: return "设置寄存器";
+        }
+    }
+
+    private static bool IsSupportedSettingWrite(int registerAddress, int value, int mask)
+    {
+        if (value < 0 || value > 65535) { return false; }
+        if (mask == 0xFFFF)
+        {
+            switch (registerAddress)
+            {
+                case 2014: case 2017: return value == 0 || value == 1;
+                case 2015: case 2018: return value >= 1 && value <= 4;
+                case 2016: case 2019: return true;
+                case 2020: return value == 0 || value == 1 || value == 2;
+                case 2021: return value >= 0 && value <= 1;
+                case 2067: return value >= 1 && value <= 5;
+                case 2083:
+                {
+                    int command = value & 0xFF;
+                    int soc = (value >> 8) & 0xFF;
+                    return command == 1 && soc >= 1 && soc <= 100;
+                }
+                default: return false;
+            }
+        }
+        if (mask == 0x0030 && registerAddress == 2072)
+        {
+            int childLock = (value >> 4) & 0x0003;
+            return childLock == 1 || childLock == 2;
+        }
+        if (mask == 0x00FF && registerAddress == 2076)
+        {
+            int level = value & 0x00FF;
+            return level == 1 || level == 2;
+        }
+        return false;
+    }
+
+    private void QueueSettingWrite(int registerAddress, int value, int mask)
+    {
+        if (!_connectPending || _connection == null)
+        {
+            WriteStatus("INFO\t蓝牙未连接，无法写入设备设置");
+            return;
+        }
+        if (!IsSupportedSettingWrite(registerAddress, value, mask))
+        {
+            WriteStatus("INFO\t设置值超出协议允许范围：寄存器" + registerAddress.ToString());
+            return;
+        }
+        _pendingSettingAddress = registerAddress;
+        _pendingSettingValue = value;
+        _pendingSettingMask = mask;
+        _pendingSettingName = SettingName(registerAddress);
+        WriteStatus("INFO\t正在写入" + _pendingSettingName + "……");
+    }
+
+    private static string AdvancedSettingName(int registerAddress)
+    {
+        switch (registerAddress)
+        {
+            case 2206: return "恢复出厂设置";
+            case 2209: return "逆变电压";
+            case 2210: return "逆变频率";
+            case 2214: return "最大充电电流";
+            case 2225: return "电网增强模式";
+            case 2226: return "系统记忆开关";
+            case 2272: return "最大电网输入电流";
+            default: return "高级设置";
+        }
+    }
+
+    private static bool IsSupportedAdvancedWrite(int registerAddress, int value)
+    {
+        if (value < 0 || value > 65535) { return false; }
+        switch (registerAddress)
+        {
+            case 2206: return value >= 1 && value <= 15;
+            case 2209: return value >= 0 && value <= 2;
+            case 2210: return value == 0 || value == 1;
+            case 2214: return true;
+            case 2225: return value == 0 || value == 1;
+            case 2226: return value == 0 || value == 1;
+            case 2272: return true;
+            default: return false;
+        }
+    }
+
+    private int AdvancedValueIndex(int registerAddress)
+    {
+        switch (registerAddress)
+        {
+            case 2209: return 0;
+            case 2210: return 1;
+            case 2214: return 2;
+            case 2218: return 3;
+            case 2225: return 4;
+            case 2226: return 5;
+            case 2272: return 6;
+            default: return -1;
+        }
+    }
+
+    private void QueueAdvancedWrite(int registerAddress, int value)
+    {
+        if (!_connectPending || _connection == null)
+        {
+            WriteStatus("INFO\t蓝牙未连接，无法写入高级设置");
+            return;
+        }
+        if (!IsSupportedAdvancedWrite(registerAddress, value))
+        {
+            WriteStatus("INFO\t高级设置值超出协议允许范围：寄存器" + registerAddress.ToString());
+            return;
+        }
+        if (registerAddress == 2214)
+        {
+            if ((_advancedValidMask & 0x040) == 0)
+            {
+                WriteStatus("INFO\t最大电网输入电流尚未同步，暂不能设置最大充电电流");
+                return;
+            }
+            if (value > _advancedValues[6])
+            {
+                WriteStatus("INFO\t最大充电电流不能大于最大电网输入电流（当前上限 " + _advancedValues[6].ToString() + "A）");
+                return;
+            }
+        }
+        if (registerAddress == 2272 && (_advancedValidMask & 0x004) != 0 && value < _advancedValues[2])
+        {
+            WriteStatus("INFO\t新的最大电网输入电流不能小于当前最大充电电流 " + _advancedValues[2].ToString() + "A");
+            return;
+        }
+        _pendingAdvancedAddress = registerAddress;
+        _pendingAdvancedValue = value;
+        _pendingAdvancedName = AdvancedSettingName(registerAddress);
+        WriteStatus("INFO\t正在写入" + _pendingAdvancedName + "……");
+    }
+
     private void QueueManualModbus(int slaveId, int functionCode, int registerAddress, int parameter, int timeoutMs)
     {
         if (!_connectPending || _connection == null)
@@ -1449,27 +1825,481 @@ internal sealed class BluettiBleBridge
             return;
         }
 
-        if (DateTime.UtcNow < _nextPollUtc)
+        if (_pendingSettingAddress >= 0)
         {
-            return;
-        }
-        _nextPollUtc = DateTime.UtcNow.AddSeconds(_pollIntervalSeconds);
-        if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) != 0)
-        {
+            if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+            {
+                int registerAddress = _pendingSettingAddress;
+                int value = _pendingSettingValue;
+                int mask = _pendingSettingMask;
+                string name = _pendingSettingName;
+                _pendingSettingAddress = -1;
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try
+                    {
+                        WriteSettingRegister(registerAddress, value, mask, name);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _modbusBusy, 0);
+                    }
+                });
+            }
             return;
         }
 
-        ThreadPool.QueueUserWorkItem(delegate(object state)
+        if (_pendingAdvancedAddress >= 0)
         {
-            try
+            if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
             {
-                PollModbusData();
+                int registerAddress = _pendingAdvancedAddress;
+                int value = _pendingAdvancedValue;
+                string name = _pendingAdvancedName;
+                _pendingAdvancedAddress = -1;
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try { WriteAdvancedRegister(registerAddress, value, name); }
+                    finally { Interlocked.Exchange(ref _modbusBusy, 0); }
+                });
             }
-            finally
+            return;
+        }
+
+        DateTime now = DateTime.UtcNow;
+
+        /* V1.0.15: PACK detail has highest page priority. */
+        if (_packPollingEnabled)
+        {
+            if (now >= _nextPackPollUtc)
             {
-                Interlocked.Exchange(ref _modbusBusy, 0);
+                _nextPackPollUtc = now.AddSeconds(1);
+                if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+                {
+                    ThreadPool.QueueUserWorkItem(delegate(object state)
+                    {
+                        try { PollPackData(); }
+                        finally { Interlocked.Exchange(ref _modbusBusy, 0); }
+                    });
+                }
             }
-        });
+            return;
+        }
+
+        /* Battery Center core remains 1s; Dashboard is allowed every 2s so power/fault decisions stay live. */
+        if (_batteryPollingEnabled)
+        {
+            if (now >= _nextBatteryPollUtc)
+            {
+                _nextBatteryPollUtc = now.AddSeconds(1);
+                if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+                {
+                    ThreadPool.QueueUserWorkItem(delegate(object state)
+                    {
+                        try { PollBatteryData(); }
+                        finally { Interlocked.Exchange(ref _modbusBusy, 0); }
+                    });
+                }
+                return;
+            }
+            if (now >= _nextBatteryDashboardUtc)
+            {
+                _nextBatteryDashboardUtc = now.AddSeconds(2);
+                if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+                {
+                    ThreadPool.QueueUserWorkItem(delegate(object state)
+                    {
+                        try { PollModbusData(); }
+                        finally { Interlocked.Exchange(ref _modbusBusy, 0); }
+                    });
+                }
+            }
+            return;
+        }
+
+        if (_advancedPollingEnabled)
+        {
+            if (now >= _nextAdvancedPollUtc)
+            {
+                _nextAdvancedPollUtc = now.AddMilliseconds(180.0);
+                if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+                {
+                    int step = _advancedPollStep;
+                    _advancedPollStep = (_advancedPollStep + 1) % 5;
+                    ThreadPool.QueueUserWorkItem(delegate(object state)
+                    {
+                        try { PollAdvancedGroup(step); }
+                        finally { Interlocked.Exchange(ref _modbusBusy, 0); }
+                    });
+                }
+            }
+            return;
+        }
+
+        /* Dashboard是原稳定链路，到期时优先执行，设置轮询只使用其空闲时间片。 */
+        if (now >= _nextPollUtc)
+        {
+            _nextPollUtc = now.AddSeconds(_pollIntervalSeconds);
+            if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+            {
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try
+                    {
+                        PollModbusData();
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _modbusBusy, 0);
+                    }
+                });
+            }
+            return;
+        }
+
+        if (_settingsPollingEnabled && now >= _nextSettingsPollUtc)
+        {
+            _nextSettingsPollUtc = now.AddMilliseconds(125.0);
+            if (Interlocked.CompareExchange(ref _modbusBusy, 1, 0) == 0)
+            {
+                int step = _settingsPollStep;
+                _settingsPollStep = (_settingsPollStep + 1) % 9;
+                ThreadPool.QueueUserWorkItem(delegate(object state)
+                {
+                    try
+                    {
+                        PollSettingsGroup(step);
+                    }
+                    finally
+                    {
+                        Interlocked.Exchange(ref _modbusBusy, 0);
+                    }
+                });
+            }
+        }
+    }
+
+    private void PublishAdvancedSnapshot(string status)
+    {
+        _advancedSequence++;
+        StringBuilder line = new StringBuilder();
+        line.Append("ADVANCED\t").Append(_advancedSequence.ToString()).Append('\t').Append(_advancedValidMask.ToString());
+        int index;
+        for (index = 0; index < _advancedValues.Length; index++) { line.Append('\t').Append(_advancedValues[index].ToString()); }
+        line.Append('\t').Append(DateTime.Now.ToString("HH:mm:ss")).Append('\t').Append(Sanitize(status));
+        WriteAtomicLines(_advancedPath, new string[] { line.ToString() });
+    }
+
+    private void PollAdvancedGroup(int step)
+    {
+        int slaveId = _modbusSlaveId;
+        int startAddress = 0;
+        int count = 0;
+        int validBits = 0;
+        try
+        {
+            switch (step)
+            {
+                case 0: startAddress = 2209; count = 2; validBits = 0x003; break;
+                case 1: startAddress = 2214; count = 1; validBits = 0x004; break;
+                case 2: startAddress = 2218; count = 1; validBits = 0x008; break;
+                case 3: startAddress = 2225; count = 2; validBits = 0x030; break;
+                default: startAddress = 2272; count = 1; validBits = 0x040; break;
+            }
+            byte[] request = BuildReadHoldingRegistersRequest(slaveId, startAddress, count);
+            byte[] response = SendAndReceiveModbus(request, 1800);
+            ushort[] values = ParseReadHoldingRegistersResponse(response, slaveId, count);
+            if (step == 0)
+            {
+                _advancedValues[0] = values[0];
+                _advancedValues[1] = values[1];
+            }
+            else if (step == 1) { _advancedValues[2] = values[0]; }
+            else if (step == 2) { _advancedValues[3] = values[0]; }
+            else if (step == 3)
+            {
+                _advancedValues[4] = values[0];
+                _advancedValues[5] = values[1];
+            }
+            else { _advancedValues[6] = values[0]; }
+            _advancedValidMask |= validBits;
+            PublishAdvancedSnapshot(_advancedValidMask == 0x07F ? "已同步" : "同步中");
+        }
+        catch (Exception exception)
+        {
+            _advancedValidMask &= ~validBits;
+            PublishAdvancedSnapshot("寄存器" + startAddress.ToString() + "读取失败：" + FlattenException(exception));
+        }
+    }
+
+    private void WriteAdvancedRegister(int registerAddress, int requestedValue, string name)
+    {
+        try
+        {
+            int slaveId = _modbusSlaveId;
+            byte[] request = BuildWriteSingleRegisterRequest(slaveId, registerAddress, requestedValue);
+            WriteLog(name + "写寄存器：从机=" + slaveId.ToString() + "，地址=" + registerAddress.ToString() + "，值=" + requestedValue.ToString());
+            byte[] response = SendAndReceiveModbus(request, 1800);
+            ValidateWriteSingleRegisterResponse(response, request);
+
+            if (registerAddress == 2206)
+            {
+                _advancedValidMask = 0;
+                PublishAdvancedSnapshot("恢复出厂指令已发送，设备可能重启");
+                WriteStatus("INFO\t恢复出厂设置指令已发送（地区代码 " + requestedValue.ToString() + "）");
+                _nextAdvancedPollUtc = DateTime.UtcNow.AddSeconds(2.0);
+                return;
+            }
+
+            Thread.Sleep(300);
+            byte[] verifyRequest = BuildReadHoldingRegistersRequest(slaveId, registerAddress, 1);
+            byte[] verifyResponse = SendAndReceiveModbus(verifyRequest, 1800);
+            ushort[] verify = ParseReadHoldingRegistersResponse(verifyResponse, slaveId, 1);
+            if (verify[0] != (ushort)requestedValue)
+            {
+                throw new InvalidDataException("写后回读不一致，期望=" + requestedValue.ToString() + "，实际=" + verify[0].ToString());
+            }
+            int valueIndex = AdvancedValueIndex(registerAddress);
+            if (valueIndex >= 0) { _advancedValues[valueIndex] = verify[0]; }
+            PublishAdvancedSnapshot(name + "已写入并回读确认");
+            WriteStatus("INFO\t" + name + "设置成功（寄存器" + registerAddress.ToString() + "）");
+            _nextAdvancedPollUtc = DateTime.UtcNow;
+        }
+        catch (Exception exception)
+        {
+            string error = FlattenException(exception);
+            WriteLog(name + "设置失败：" + error);
+            PublishAdvancedSnapshot(name + "设置失败：" + error);
+            WriteStatus("INFO\t" + name + "设置失败：" + error);
+            _nextAdvancedPollUtc = DateTime.UtcNow;
+        }
+    }
+
+    private void PublishBatterySnapshot(string status)
+    {
+        _batterySequence++;
+        StringBuilder line = new StringBuilder();
+        line.Append("BATTERY\t").Append(_batterySequence.ToString()).Append('\t').Append(_batteryValidMask.ToString());
+        int index;
+        for (index = 0; index < _batteryValues.Length; index++) { line.Append('\t').Append(_batteryValues[index].ToString()); }
+        line.Append('\t').Append(DateTime.Now.ToString("HH:mm:ss")).Append('\t').Append(_modbusSlaveId.ToString()).Append('\t').Append(Sanitize(status));
+        WriteAtomicLines(_batteryPath, new string[] { line.ToString() });
+    }
+
+    private void PollBatteryData()
+    {
+        try
+        {
+            int slaveId = _modbusSlaveId;
+            byte[] coreRequest = BuildReadHoldingRegistersRequest(slaveId, 6000, 19); /* 6000..6018 */
+            byte[] coreResponse = SendAndReceiveModbus(coreRequest, 2200);
+            ushort[] coreValues = ParseReadHoldingRegistersResponse(coreResponse, slaveId, 19);
+            int index;
+            for (index = 0; index < coreValues.Length; index++) { _batteryValues[index] = coreValues[index]; }
+            _batteryValidMask |= 0x01;
+
+            string status = "核心状态已同步";
+            if (DateTime.UtcNow >= _nextBatteryDiagnosticUtc)
+            {
+                _nextBatteryDiagnosticUtc = DateTime.UtcNow.AddSeconds(4);
+                try
+                {
+                    byte[] diagRequest = BuildReadHoldingRegistersRequest(slaveId, 6019, 30); /* 6019..6048 */
+                    byte[] diagResponse = SendAndReceiveModbus(diagRequest, 2400);
+                    ushort[] diagValues = ParseReadHoldingRegistersResponse(diagResponse, slaveId, 30);
+                    for (index = 0; index < diagValues.Length; index++) { _batteryValues[19 + index] = diagValues[index]; }
+                    _batteryValidMask |= 0x02;
+                    status = "核心/诊断信息已同步";
+                }
+                catch (Exception diagnosticException)
+                {
+                    _batteryValidMask &= ~0x02;
+                    status = "核心已同步，诊断区读取失败";
+                    WriteLog("Battery诊断区6019~6048读取失败：" + FlattenException(diagnosticException));
+                }
+            }
+
+            PublishBatterySnapshot(status);
+            WriteStatus("INFO\tPACK汇总信息已更新（6000～6048，从机" + slaveId.ToString() + "）");
+        }
+        catch (Exception exception)
+        {
+            _batteryValidMask &= ~0x01;
+            _batterySequence++;
+            WriteAtomicLines(_batteryPath, new string[] { "BATTERYERROR\t" + _batterySequence.ToString() + "\t" + Sanitize(FlattenException(exception)) });
+            WriteLog("Battery Center核心轮询失败：" + FlattenException(exception));
+            WriteStatus("INFO\tPACK核心信息读取失败，保持连接并继续重试");
+        }
+    }
+
+    private void PublishPackSnapshot(string status)
+    {
+        _packSequence++;
+        StringBuilder line = new StringBuilder();
+        line.Append("PACK\t").Append(_packSequence.ToString());
+        int index;
+        for (index = 0; index < _packValues.Length; index++) { line.Append('\t').Append(_packValues[index].ToString()); }
+        line.Append('\t').Append(DateTime.Now.ToString("HH:mm:ss")).Append('\t').Append((_packResolvedSlaveId > 0 ? _packResolvedSlaveId : _modbusSlaveId).ToString()).Append('\t').Append(_packSelectedIndex.ToString()).Append('\t').Append(Sanitize(status));
+        WriteAtomicLines(_packPath, new string[] { line.ToString() });
+    }
+
+    private static void AddPackCandidate(List<int> candidates, int slaveId)
+    {
+        if (slaveId < 1 || slaveId > 247) { return; }
+        if (!candidates.Contains(slaveId)) { candidates.Add(slaveId); }
+    }
+
+    private static bool IsPlausiblePackData(ushort[] values)
+    {
+        if (values == null || values.Length < 77) { return false; }
+        int nonZero = 0;
+        int index;
+        for (index = 0; index < values.Length; index++) { if (values[index] != 0) { nonZero++; } }
+        if (nonZero < 3) { return false; }
+
+        int soc = (int)values[6113 - 6100];
+        int soh = (int)values[6114 - 6100];
+        int voltage = (int)values[6111 - 6100];
+        int cellCount = (int)values[6152 - 6100];
+        bool hasIdentity = false;
+        for (index = 6101 - 6100; index <= 6110 - 6100; index++) { if (values[index] != 0) { hasIdentity = true; break; } }
+        if (!hasIdentity && voltage == 0 && cellCount == 0 && soc == 0 && soh == 0) { return false; }
+        if (soc > 100 || soh > 100) { return false; }
+        return true;
+    }
+
+    private bool TryReadPackDataAtSlave(int slaveId, int expectedPackId, out ushort[] values, out int actualPackId, out string reason)
+    {
+        values = null;
+        actualPackId = -1;
+        reason = string.Empty;
+        try
+        {
+            /* V1.0.20: probe only 6100..6115 first. This makes route discovery cheap and lets us
+             * reject a duplicate PackID before spending a second long BLE transaction. */
+            byte[] probeRequest = BuildReadHoldingRegistersRequest(slaveId, 6100, 16);
+            byte[] probeResponse = SendAndReceiveModbus(probeRequest, 900);
+            ushort[] probe = ParseReadHoldingRegistersResponse(probeResponse, slaveId, 16);
+            actualPackId = (int)probe[0];
+            if (actualPackId != expectedPackId)
+            {
+                reason = "从机" + slaveId.ToString() + "返回PackID=" + actualPackId.ToString();
+                return false;
+            }
+
+            byte[] tailRequest = BuildReadHoldingRegistersRequest(slaveId, 6116, 61); /* 6116..6176 */
+            byte[] tailResponse = SendAndReceiveModbus(tailRequest, 2400);
+            ushort[] tail = ParseReadHoldingRegistersResponse(tailResponse, slaveId, 61);
+
+            values = new ushort[77];
+            Array.Copy(probe, 0, values, 0, probe.Length);
+            Array.Copy(tail, 0, values, 16, tail.Length);
+            if (!IsPlausiblePackData(values))
+            {
+                reason = "从机" + slaveId.ToString() + "返回PackID匹配但数据块无效";
+                values = null;
+                return false;
+            }
+            reason = "OK";
+            return true;
+        }
+        catch (Exception exception)
+        {
+            reason = "从机" + slaveId.ToString() + ": " + FlattenException(exception);
+            values = null;
+            actualPackId = -1;
+            return false;
+        }
+    }
+
+    private int ResolveExpectedPackIdFromBattery(int selectedIndex, out ushort effectiveMask)
+    {
+        ushort onlineMask = _batteryValues[6002 - 6000];
+        ushort capMask = _batteryValues[6016 - 6000];
+        effectiveMask = onlineMask != 0 ? onlineMask : capMask;
+        if (effectiveMask != 0)
+        {
+            int ordinal = 0;
+            int bit;
+            for (bit = 0; bit < 16; bit++)
+            {
+                if ((effectiveMask & (1 << bit)) == 0) { continue; }
+                if (ordinal == selectedIndex) { return bit; }
+                ordinal++;
+            }
+        }
+        /* Some AP200 firmware reports PackCnts correctly while the online bitmap is 0.
+         * In that case the configured slot index remains the only protocol-grounded PackID hint. */
+        return selectedIndex;
+    }
+
+    private void PollPackData()
+    {
+        try
+        {
+            ushort effectiveMask;
+            int expectedPackId = ResolveExpectedPackIdFromBattery(_packSelectedIndex, out effectiveMask);
+            int configuredCount = (int)_batteryValues[6001 - 6000];
+            List<int> candidates = new List<int>();
+
+            /* Route order: cached route -> PackID-derived route -> current device route -> full 1..16 probe.
+             * We never accept a route unless register 6100 returns the expected PackID. */
+            if (_packSelectedIndex >= 0 && _packSelectedIndex < _packRouteCache.Length && _packRouteCache[_packSelectedIndex] > 0)
+            {
+                AddPackCandidate(candidates, _packRouteCache[_packSelectedIndex]);
+            }
+            AddPackCandidate(candidates, expectedPackId + 1);
+            AddPackCandidate(candidates, _modbusSlaveId);
+            if (_packSelectedIndex > 0)
+            {
+                AddPackCandidate(candidates, _modbusSlaveId + _packSelectedIndex);
+                AddPackCandidate(candidates, _modbusSlaveId - _packSelectedIndex);
+            }
+            int scanSlave;
+            for (scanSlave = 1; scanSlave <= 16; scanSlave++) { AddPackCandidate(candidates, scanSlave); }
+
+            ushort[] matchedValues = null;
+            int matchedSlave = -1;
+            int lastActualPackId = -1;
+            List<string> diagnostics = new List<string>();
+            int index;
+            for (index = 0; index < candidates.Count; index++)
+            {
+                ushort[] values;
+                int actualPackId;
+                string reason;
+                if (TryReadPackDataAtSlave(candidates[index], expectedPackId, out values, out actualPackId, out reason))
+                {
+                    matchedValues = values;
+                    matchedSlave = candidates[index];
+                    diagnostics.Add("从机" + matchedSlave.ToString() + "匹配PackID" + expectedPackId.ToString());
+                    break;
+                }
+                if (actualPackId >= 0) { lastActualPackId = actualPackId; }
+                if (!string.IsNullOrWhiteSpace(reason)) { diagnostics.Add(reason); }
+            }
+
+            if (matchedValues == null)
+            {
+                string diagText = diagnostics.Count > 0 ? JoinStrings(diagnostics, "；") : "无有效响应";
+                throw new InvalidOperationException("PACK" + (_packSelectedIndex + 1).ToString() + "未找到独立数据；配置数=" + configuredCount.ToString() + "，有效在线ID位图=0x" + effectiveMask.ToString("X4") + "，期望PackID=" + expectedPackId.ToString() + (lastActualPackId >= 0 ? "，最后PackID=" + lastActualPackId.ToString() : "") + "；" + diagText);
+            }
+
+            for (index = 0; index < matchedValues.Length; index++) { _packValues[index] = matchedValues[index]; }
+            _packResolvedSlaveId = matchedSlave;
+            if (_packSelectedIndex >= 0 && _packSelectedIndex < _packRouteCache.Length) { _packRouteCache[_packSelectedIndex] = matchedSlave; }
+            PublishPackSnapshot("单PACK信息已同步 · 在线ID/PackID " + expectedPackId.ToString() + " · 从机 " + matchedSlave.ToString());
+            WriteStatus("INFO\tPACK" + (_packSelectedIndex + 1).ToString() + "信息已更新（6100～6176，PackID=" + expectedPackId.ToString() + "，从机" + matchedSlave.ToString() + "）");
+        }
+        catch (Exception exception)
+        {
+            _packResolvedSlaveId = -1;
+            _packSequence++;
+            WriteAtomicLines(_packPath, new string[] { "PACKERROR\t" + _packSequence.ToString() + "\t" + Sanitize(FlattenException(exception)) });
+            WriteLog("单PACK读取失败：" + FlattenException(exception));
+            /* Route discovery can touch multiple logical slaves. Throttle retry after a miss so BLE is not flooded. */
+            _nextPackPollUtc = DateTime.UtcNow.AddSeconds(5.0);
+        }
     }
 
     private void PollModbusData()
@@ -1513,7 +2343,9 @@ internal sealed class BluettiBleBridge
             int pvInputPower = ClampUInt32ToInt32(pvInputPowerValue);
 
             _dataSequence++;
-            WriteDataLine("DATA\t" + _dataSequence.ToString() + "\t" + soc.ToString() + "\t" + acOutputPower.ToString() + "\t" + dcOutputPower.ToString() + "\t" + pvInputPower.ToString() + "\t" + acInputPower.ToString() + "\t" + _lastAcState.ToString() + "\t" + _lastDcState.ToString() + "\t" + DateTime.Now.ToString("HH:mm:ss") + "\tREG100\t" + slaveId.ToString() + "\t" + Sanitize(_deviceTypeText) + "\t" + Sanitize(_deviceSnText) + "\t" + Sanitize(_deviceVersionsText));
+            WriteDataLine("DATA\t" + _dataSequence.ToString() + "\t" + soc.ToString() + "\t" + acOutputPower.ToString() + "\t" + dcOutputPower.ToString() + "\t" + pvInputPower.ToString() + "\t" + acInputPower.ToString() + "\t" + _lastAcState.ToString() + "\t" + _lastDcState.ToString() + "\t" + DateTime.Now.ToString("HH:mm:ss") + "\tREG100\t" + slaveId.ToString() + "\t" + Sanitize(_deviceTypeText) + "\t" + Sanitize(_deviceSnText) + "\t" + Sanitize(_deviceVersionsText)
+                + "\t" + registers[126 - 100].ToString() + "\t" + registers[127 - 100].ToString() + "\t" + registers[128 - 100].ToString() + "\t" + registers[129 - 100].ToString()
+                + "\t" + registers[133 - 100].ToString() + "\t" + registers[134 - 100].ToString() + "\t" + registers[135 - 100].ToString() + "\t" + registers[136 - 100].ToString() + "\t" + registers[137 - 100].ToString() + "\t" + registers[138 - 100].ToString());
             WriteStatus("INFO\tModbus实时数据已更新（从机" + slaveId.ToString() + "，寄存器100～149）");
         }
         catch (Exception exception)
@@ -1587,6 +2419,115 @@ internal sealed class BluettiBleBridge
             WriteLog(name + "写寄存器失败（从机" + _modbusSlaveId.ToString() + "，地址" + registerAddress.ToString() + "）：" + FlattenException(exception));
             WriteStatus("INFO\t" + name + "控制失败：" + FlattenException(exception));
             _nextPollUtc = DateTime.UtcNow;
+        }
+    }
+
+    private void PollSettingsGroup(int step)
+    {
+        int slaveId = _modbusSlaveId;
+        int startAddress;
+        int count;
+        int destinationIndex;
+        int validBit;
+
+        /*
+         * V1.0.4: ECO开关单独读取，绝不再让相邻设置寄存器读取失败把2014/2017一起锁死。
+         * 每组约125ms轮询一次，9组完整一轮约1.1s。
+         */
+        switch (step)
+        {
+            case 0: startAddress = 2014; count = 1; destinationIndex = 0;  validBit = 0x001; break; /* DC ECO */
+            case 1: startAddress = 2015; count = 2; destinationIndex = 1;  validBit = 0x002; break; /* DC ECO时间/功率 */
+            case 2: startAddress = 2017; count = 1; destinationIndex = 3;  validBit = 0x004; break; /* AC ECO */
+            case 3: startAddress = 2018; count = 2; destinationIndex = 4;  validBit = 0x008; break; /* AC ECO时间/功率 */
+            case 4: startAddress = 2020; count = 2; destinationIndex = 6;  validBit = 0x010; break; /* 充电模式/大力士 */
+            case 5: startAddress = 2067; count = 1; destinationIndex = 8;  validBit = 0x020; break; /* LCD */
+            case 6: startAddress = 2072; count = 1; destinationIndex = 10; validBit = 0x040; break; /* 童锁开关 bit5/4 */
+            case 7: startAddress = 2076; count = 1; destinationIndex = 9;  validBit = 0x080; break; /* 童锁等级 */
+            default:startAddress = 2083; count = 1; destinationIndex = 11; validBit = 0x100; break; /* 充电上限 */
+        }
+
+        try
+        {
+            byte[] request = BuildReadHoldingRegistersRequest(slaveId, startAddress, count);
+            byte[] response = SendAndReceiveModbus(request, 1800);
+            ushort[] values = ParseReadHoldingRegistersResponse(response, slaveId, count);
+            int index;
+            for (index = 0; index < count; index++) { _settingsValues[destinationIndex + index] = values[index]; }
+            _settingsValidMask |= validBit;
+            PublishSettingsSnapshot(_settingsValidMask == 0x1FF ? "已同步" : "同步中");
+        }
+        catch (Exception exception)
+        {
+            _settingsValidMask &= ~validBit;
+            PublishSettingsSnapshot("读取" + startAddress.ToString() + "失败");
+            WriteLog("设备设置轮询失败：起始=" + startAddress.ToString() + "，数量=" + count.ToString() + "，" + FlattenException(exception));
+        }
+    }
+
+    private int SettingValueIndex(int registerAddress)
+    {
+        if (registerAddress >= 2014 && registerAddress <= 2021) { return registerAddress - 2014; }
+        if (registerAddress == 2067) { return 8; }
+        if (registerAddress == 2072) { return 10; }
+        if (registerAddress == 2076) { return 9; }
+        if (registerAddress == 2083) { return 11; }
+        return -1;
+    }
+
+    private void PublishSettingsSnapshot(string status)
+    {
+        _settingsSequence++;
+        StringBuilder line = new StringBuilder();
+        line.Append("SETTINGS\t").Append(_settingsSequence.ToString()).Append('\t').Append(_settingsValidMask.ToString());
+        int index;
+        for (index = 0; index < _settingsValues.Length; index++) { line.Append('\t').Append(_settingsValues[index].ToString()); }
+        line.Append('\t').Append(DateTime.Now.ToString("HH:mm:ss")).Append('\t').Append(Sanitize(status));
+        WriteAtomicLines(_settingsPath, new string[] { line.ToString() });
+    }
+
+    private void WriteSettingRegister(int registerAddress, int requestedValue, int mask, string name)
+    {
+        try
+        {
+            int slaveId = _modbusSlaveId;
+            int writeValue = requestedValue;
+            if (mask != 0xFFFF)
+            {
+                byte[] readRequest = BuildReadHoldingRegistersRequest(slaveId, registerAddress, 1);
+                byte[] readResponse = SendAndReceiveModbus(readRequest, 1800);
+                ushort[] current = ParseReadHoldingRegistersResponse(readResponse, slaveId, 1);
+                writeValue = (current[0] & (~mask & 0xFFFF)) | (requestedValue & mask);
+            }
+
+            WriteLog(name + "写寄存器：从机=" + slaveId.ToString() + "，地址=" + registerAddress.ToString() + "，值=" + writeValue.ToString());
+            byte[] request = BuildWriteSingleRegisterRequest(slaveId, registerAddress, writeValue);
+            byte[] response = SendAndReceiveModbus(request, 1800);
+            ValidateWriteSingleRegisterResponse(response, request);
+            Thread.Sleep(300);
+
+            byte[] verifyRequest = BuildReadHoldingRegistersRequest(slaveId, registerAddress, 1);
+            byte[] verifyResponse = SendAndReceiveModbus(verifyRequest, 1800);
+            ushort[] verify = ParseReadHoldingRegistersResponse(verifyResponse, slaveId, 1);
+            if (verify[0] != (ushort)writeValue)
+            {
+                throw new InvalidDataException("写后回读不一致，期望=" + writeValue.ToString() + "，实际=" + verify[0].ToString());
+            }
+
+            int valueIndex = SettingValueIndex(registerAddress);
+            if (valueIndex >= 0) { _settingsValues[valueIndex] = verify[0]; }
+            PublishSettingsSnapshot(name + "已写入并回读确认");
+            WriteStatus("INFO\t" + name + "设置成功（寄存器" + registerAddress.ToString() + "）");
+            _nextSettingsPollUtc = DateTime.UtcNow;
+            _nextPollUtc = DateTime.UtcNow.AddMilliseconds(500.0);
+        }
+        catch (Exception exception)
+        {
+            string error = FlattenException(exception);
+            WriteLog(name + "设置失败：" + error);
+            PublishSettingsSnapshot(name + "设置失败");
+            WriteStatus("INFO\t" + name + "设置失败：" + error);
+            _nextSettingsPollUtc = DateTime.UtcNow;
         }
     }
 
@@ -2711,6 +3652,22 @@ internal sealed class BluettiBleBridge
         try { if (_service != null) { _service.Dispose(); } } catch { }
         try { if (_device != null) { _device.Dispose(); } } catch { }
         _notifyCharacteristic = null; _notifyCharacteristicFf03 = null; _writeCharacteristic = null; _service = null; _gattSession = null; _device = null; _connection = null;
+        _settingsPollingEnabled = false;
+        _nextSettingsPollUtc = DateTime.MaxValue;
+        _settingsValidMask = 0;
+        _advancedPollingEnabled = false;
+        _nextAdvancedPollUtc = DateTime.MaxValue;
+        _advancedValidMask = 0;
+        _pendingAdvancedAddress = -1;
+        _batteryPollingEnabled = false;
+        _nextBatteryPollUtc = DateTime.MaxValue;
+        _nextBatteryDiagnosticUtc = DateTime.MinValue;
+        _batteryValidMask = 0;
+        _nextBatteryDashboardUtc = DateTime.MinValue;
+        _packPollingEnabled = false;
+        _nextPackPollUtc = DateTime.MaxValue;
+        Array.Clear(_packRouteCache, 0, _packRouteCache.Length);
+        _pendingSettingAddress = -1;
         ResetSecurityState();
     }
 

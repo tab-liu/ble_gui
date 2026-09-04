@@ -1,0 +1,16 @@
+BLUETTI Device Studio V1.0.20 Static Test Report
+=================================================
+
+[PASS] Native executable remains PE32 GUI / Intel i386.
+[PASS] PE import count remains 83 (USER32 29 + KERNEL32 35 + GDI32 18 + COMDLG32 1).
+[PASS] Native UI label changed from maximum charge current register 2212 to 2214.
+[PASS] Native advanced-write command now emits register 2214 for maximum charge current.
+[PASS] Native executable contains no MOV-immediate 0x08A4 (2212) for the charge-current apply path and contains one 0x08A6 (2214) immediate at that path.
+[PASS] BLE bridge AdvancedSettingName / write whitelist / value-index / validation / polling all use register 2214 for maximum charge current.
+[PASS] BLE advanced polling order is 2209~2210 -> 2214 -> 2218 -> 2225~2226 -> 2272.
+[PASS] Existing constraint preserved: 2214 maximum charge current <= 2272 maximum grid input current.
+[PASS] V1.0.19 stable slider draft/device-mirror behavior is retained; polling does not overwrite a dirty draft.
+[PASS] Battery/PACK, fault, Settings, OTA and BLE encryption code paths were not intentionally changed in this revision.
+
+Hardware limitation:
+- Register 2214 write/readback still requires user-side BLE hardware validation on the target AP200/HA1 system.

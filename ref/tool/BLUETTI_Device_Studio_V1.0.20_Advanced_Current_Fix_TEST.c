@@ -1,8 +1,8 @@
-﻿/*
- * BLUETTI Device Studio V1.0 - Official Release
+/*
+ * BLUETTI Device Studio V1.0.20 - Advanced Charge Current Register Fix Test Build
  * Native Windows x86 application for Serial, CANalyst-II and BLE connection.
  * Editors: zrj / ChatGPT (OpenAI)
- * Release baseline: V1.3.9 final verified test build.
+ * Development mother version: V1.0 Official Release; V1.3.9 verified behavior remains locked.
  * Apple-inspired light/dark UI with real serial communication, IMAGE_HEADER_T parsing,
  * Modbus OTA start handshake and XMODEM-1K firmware transfer.
  *
@@ -108,6 +108,7 @@ typedef unsigned short USHORT;
 #define WS_VSCROLL 0x00200000L
 #define WS_BORDER 0x00800000L
 #define WS_CLIPSIBLINGS 0x04000000L
+#define WS_CLIPCHILDREN 0x02000000L
 #define CBS_DROPDOWNLIST 0x0003L
 #define CBS_OWNERDRAWFIXED 0x0010L
 #define CBS_HASSTRINGS 0x0200L
@@ -115,6 +116,8 @@ typedef unsigned short USHORT;
 #define ES_MULTILINE 0x0004L
 #define ES_AUTOVSCROLL 0x0040L
 #define ES_READONLY 0x0800L
+#define EN_SETFOCUS 0x0100
+#define EN_KILLFOCUS 0x0200
 #define CW_USEDEFAULT ((int)0x80000000)
 #define SW_HIDE 0
 #define SW_SHOW 5
@@ -133,7 +136,9 @@ typedef unsigned short USHORT;
 #define WM_ERASEBKGND 0x0014
 #define WM_MOUSEMOVE 0x0200
 #define WM_MOUSELEAVE 0x02A3
+#define WM_LBUTTONDOWN 0x0201
 #define WM_LBUTTONUP 0x0202
+#define MK_LBUTTON 0x0001
 #define WM_SETCURSOR 0x0020
 #define WM_SETFONT 0x0030
 #define WM_CTLCOLORSTATIC 0x0138
@@ -167,6 +172,8 @@ typedef unsigned short USHORT;
 #define DC_PEN 19
 #define TME_LEAVE 0x00000002
 #define MB_OK 0x00000000L
+#define MB_OKCANCEL 0x00000001L
+#define IDOK 1
 #define MB_ICONINFORMATION 0x00000040L
 #define MB_ICONWARNING 0x00000030L
 #define MB_ICONERROR 0x00000010L
@@ -181,6 +188,9 @@ typedef unsigned short USHORT;
 #define CBN_SELCHANGE 1
 #define EN_CHANGE 0x0300
 #define EM_SETLIMITTEXT 0x00C5
+#define EM_SETMARGINS 0x00D3
+#define EC_LEFTMARGIN 0x0001
+#define EC_RIGHTMARGIN 0x0002
 #define ODT_COMBOBOX 3
 #define ODS_SELECTED 0x0001
 #define ODS_FOCUS 0x0010
@@ -250,6 +260,12 @@ typedef unsigned short USHORT;
 #define ID_BLE_OTA_CHANNEL_COMBO 1222
 #define ID_BLE_OTA_CHIP_COMBO 1223
 #define ID_BLE_OTA_ROW_CHIP_BASE 1240
+#define ID_BLE_SETTING_DC_POWER_EDIT 1260
+#define ID_BLE_SETTING_AC_POWER_EDIT 1261
+#define ID_BLE_SETTING_SOC_LOW_EDIT 1262
+#define ID_BLE_SETTING_SOC_HIGH_EDIT 1263
+#define ID_BLE_ADV_GRID_CURRENT_EDIT 1270
+#define ID_BLE_ADV_CHG_CURRENT_EDIT 1271
 #define BLE_MAX_DEVICES 64
 #define BLE_VISIBLE_ROWS 8
 #define BLE_OTA_MAX_FILES 16
@@ -472,6 +488,10 @@ __declspec(dllimport) unsigned long long WINAPI GetTickCount64(void);
 __declspec(dllimport) void* WINAPI VirtualAlloc(void*, SIZE_T, DWORD, DWORD);
 __declspec(dllimport) BOOL WINAPI VirtualFree(void*, SIZE_T, DWORD);
 __declspec(dllimport) void WINAPI GetLocalTime(SYSTEMTIME*);
+
+/* V1.0.5: Use DWM/UxTheme dynamically so the executable keeps the same static Win32 dependency set. */
+typedef LONG (WINAPI *PFN_DwmSetWindowAttribute)(HWND, DWORD, const void*, DWORD);
+typedef LONG (WINAPI *PFN_SetWindowTheme)(HWND, LPCWSTR, LPCWSTR);
 __declspec(dllimport) void WINAPI AcquireSRWLockExclusive(SRWLOCK*);
 __declspec(dllimport) void WINAPI ReleaseSRWLockExclusive(SRWLOCK*);
 __declspec(dllimport) void WINAPI AcquireSRWLockShared(SRWLOCK*);
@@ -630,6 +650,15 @@ static HWND gBleOtaTimeoutEdit = NULL;
 static HWND gBleOtaChannelCombo = NULL;
 static HWND gBleOtaChipCombo = NULL;
 static HWND gBleOtaRowChipCombos[BLE_OTA_VISIBLE_ROWS];
+static HWND gBleSettingDcPowerEdit = NULL;
+static HWND gBleSettingAcPowerEdit = NULL;
+static HWND gBleSettingSocLowEdit = NULL;
+static HWND gBleSettingSocHighEdit = NULL;
+static HWND gBleSettingsActiveEdit = NULL;
+static HWND gBleAdvancedGridCurrentEdit = NULL;
+static HWND gBleAdvancedChgCurrentEdit = NULL;
+static HWND gBleAdvancedActiveEdit = NULL;
+static int gBleAdvancedSliderDrag = 0; /* 1=Grid current, 2=Charge current */
 static HINSTANCE gInstance = NULL;
 static HANDLE gSerialHandle = INVALID_HANDLE_VALUE;
 static HMODULE gControlCanModule = NULL;
@@ -673,6 +702,10 @@ static wchar_t gBleModbusPath[1024];
 static wchar_t gBleTrafficPath[1024];
 static wchar_t gBleOtaStatusPath[1024];
 static wchar_t gBleOtaManifestPath[1024];
+static wchar_t gBleSettingsPath[1024];
+static wchar_t gBleAdvancedPath[1024];
+static wchar_t gBleBatteryPath[1024];
+static wchar_t gBlePackPath[1024];
 static BLE_OTA_ITEM gBleOtaItems[BLE_OTA_MAX_FILES];
 static int gBleOtaCount = 0;
 static int gBleOtaSelected = -1;
@@ -715,9 +748,103 @@ static int gBlePvInputPower = 0;
 static int gBleAcInputPower = 0;
 static int gBleAcState = -1;
 static int gBleDcState = -1;
+/* V1.0.15: Dashboard 100~149 contains warning/fault registers; keep a realtime mirror. */
+static unsigned short gBleWarnRaw[4];   /* 126..129 */
+static unsigned short gBleFaultRaw[6];  /* 133..138 */
+static int gBleWarnCount = 0;
+static int gBleFaultCount = 0;
 static DWORD gBleModbusSequence = 0;
 static DWORD gBleTrafficSequence = 0;
 static wchar_t gBleModbusStatus[96] = L"等待发送自定义指令";
+
+/* V1.0.5: 设置组独立有效位。ECO开关继续只依赖自身寄存器。 */
+#define BLE_SET_VALID_DC_ECO        0x001
+#define BLE_SET_VALID_DC_DETAIL     0x002
+#define BLE_SET_VALID_AC_ECO        0x004
+#define BLE_SET_VALID_AC_DETAIL     0x008
+#define BLE_SET_VALID_CHARGE        0x010
+#define BLE_SET_VALID_LCD           0x020
+#define BLE_SET_VALID_CHILD_SWITCH  0x040
+#define BLE_SET_VALID_CHILD_LEVEL   0x080
+#define BLE_SET_VALID_SOC_HIGH      0x100
+#define BLE_SET_VALID_ALL           0x1FF
+
+/* V1.0.5: 设备设置寄存器镜像。UI永远以设备回读值为事实源。 */
+static BOOL gBleSettingsValid = FALSE;
+static DWORD gBleSettingsSequence = 0;
+static int gBleSettingsValidMask = 0;
+static int gBleSetDcEco = -1;
+static int gBleSetDcEcoTime = -1;
+static int gBleSetDcEcoPower = -1;
+static int gBleSetAcEco = -1;
+static int gBleSetAcEcoTime = -1;
+static int gBleSetAcEcoPower = -1;
+static int gBleSetChargerMode = -1;
+static int gBleSetSuperPower = -1;
+static int gBleSetLcdActiveTime = -1;
+static int gBleSetSocLowRaw = 0;
+static int gBleSetChildLevelRaw = 0;
+static int gBleSetChildSwitchRaw = 0;
+static int gBleSetSocHighRaw = 0;
+static int gBleSetDcOutputRaw = 0;
+static int gBleSetSocLowEnable = 0;
+static int gBleSetSocLow = 0;
+static int gBleSetSocHighEnable = 0;
+static int gBleSetSocHigh = 0;
+static int gBleSetChildSwitch = 0;
+static int gBleSetChildLevel = 0;
+static int gBleSetDcVoltage = 0;
+static wchar_t gBleSettingsLastUpdate[32] = L"--";
+static wchar_t gBleSettingsStatus[192] = L"等待进入设置页面";
+
+/* V1.0.20 Advanced Settings mirror + charge current register 2214. */
+#define BLE_ADV_VALID_INV_VOLT      0x001
+#define BLE_ADV_VALID_INV_FREQ      0x002
+#define BLE_ADV_VALID_CHG_CURRENT   0x004
+#define BLE_ADV_VALID_AREA          0x008
+#define BLE_ADV_VALID_GRID_PLUS     0x010
+#define BLE_ADV_VALID_MEMORY        0x020
+#define BLE_ADV_VALID_GRID_CURRENT  0x040
+#define BLE_ADV_VALID_ALL           0x07F
+static BOOL gBleAdvancedValid = FALSE;
+static DWORD gBleAdvancedSequence = 0;
+static int gBleAdvancedValidMask = 0;
+static int gBleAdvInvVoltage = -1;
+static int gBleAdvInvFreq = -1;
+static int gBleAdvChgMaxCurrent = -1;
+static int gBleAdvArea = -1;
+static int gBleAdvGridPlus = -1;
+static int gBleAdvMemory = -1;
+static int gBleAdvGridMaxCurrent = -1;
+/* V1.0.20: separate UI draft from device mirror so 180ms polling never snaps sliders back. */
+static int gBleAdvGridCurrentDraft = -1;
+static int gBleAdvChgCurrentDraft = -1;
+static BOOL gBleAdvGridCurrentDirty = FALSE;
+static BOOL gBleAdvChgCurrentDirty = FALSE;
+static wchar_t gBleAdvancedLastUpdate[32] = L"--";
+static wchar_t gBleAdvancedStatus[192] = L"等待进入高级设置页面";
+
+/* V1.0.15 Battery Center: 6000~6048汇总 + 单PACK6100~6176 + 126~138故障/告警。 */
+#define BLE_BATTERY_REG_START 6000
+#define BLE_BATTERY_REG_COUNT 49
+static BOOL gBleBatteryValid = FALSE;
+static DWORD gBleBatterySequence = 0;
+static int gBleBatteryValidMask = 0;
+static unsigned short gBleBatteryRaw[BLE_BATTERY_REG_COUNT];
+static wchar_t gBleBatteryLastUpdate[32] = L"--";
+static wchar_t gBleBatteryStatus[192] = L"等待进入电池信息页面";
+static int gBleBatterySlaveId = 1;
+
+/* V1.0.15: single PACK detail. Main Modbus route first, zero/implausible blocks rejected, PackID verified. */
+#define BLE_PACK_REG_START 6100
+#define BLE_PACK_REG_COUNT 77
+static BOOL gBlePackValid = FALSE;
+static DWORD gBlePackSequence = 0;
+static unsigned short gBlePackRaw[BLE_PACK_REG_COUNT];
+static wchar_t gBlePackLastUpdate[32] = L"--";
+static wchar_t gBlePackStatus[192] = L"等待进入单PACK页面";
+static int gBlePackSlaveId = 1;
+static int gBlePackSelected = 0;
 
 static HFONT gFontLogo = NULL;
 static HFONT gFontMission = NULL;
@@ -729,7 +856,7 @@ static HFONT gFontSmall = NULL;
 static HFONT gFontTiny = NULL;
 static HFONT gFontPercent = NULL;
 
-static int gCurrentPage = 0; /* 0 home, 1 bluetooth, 2 serial, 3 CAN mode, 4 CAN single, 5 CAN broadcast, 6 BLE OTA */
+static int gCurrentPage = 0; /* 0 home,1 BLE,2 serial,3 CAN,4/5 CAN OTA,6 BLE OTA,7 settings,8 battery,9 advanced,10 fault/warn,11 single PACK */
 static int gCanMode = 0; /* 1 single, 2 broadcast */
 static BOOL gCanConnected = FALSE;
 static DWORD gCanDeviceIndex = 0;
@@ -814,6 +941,39 @@ static RECT gBleRefreshRect;
 static RECT gBleSlaveApplyRect;
 static RECT gBleModbusSendRect;
 static RECT gBleOtaEntryRect;
+static RECT gBleSettingsEntryRect;
+static RECT gBleAdvancedEntryRect;
+static RECT gBleAdvancedRefreshRect;
+static RECT gBleAdvancedInvVoltageRects[3];
+static RECT gBleAdvancedFreqRects[2];
+static RECT gBleAdvancedGridPlusRect;
+static RECT gBleAdvancedMemoryRect;
+static RECT gBleAdvancedGridCurrentApplyRect;
+static RECT gBleAdvancedChgCurrentApplyRect;
+static RECT gBleAdvancedGridCurrentSliderRect;
+static RECT gBleAdvancedChgCurrentSliderRect;
+static RECT gBleAdvancedFactoryResetRect;
+static RECT gBleBatteryRect;
+static RECT gBleBatteryRefreshRect;
+static RECT gBleFaultEntryRect;
+static RECT gBlePackRects[16];
+static RECT gBlePackRefreshRect;
+static RECT gBleSettingsRefreshRect;
+static RECT gBleSettingDcEcoRects[3];
+static RECT gBleSettingDcTimeRects[4];
+static RECT gBleSettingDcPowerApplyRect;
+static RECT gBleSettingAcEcoRects[3];
+static RECT gBleSettingAcTimeRects[4];
+static RECT gBleSettingAcPowerApplyRect;
+static RECT gBleSettingChargerRects[4];
+static RECT gBleSettingSuperPowerRect;
+static RECT gBleSettingLcdRects[5];
+static RECT gBleSettingSocLowToggleRect;
+static RECT gBleSettingSocLowApplyRect;
+static RECT gBleSettingChildRects[3];
+static RECT gBleSettingSocHighToggleRect;
+static RECT gBleSettingSocHighApplyRect;
+static RECT gBleSettingDcVoltageRects[2];
 static RECT gBleDeviceRows[BLE_VISIBLE_ROWS];
 static RECT gBleOtaAddRect;
 static RECT gBleOtaClearRect;
@@ -899,6 +1059,12 @@ static void DrawInputShell(HDC dc, RECT rect, BOOL emphasized);
 static void DrawUiSelectorControl(HDC dc, const RECT* rect, int kind, BOOL open, BOOL hover);
 static void DrawUiSelectorPopup(HDC dc, const RECT* client);
 static void DrawBleVersionViewport(HDC dc, const RECT* rect);
+static COLORREF ThemeBorder(void);
+static COLORREF ThemeMuted2(void);
+static COLORREF ThemeInputBorder(void);
+static void UseFillAndPen(HDC dc, COLORREF fillColor, COLORREF penColor);
+static void DrawRoundBox(HDC dc, const RECT* rect, int radius, COLORREF fillColor, COLORREF borderColor);
+static int BleVersionGroupCount(void);
 
 static void BuildSiblingPath(LPWSTR output, LPCWSTR fileName, int maxCount)
 {
@@ -1162,6 +1328,10 @@ static BOOL EnsureBleBackend(void)
     BuildSiblingPath(gBleTrafficPath, L"BLUETTI_BLE_Traffic.tmp", 1024);
     BuildSiblingPath(gBleOtaStatusPath, L"BLUETTI_BLE_OTA_Status.tmp", 1024);
     BuildSiblingPath(gBleOtaManifestPath, L"BLUETTI_BLE_OTA_Manifest.tmp", 1024);
+    BuildSiblingPath(gBleSettingsPath, L"BLUETTI_BLE_Settings.tmp", 1024);
+    BuildSiblingPath(gBleAdvancedPath, L"BLUETTI_BLE_Advanced.tmp", 1024);
+    BuildSiblingPath(gBleBatteryPath, L"BLUETTI_BLE_Battery.tmp", 1024);
+    BuildSiblingPath(gBlePackPath, L"BLUETTI_BLE_Pack.tmp", 1024);
     DeleteFileW(gBleCommandPath);
     DeleteFileW(gBleDevicePath);
     DeleteFileW(gBleStatusPath);
@@ -1170,6 +1340,10 @@ static BOOL EnsureBleBackend(void)
     DeleteFileW(gBleTrafficPath);
     DeleteFileW(gBleOtaStatusPath);
     DeleteFileW(gBleOtaManifestPath);
+    DeleteFileW(gBleSettingsPath);
+    DeleteFileW(gBleAdvancedPath);
+    DeleteFileW(gBleBatteryPath);
+    DeleteFileW(gBlePackPath);
     for (index = 0; index < (int)(sizeof(startup) / sizeof(BYTE)); index++) { ((BYTE*)&startup)[index] = 0; }
     for (index = 0; index < (int)(sizeof(process) / sizeof(BYTE)); index++) { ((BYTE*)&process)[index] = 0; }
     startup.cb = sizeof(startup);
@@ -1238,6 +1412,163 @@ static BOOL ApplyBleSlaveAddress(BOOL showError)
     wsprintfW(gBleStatusText, L"Modbus 从机地址已设置为 %d", slaveId);
     return TRUE;
 }
+
+static void SendBleSettingWrite(int registerAddress, int value)
+{
+    wchar_t command[96];
+    int slaveId;
+    if (!ReadBleSlaveAddress(TRUE, &slaveId)) { return; }
+    wsprintfW(command, L"SETTING_WRITE\t%d\t%d\t%d", registerAddress, value, slaveId);
+    SendBleCommand(command);
+    wsprintfW(gBleSettingsStatus, L"正在写入寄存器%d……", registerAddress);
+}
+
+static void SendBleSettingMaskWrite(int registerAddress, int mask, int value)
+{
+    wchar_t command[112];
+    int slaveId;
+    if (!ReadBleSlaveAddress(TRUE, &slaveId)) { return; }
+    wsprintfW(command, L"SETTING_MASK_WRITE\t%d\t%d\t%d\t%d", registerAddress, mask, value, slaveId);
+    SendBleCommand(command);
+    wsprintfW(gBleSettingsStatus, L"正在安全更新寄存器%d……", registerAddress);
+}
+
+static BOOL ReadSettingEditValue(HWND edit, int minValue, int maxValue, LPCWSTR title, int* output)
+{
+    wchar_t text[32];
+    int value;
+    GetWindowTextW(edit, text, 32);
+    if (!ParseUserNumber(text, FALSE, &value) || value < minValue || value > maxValue)
+    {
+        MessageBoxW(gWindow, title, L"设备设置", MB_OK | MB_ICONWARNING);
+        return FALSE;
+    }
+    if (output != NULL) { *output = value; }
+    return TRUE;
+}
+
+static void RequestBleSettingsNow(void)
+{
+    wchar_t command[64];
+    int slaveId;
+    if (!ReadBleSlaveAddress(TRUE, &slaveId)) { return; }
+    wsprintfW(command, L"SETTINGS_READNOW\t%d", slaveId);
+    SendBleCommand(command);
+    WCopy(gBleSettingsStatus, L"正在重新同步全部设置……", 192);
+}
+
+static void SendBleAdvancedWrite(int registerAddress, int value)
+{
+    wchar_t command[96];
+    int slaveId;
+    if (!ReadBleSlaveAddress(TRUE, &slaveId)) { return; }
+    wsprintfW(command, L"ADVANCED_WRITE\t%d\t%d\t%d", registerAddress, value, slaveId);
+    SendBleCommand(command);
+    wsprintfW(gBleAdvancedStatus, L"正在写入寄存器%d……", registerAddress);
+}
+static void RequestBleAdvancedNow(void)
+{
+    wchar_t command[64];
+    int slaveId;
+    if (!ReadBleSlaveAddress(TRUE, &slaveId)) { return; }
+    wsprintfW(command, L"ADVANCED_READNOW\t%d", slaveId);
+    SendBleCommand(command);
+    WCopy(gBleAdvancedStatus, L"正在重新同步高级设置……", 192);
+}
+static BOOL ReadAdvancedEditValue(HWND edit, int minValue, int maxValue, LPCWSTR warning, int* output)
+{
+    wchar_t text[32]; int value;
+    GetWindowTextW(edit, text, 32);
+    if (!ParseUserNumber(text, FALSE, &value) || value < minValue || value > maxValue)
+    {
+        MessageBoxW(gWindow, warning, L"高级设置", MB_OK | MB_ICONWARNING); return FALSE;
+    }
+    if (output != NULL) { *output = value; }
+    return TRUE;
+}
+
+static int ReadAdvancedEditValueClamped(HWND edit, int fallback, int minValue, int maxValue)
+{
+    wchar_t text[64];
+    int value = fallback;
+    if (edit != NULL)
+    {
+        GetWindowTextW(edit, text, 64);
+        if (!ParseUserNumber(text, FALSE, &value)) { value = fallback; }
+    }
+    if (value < minValue) { value = minValue; }
+    if (value > maxValue) { value = maxValue; }
+    return value;
+}
+
+static int AdvancedGridSliderMax(void)
+{
+    int value = (gBleAdvGridMaxCurrent > 0) ? gBleAdvGridMaxCurrent : 50;
+    if (value <= 50) { return 50; }
+    if (value <= 100) { return 100; }
+    value = ((value + 9) / 10) * 10;
+    if (value > 65535) { value = 65535; }
+    return value;
+}
+
+static void DrawAdvancedCurrentSlider(HDC dc, const RECT* rect, int value, int maxValue, BOOL enabled, COLORREF accent)
+{
+    RECT track = *rect;
+    RECT fill = *rect;
+    int centerY = (rect->top + rect->bottom) / 2;
+    int left = rect->left + 7;
+    int right = rect->right - 7;
+    int thumbX;
+    COLORREF inactive = enabled ? ThemeInputBorder() : ThemeBorder();
+    if (maxValue < 1) { maxValue = 1; }
+    if (value < 0) { value = 0; }
+    if (value > maxValue) { value = maxValue; }
+    track.left = left; track.right = right; track.top = centerY - 3; track.bottom = centerY + 3;
+    DrawRoundBox(dc, &track, 6, inactive, inactive);
+    thumbX = left + (right - left) * value / maxValue;
+    if (enabled && thumbX > left)
+    {
+        fill = track; fill.right = thumbX;
+        DrawRoundBox(dc, &fill, 6, accent, accent);
+    }
+    UseFillAndPen(dc, enabled ? accent : ThemeMuted2(), gDarkMode ? RGB(245,245,247) : RGB(255,255,255));
+    Ellipse(dc, thumbX - 7, centerY - 7, thumbX + 8, centerY + 8);
+}
+
+static void SetAdvancedSliderValueFromX(int sliderType, int x)
+{
+    RECT* rect;
+    HWND edit;
+    int maxValue;
+    int left;
+    int right;
+    int value;
+    wchar_t text[32];
+    if (sliderType == 1)
+    {
+        rect = &gBleAdvancedGridCurrentSliderRect;
+        edit = gBleAdvancedGridCurrentEdit;
+        maxValue = AdvancedGridSliderMax();
+    }
+    else
+    {
+        rect = &gBleAdvancedChgCurrentSliderRect;
+        edit = gBleAdvancedChgCurrentEdit;
+        { int gridLimit = (gBleAdvGridCurrentDraft >= 0) ? gBleAdvGridCurrentDraft : gBleAdvGridMaxCurrent;
+          maxValue = ((gBleAdvancedValidMask & BLE_ADV_VALID_GRID_CURRENT) && gridLimit > 0) ? gridLimit : 1; }
+    }
+    left = rect->left + 7; right = rect->right - 7;
+    if (right <= left || edit == NULL) { return; }
+    if (x < left) { x = left; }
+    if (x > right) { x = right; }
+    value = (x - left) * maxValue / (right - left);
+    if (sliderType == 1) { gBleAdvGridCurrentDraft = value; gBleAdvGridCurrentDirty = TRUE; }
+    else { gBleAdvChgCurrentDraft = value; gBleAdvChgCurrentDirty = TRUE; }
+    wsprintfW(text, L"%d", value);
+    SetWindowTextW(edit, text);
+    InvalidateRect(gWindow, NULL, FALSE);
+}
+
 
 static void SendBleManualModbusRequest(void)
 {
@@ -1369,6 +1700,13 @@ static void ResetBleRealtimeData(void)
     gBleAcInputPower = 0;
     gBleAcState = -1;
     gBleDcState = -1;
+    {
+        int i;
+        for (i = 0; i < 4; i++) { gBleWarnRaw[i] = 0; }
+        for (i = 0; i < 6; i++) { gBleFaultRaw[i] = 0; }
+        gBleWarnCount = 0;
+        gBleFaultCount = 0;
+    }
     WCopy(gBleLastUpdate, L"--", 32);
     WCopy(gBleAddressMode, L"手动指定", 32);
     gBleSlaveId = gBleConfiguredSlaveId;
@@ -1435,6 +1773,27 @@ static void RefreshBleData(void)
         if (field > 12 && fields[12][0] != 0) { WCopy(gBleDeviceType, fields[12], 96); }
         if (field > 13 && fields[13][0] != 0) { WCopy(gBleDeviceSn, fields[13], 128); }
         if (field > 14 && fields[14][0] != 0) { WCopy(gBleVersions, fields[14], 512); UpdateBleVersionListControl(); }
+        /* V1.0.13 appended fields: Warn126..129 then Fault133..138. */
+        if (field >= 25)
+        {
+            int i;
+            gBleWarnCount = 0;
+            gBleFaultCount = 0;
+            for (i = 0; i < 4; i++)
+            {
+                unsigned short value = (unsigned short)ParseSignedInt(fields[15 + i]);
+                int bit;
+                gBleWarnRaw[i] = value;
+                for (bit = 0; bit < 16; bit++) { if ((value & (1u << bit)) != 0) { gBleWarnCount++; } }
+            }
+            for (i = 0; i < 6; i++)
+            {
+                unsigned short value = (unsigned short)ParseSignedInt(fields[19 + i]);
+                int bit;
+                gBleFaultRaw[i] = value;
+                for (bit = 0; bit < 16; bit++) { if ((value & (1u << bit)) != 0) { gBleFaultCount++; } }
+            }
+        }
         WCopy(gBleDataStatus, L"Modbus实时数据已更新", 192);
         gBleDataValid = TRUE;
         ConfirmBleConnectedFromModbusData();
@@ -1447,6 +1806,553 @@ static void RefreshBleData(void)
     else if (field > 1)
     {
         WCopy(gBleDataStatus, fields[1], 192);
+    }
+}
+
+static unsigned short BleBatteryReg(int address)
+{
+    int index = address - BLE_BATTERY_REG_START;
+    if (index < 0 || index >= BLE_BATTERY_REG_COUNT) { return 0; }
+    return gBleBatteryRaw[index];
+}
+
+static unsigned long BleBatteryU32(int lowAddress)
+{
+    unsigned long low = (unsigned long)BleBatteryReg(lowAddress);
+    unsigned long high = (unsigned long)BleBatteryReg(lowAddress + 1);
+    return low | (high << 16);
+}
+
+static int BleBatterySigned16(int address)
+{
+    unsigned short raw = BleBatteryReg(address);
+    if ((raw & 0x8000u) != 0) { return (int)raw - 65536; }
+    return (int)raw;
+}
+
+static int BleCountBits16(unsigned short value)
+{
+    int count = 0;
+    int bit;
+    for (bit = 0; bit < 16; bit++) { if ((value & (1u << bit)) != 0) { count++; } }
+    return count;
+}
+
+static int BleBatteryConfiguredPackCount(void)
+{
+    int count = gBleBatteryValid ? (int)BleBatteryReg(6001) : 0;
+    unsigned short capOnlineMask = BleBatteryReg(6016);
+    /* 6001 is the protocol count and is authoritative. A few one-pack builds report 0
+       while 6016 already marks PACK1 merged; keep that as compatibility fallback only. */
+    if (count <= 0 && gBleBatteryValid && capOnlineMask != 0) { count = BleCountBits16(capOnlineMask); }
+    if (count < 0) { count = 0; }
+    if (count > 16) { count = 16; }
+    return count;
+}
+
+static LPCWSTR BleBatteryRunStateText(unsigned short value)
+{
+    if (value == 0x44) { return L"自检"; }
+    if (value == 0x33) { return L"关机"; }
+    if (value == 0x22) { return L"运行"; }
+    if (value == 0x11) { return L"待机"; }
+    if (value == 0x00) { return L"初始化"; }
+    return L"未知";
+}
+
+static LPCWSTR BleBatteryFlowStateText(unsigned short value)
+{
+    if (value == 1) { return L"充电"; }
+    if (value == 2) { return L"放电"; }
+    return L"空闲";
+}
+
+static void FormatTenthValue(wchar_t* output, int outputCount, int raw, LPCWSTR unit)
+{
+    int absolute = raw < 0 ? -raw : raw;
+    int whole = absolute / 10;
+    int fraction = absolute % 10;
+    if (raw < 0) { wsprintfW(output, L"-%d.%d %s", whole, fraction, unit); }
+    else { wsprintfW(output, L"%d.%d %s", whole, fraction, unit); }
+    (void)outputCount;
+}
+
+static void FormatHundredthValue(wchar_t* output, int outputCount, int raw, LPCWSTR unit)
+{
+    int absolute = raw < 0 ? -raw : raw;
+    int whole = absolute / 100;
+    int fraction = absolute % 100;
+    if (raw < 0) { wsprintfW(output, L"-%d.%02d %s", whole, fraction, unit); }
+    else { wsprintfW(output, L"%d.%02d %s", whole, fraction, unit); }
+    (void)outputCount;
+}
+
+static void FormatMinutesSmart(wchar_t* output, int outputCount, unsigned int minutes)
+{
+    unsigned int days;
+    unsigned int hours;
+    unsigned int remainMinutes;
+    if (outputCount <= 0) { return; }
+    if (minutes == 0U || minutes == 0xFFFFU)
+    {
+        WCopy(output, L"--", outputCount);
+        return;
+    }
+    if (minutes < 60U)
+    {
+        wsprintfW(output, L"%u 分钟", minutes);
+    }
+    else if (minutes < 1440U)
+    {
+        hours = minutes / 60U;
+        remainMinutes = minutes % 60U;
+        if (remainMinutes > 0U) { wsprintfW(output, L"%u 小时 %u 分钟", hours, remainMinutes); }
+        else { wsprintfW(output, L"%u 小时", hours); }
+    }
+    else
+    {
+        days = minutes / 1440U;
+        hours = (minutes % 1440U) / 60U;
+        if (hours > 0U) { wsprintfW(output, L"%u 天 %u 小时", days, hours); }
+        else { wsprintfW(output, L"%u 天", days); }
+    }
+}
+
+static void FormatMilliValue(wchar_t* output, int outputCount, unsigned long raw, LPCWSTR unit)
+{
+    unsigned long whole = raw / 1000UL;
+    unsigned long fraction = raw % 1000UL;
+    wsprintfW(output, L"%u.%03u %s", (UINT)whole, (UINT)fraction, unit);
+    (void)outputCount;
+}
+
+static void RefreshBleBattery(void)
+{
+    static wchar_t text[8192];
+    wchar_t* fields[64];
+    wchar_t* cursor;
+    int field = 0;
+    int index;
+    DWORD sequence;
+    if (gBleBatteryPath[0] == 0 || ReadUtf16File(gBleBatteryPath, text, 8192) <= 0) { return; }
+    fields[field++] = text;
+    cursor = text;
+    while (*cursor != 0 && field < 64)
+    {
+        if (*cursor == L'\t' || *cursor == L'\r' || *cursor == L'\n')
+        {
+            *cursor = 0;
+            if (*(cursor + 1) != 0) { fields[field++] = cursor + 1; }
+            if (*(cursor + 1) == L'\n') { cursor++; }
+        }
+        cursor++;
+    }
+    if (field >= (3 + BLE_BATTERY_REG_COUNT) && WStartsWithNoCase(fields[0], L"BATTERY") && !WStartsWithNoCase(fields[0], L"BATTERYERROR"))
+    {
+        sequence = (DWORD)ParseSignedInt(fields[1]);
+        if (sequence == gBleBatterySequence) { return; }
+        gBleBatterySequence = sequence;
+        gBleBatteryValidMask = ParseSignedInt(fields[2]);
+        for (index = 0; index < BLE_BATTERY_REG_COUNT; index++) { gBleBatteryRaw[index] = (unsigned short)ParseSignedInt(fields[3 + index]); }
+        if (field > 3 + BLE_BATTERY_REG_COUNT) { WCopy(gBleBatteryLastUpdate, fields[3 + BLE_BATTERY_REG_COUNT], 32); }
+        if (field > 4 + BLE_BATTERY_REG_COUNT) { gBleBatterySlaveId = ParseSignedInt(fields[4 + BLE_BATTERY_REG_COUNT]); }
+        if (field > 5 + BLE_BATTERY_REG_COUNT) { WCopy(gBleBatteryStatus, fields[5 + BLE_BATTERY_REG_COUNT], 192); }
+        else { WCopy(gBleBatteryStatus, L"PACK汇总信息已同步", 192); }
+        gBleBatteryValid = (gBleBatteryValidMask & 0x01) != 0;
+    }
+    else if (WStartsWithNoCase(fields[0], L"BATTERYERROR"))
+    {
+        sequence = field > 1 ? (DWORD)ParseSignedInt(fields[1]) : gBleBatterySequence + 1;
+        if (sequence != gBleBatterySequence) { gBleBatterySequence = sequence; }
+        if (field > 2) { WCopy(gBleBatteryStatus, fields[2], 192); }
+        else { WCopy(gBleBatteryStatus, L"PACK汇总信息读取失败，正在重试", 192); }
+        gBleBatteryValid = FALSE;
+        gBleBatteryValidMask &= ~0x01;
+    }
+    else if (WStartsWithNoCase(fields[0], L"BATTERYWAIT"))
+    {
+        if (field > 2) { WCopy(gBleBatteryStatus, fields[2], 192); }
+    }
+}
+
+static unsigned short BlePackReg(int address)
+{
+    int index = address - BLE_PACK_REG_START;
+    if (index < 0 || index >= BLE_PACK_REG_COUNT) { return 0; }
+    return gBlePackRaw[index];
+}
+
+static unsigned long BlePackU32(int lowAddress)
+{
+    unsigned long low = (unsigned long)BlePackReg(lowAddress);
+    unsigned long high = (unsigned long)BlePackReg(lowAddress + 1);
+    return low | (high << 16);
+}
+
+static void BlePackSnDecimal(wchar_t* output, int outputCount)
+{
+    unsigned long words[4];
+    wchar_t reverse[32];
+    int digitCount = 0;
+    int nonZero = 1;
+    int i;
+    int out = 0;
+    if (outputCount <= 0) { return; }
+    if (BlePackReg(6107) == 0 && BlePackReg(6108) == 0 && BlePackReg(6109) == 0 && BlePackReg(6110) == 0)
+    {
+        WCopy(output, L"--", outputCount);
+        return;
+    }
+    words[0] = (unsigned long)BlePackReg(6110);
+    words[1] = (unsigned long)BlePackReg(6109);
+    words[2] = (unsigned long)BlePackReg(6108);
+    words[3] = (unsigned long)BlePackReg(6107);
+    while (nonZero && digitCount < 31)
+    {
+        unsigned long carry = 0;
+        nonZero = 0;
+        for (i = 0; i < 4; i++)
+        {
+            unsigned long current = carry * 65536UL + words[i];
+            words[i] = current / 10UL;
+            carry = current % 10UL;
+            if (words[i] != 0) { nonZero = 1; }
+        }
+        reverse[digitCount++] = (wchar_t)(L'0' + carry);
+    }
+    if (digitCount == 0) { reverse[digitCount++] = L'0'; }
+    while (digitCount > 0 && out < outputCount - 1) { output[out++] = reverse[--digitCount]; }
+    output[out] = 0;
+}
+
+static int BlePackSigned16(int address)
+{
+    unsigned short raw = BlePackReg(address);
+    if ((raw & 0x8000u) != 0) { return (int)raw - 65536; }
+    return (int)raw;
+}
+
+static void BlePackAscii(wchar_t* output, int outputCount)
+{
+    int out = 0;
+    int reg;
+    if (outputCount <= 0) { return; }
+    for (reg = 6101; reg <= 6106 && out < outputCount - 1; reg++)
+    {
+        unsigned short value = BlePackReg(reg);
+        BYTE low = (BYTE)(value & 0xFF);
+        BYTE high = (BYTE)((value >> 8) & 0xFF);
+        if (low >= 32 && low <= 126 && out < outputCount - 1) { output[out++] = (wchar_t)low; }
+        if (high >= 32 && high <= 126 && out < outputCount - 1) { output[out++] = (wchar_t)high; }
+    }
+    output[out] = 0;
+    if (out == 0) { WCopy(output, L"--", outputCount); }
+}
+
+static LPCWSTR BlePackLowVoltageTypeText(int type)
+{
+    switch (type)
+    {
+        case 1: return L"AC200Max";
+        case 2: return L"B230";
+        case 3: return L"B300";
+        case 4: return L"PR005";
+        case 5: return L"B80";
+        default: return L"--";
+    }
+}
+
+static void BlePackModelText(wchar_t* output, int outputCount)
+{
+    BlePackAscii(output, outputCount);
+    if (output[0] == L'-' && output[1] == L'-' && output[2] == 0)
+    {
+        WCopy(output, BlePackLowVoltageTypeText((int)BlePackReg(6157)), outputCount);
+    }
+}
+
+static LPCWSTR BlePackSoftwareTypeText(int softwareType)
+{
+    int baseType = softwareType >= 1000 ? softwareType - 1000 : softwareType;
+    switch (baseType)
+    {
+        case 0: return L"IOT";
+        case 1: return L"INV_ARM";
+        case 2: return L"INV_DSP";
+        case 3: return L"BMS";
+        case 4: return L"BA";
+        case 5: return L"PACK_BCU";
+        case 6: return L"PACK_BMU";
+        case 7: return L"PACK_BMS";
+        case 8: return L"PACK_M1";
+        case 9: return L"PACK_SAFE";
+        case 10: return L"PACK_HV";
+        default: return L"TYPE";
+    }
+}
+
+static void RefreshBlePack(void)
+{
+    static wchar_t text[12288];
+    wchar_t* fields[96];
+    wchar_t* cursor;
+    int field = 0;
+    int index;
+    DWORD sequence;
+    if (gBlePackPath[0] == 0 || ReadUtf16File(gBlePackPath, text, 12288) <= 0) { return; }
+    fields[field++] = text;
+    cursor = text;
+    while (*cursor != 0 && field < 96)
+    {
+        if (*cursor == L'\t' || *cursor == L'\r' || *cursor == L'\n')
+        {
+            *cursor = 0;
+            if (*(cursor + 1) != 0) { fields[field++] = cursor + 1; }
+            if (*(cursor + 1) == L'\n') { cursor++; }
+        }
+        cursor++;
+    }
+    if (field >= (2 + BLE_PACK_REG_COUNT) && WStartsWithNoCase(fields[0], L"PACK") && !WStartsWithNoCase(fields[0], L"PACKERROR"))
+    {
+        sequence = (DWORD)ParseSignedInt(fields[1]);
+        if (sequence == gBlePackSequence) { return; }
+        gBlePackSequence = sequence;
+        for (index = 0; index < BLE_PACK_REG_COUNT; index++) { gBlePackRaw[index] = (unsigned short)ParseSignedInt(fields[2 + index]); }
+        if (field > 2 + BLE_PACK_REG_COUNT) { WCopy(gBlePackLastUpdate, fields[2 + BLE_PACK_REG_COUNT], 32); }
+        if (field > 3 + BLE_PACK_REG_COUNT) { gBlePackSlaveId = ParseSignedInt(fields[3 + BLE_PACK_REG_COUNT]); }
+        if (field > 4 + BLE_PACK_REG_COUNT) { gBlePackSelected = ParseSignedInt(fields[4 + BLE_PACK_REG_COUNT]); }
+        if (field > 5 + BLE_PACK_REG_COUNT) { WCopy(gBlePackStatus, fields[5 + BLE_PACK_REG_COUNT], 192); }
+        else { WCopy(gBlePackStatus, L"单PACK信息已同步", 192); }
+        gBlePackValid = TRUE;
+    }
+    else if (WStartsWithNoCase(fields[0], L"PACKERROR"))
+    {
+        sequence = field > 1 ? (DWORD)ParseSignedInt(fields[1]) : gBlePackSequence + 1;
+        gBlePackSequence = sequence;
+        if (field > 2) { WCopy(gBlePackStatus, fields[2], 192); }
+        gBlePackValid = FALSE;
+    }
+    else if (WStartsWithNoCase(fields[0], L"PACKWAIT"))
+    {
+        if (field > 2) { WCopy(gBlePackStatus, fields[2], 192); }
+    }
+}
+
+/* Portable-energy-storage fault/warning definitions supplied for 126~129 / 133~138. */
+typedef struct tagBLE_FAULT_DEF
+{
+    int Group;
+    int Bit;
+    LPCWSTR Code;
+    LPCWSTR Name;
+} BLE_FAULT_DEF;
+
+static const BLE_FAULT_DEF BLE_FAULT_DEFS[] = {
+    {0,0,L"E001",L"逆变器过载"},{0,1,L"E002",L"逆变器过温"},{0,2,L"E003",L"逆变器短路"},{0,3,L"E004",L"逆变输出故障"},
+    {0,4,L"E005",L"LLC输出故障"},{0,5,L"E006",L"BUS过压"},{0,6,L"E007",L"BUS欠压"},{0,7,L"E008",L"硬件逆变过流"},
+    {0,8,L"E009",L"硬件输入过流"},{0,9,L"E010",L"电池电压过高"},{0,10,L"E011",L"电池电压过低"},{0,11,L"E012",L"主继电器失效"},
+    {0,12,L"E013",L"电网继电器失效"},{0,13,L"E014",L"零漂异常"},{0,14,L"E015",L"辅源故障"},{0,15,L"E016",L"风扇故障"},
+    {1,0,L"E017",L"多主机错误"},{1,1,L"E018",L"缺相"},{1,2,L"E019",L"多机通信异常"},{1,3,L"E020",L"多机同步异常"},
+    {1,4,L"E021",L"多机配置异常"},{1,5,L"E022",L"发电机电压异常"},{1,6,L"E023",L"系统初始化异常"},{1,7,L"E024",L"并机继电器故障"},
+    {1,8,L"E025",L"电网输入过流"},{1,9,L"E026",L"整机过载"},{1,10,L"E027",L"DC输出过载"},{1,11,L"E028",L"逆变器低温"},
+    {2,0,L"E033",L"PV1过压"},{2,1,L"E034",L"PV2过压"},{2,2,L"E035",L"PV3过压"},{2,3,L"E036",L"PV1过流"},
+    {2,4,L"E037",L"PV2过流"},{2,5,L"E038",L"PV3过流"},{2,6,L"E039",L"PV1过温"},{2,7,L"E040",L"PV2过温"},
+    {2,8,L"E041",L"PV3过温"},{2,9,L"E042",L"PV预充故障"},{2,10,L"E043",L"PV1硬件故障"},{2,11,L"E044",L"PV2硬件故障"},{2,12,L"E045",L"PV3硬件故障"},
+    {3,0,L"E049",L"PV4过压"},{3,1,L"E050",L"PV4过流"},{3,2,L"E051",L"PV4过温"},{3,3,L"E052",L"PV4硬件故障"},
+    {4,0,L"E065",L"DC输出短路"},{4,1,L"E066",L"DC输出过压"},{4,2,L"E067",L"DC输出过流"},{4,3,L"E068",L"DC输出过温"},
+    {4,4,L"E069",L"DC输出故障"},{4,5,L"E070",L"电池组通讯故障"},{4,6,L"E071",L"逆变组通讯故障"},{4,7,L"E072",L"RTC错误"},
+    {4,8,L"E073",L"EEPROM错误"},{4,9,L"E074",L"BMS系统故障"},{4,10,L"E075",L"控制器温度过高"},{4,11,L"E076",L"零漂异常(DSP)"},{4,12,L"E077",L"DC输出低温"}
+};
+
+static const BLE_FAULT_DEF BLE_WARN_DEFS[] = {
+    {0,0,L"E113",L"电网电压过高"},{0,1,L"E114",L"电网电压过低"},{0,2,L"E115",L"电网频率过高"},{0,3,L"E116",L"电网频率过低"},
+    {0,4,L"E117",L"电网振荡"},{0,5,L"E118",L"组网工作异常"},{0,6,L"E119",L"电网端口故障"},{0,7,L"E120",L"配件工作异常"},{0,8,L"E121",L"PV配置错误"},
+    {1,0,L"E129",L"电池包通讯异常"},{1,1,L"E130",L"IOT通讯异常"}
+};
+
+static BOOL BleFaultDefActive(const BLE_FAULT_DEF* def, BOOL warning)
+{
+    unsigned short value = warning ? gBleWarnRaw[def->Group] : gBleFaultRaw[def->Group];
+    return (value & (1u << def->Bit)) != 0;
+}
+
+static int BleKnownFaultCount(BOOL warning)
+{
+    int i;
+    int count = 0;
+    if (warning)
+    {
+        for (i = 0; i < (int)(sizeof(BLE_WARN_DEFS) / sizeof(BLE_WARN_DEFS[0])); i++) { if (BleFaultDefActive(&BLE_WARN_DEFS[i], TRUE)) { count++; } }
+    }
+    else
+    {
+        for (i = 0; i < (int)(sizeof(BLE_FAULT_DEFS) / sizeof(BLE_FAULT_DEFS[0])); i++) { if (BleFaultDefActive(&BLE_FAULT_DEFS[i], FALSE)) { count++; } }
+    }
+    return count;
+}
+
+static BOOL BleAnyFault(void)
+{
+    return BleKnownFaultCount(FALSE) > 0;
+}
+
+static BOOL BleAnyWarning(void)
+{
+    return BleKnownFaultCount(TRUE) > 0;
+}
+
+static void SetSettingsEditValue(HWND edit, int value)
+{
+    wchar_t text[32];
+    if (edit != NULL && gBleSettingsActiveEdit != edit)
+    {
+        wsprintfW(text, L"%d", value);
+        SetWindowTextW(edit, text);
+    }
+}
+
+static void RefreshBleSettings(void)
+{
+    static wchar_t text[4096];
+    wchar_t* fields[24];
+    wchar_t* cursor;
+    int field = 0;
+    int sequence;
+    int mask;
+    if (gBleSettingsPath[0] == 0 || ReadUtf16File(gBleSettingsPath, text, 4096) <= 0) { return; }
+    fields[field++] = text;
+    cursor = text;
+    while (*cursor != 0 && field < 24)
+    {
+        if (*cursor == L'\t' || *cursor == L'\r' || *cursor == L'\n')
+        {
+            *cursor = 0;
+            if (*(cursor + 1) != 0) { fields[field++] = cursor + 1; }
+            if (*(cursor + 1) == L'\n') { cursor++; }
+        }
+        cursor++;
+    }
+
+    if (WStartsWithNoCase(fields[0], L"SETTINGS") && !WStartsWithNoCase(fields[0], L"SETTINGSWAIT") && field >= 18)
+    {
+        sequence = ParseSignedInt(fields[1]);
+        if ((DWORD)sequence == gBleSettingsSequence) { return; }
+        gBleSettingsSequence = (DWORD)sequence;
+        mask = ParseSignedInt(fields[2]);
+        gBleSettingsValidMask = mask;
+
+        if ((mask & BLE_SET_VALID_DC_ECO) != 0) { gBleSetDcEco = ParseSignedInt(fields[3]); }
+        if ((mask & BLE_SET_VALID_DC_DETAIL) != 0)
+        {
+            gBleSetDcEcoTime = ParseSignedInt(fields[4]);
+            gBleSetDcEcoPower = ParseSignedInt(fields[5]);
+            SetSettingsEditValue(gBleSettingDcPowerEdit, gBleSetDcEcoPower);
+        }
+        if ((mask & BLE_SET_VALID_AC_ECO) != 0) { gBleSetAcEco = ParseSignedInt(fields[6]); }
+        if ((mask & BLE_SET_VALID_AC_DETAIL) != 0)
+        {
+            gBleSetAcEcoTime = ParseSignedInt(fields[7]);
+            gBleSetAcEcoPower = ParseSignedInt(fields[8]);
+            SetSettingsEditValue(gBleSettingAcPowerEdit, gBleSetAcEcoPower);
+        }
+        if ((mask & BLE_SET_VALID_CHARGE) != 0)
+        {
+            gBleSetChargerMode = ParseSignedInt(fields[9]);
+            gBleSetSuperPower = ParseSignedInt(fields[10]);
+        }
+        if ((mask & BLE_SET_VALID_LCD) != 0) { gBleSetLcdActiveTime = ParseSignedInt(fields[11]); }
+        if ((mask & BLE_SET_VALID_CHILD_LEVEL) != 0)
+        {
+            gBleSetChildLevelRaw = ParseSignedInt(fields[12]);
+            gBleSetChildLevel = gBleSetChildLevelRaw & 0xFF;
+        }
+        if ((mask & BLE_SET_VALID_CHILD_SWITCH) != 0)
+        {
+            gBleSetChildSwitchRaw = ParseSignedInt(fields[13]);
+            gBleSetChildSwitch = (gBleSetChildSwitchRaw >> 4) & 0x03;
+        }
+        if ((mask & BLE_SET_VALID_SOC_HIGH) != 0)
+        {
+            gBleSetSocHighRaw = ParseSignedInt(fields[14]);
+            gBleSetSocHighEnable = gBleSetSocHighRaw & 0xFF;
+            gBleSetSocHigh = (gBleSetSocHighRaw >> 8) & 0xFF;
+            if (gBleSetSocHigh >= 1 && gBleSetSocHigh <= 100) { SetSettingsEditValue(gBleSettingSocHighEdit, gBleSetSocHigh); }
+        }
+        WCopy(gBleSettingsLastUpdate, fields[16], 32);
+        WCopy(gBleSettingsStatus, fields[17], 192);
+        gBleSettingsValid = (mask == BLE_SET_VALID_ALL);
+        if (gCurrentPage == 7)
+        {
+            EnableWindow(gBleSettingDcPowerEdit, gBleConnected && ((mask & BLE_SET_VALID_DC_DETAIL) != 0) && (gBleSetDcEco == 1));
+            EnableWindow(gBleSettingAcPowerEdit, gBleConnected && ((mask & BLE_SET_VALID_AC_DETAIL) != 0) && (gBleSetAcEco == 1));
+            EnableWindow(gBleSettingSocLowEdit, FALSE);
+            EnableWindow(gBleSettingSocHighEdit, gBleConnected && ((mask & BLE_SET_VALID_SOC_HIGH) != 0));
+        }
+    }
+    else if (WStartsWithNoCase(fields[0], L"SETTINGSWAIT"))
+    {
+        if (field > 2) { WCopy(gBleSettingsStatus, fields[2], 192); }
+        gBleSettingsValid = FALSE;
+        if (gCurrentPage == 7)
+        {
+            EnableWindow(gBleSettingDcPowerEdit, FALSE);
+            EnableWindow(gBleSettingAcPowerEdit, FALSE);
+            EnableWindow(gBleSettingSocLowEdit, FALSE);
+            EnableWindow(gBleSettingSocHighEdit, FALSE);
+        }
+    }
+}
+
+static void SetAdvancedEditValue(HWND edit, int value)
+{
+    wchar_t text[32];
+    if (edit != NULL && gBleAdvancedActiveEdit != edit && value >= 0)
+    {
+        wsprintfW(text, L"%d", value); SetWindowTextW(edit, text);
+    }
+}
+static void RefreshBleAdvanced(void)
+{
+    static wchar_t text[2048]; wchar_t* fields[16]; wchar_t* cursor; int field=0; int sequence; int mask;
+    if (gBleAdvancedPath[0] == 0 || ReadUtf16File(gBleAdvancedPath, text, 2048) <= 0) { return; }
+    fields[field++] = text; cursor = text;
+    while (*cursor != 0 && field < 16)
+    {
+        if (*cursor == L'\t' || *cursor == L'\r' || *cursor == L'\n')
+        {
+            *cursor = 0; if (*(cursor + 1) != 0) { fields[field++] = cursor + 1; }
+            if (*(cursor + 1) == L'\n') { cursor++; }
+        }
+        cursor++;
+    }
+    if (WStartsWithNoCase(fields[0], L"ADVANCED") && !WStartsWithNoCase(fields[0], L"ADVANCEDWAIT") && field >= 12)
+    {
+        sequence = ParseSignedInt(fields[1]); if ((DWORD)sequence == gBleAdvancedSequence) { return; }
+        gBleAdvancedSequence = (DWORD)sequence; mask = ParseSignedInt(fields[2]); gBleAdvancedValidMask = mask;
+        if (mask & BLE_ADV_VALID_INV_VOLT) { gBleAdvInvVoltage = ParseSignedInt(fields[3]); }
+        if (mask & BLE_ADV_VALID_INV_FREQ) { gBleAdvInvFreq = ParseSignedInt(fields[4]); }
+        if (mask & BLE_ADV_VALID_CHG_CURRENT)
+        {
+            gBleAdvChgMaxCurrent = ParseSignedInt(fields[5]);
+            if (!gBleAdvChgCurrentDirty) { gBleAdvChgCurrentDraft = gBleAdvChgMaxCurrent; SetAdvancedEditValue(gBleAdvancedChgCurrentEdit,gBleAdvChgCurrentDraft); }
+            else if (gBleAdvChgCurrentDraft == gBleAdvChgMaxCurrent) { gBleAdvChgCurrentDirty = FALSE; SetAdvancedEditValue(gBleAdvancedChgCurrentEdit,gBleAdvChgCurrentDraft); }
+        }
+        if (mask & BLE_ADV_VALID_AREA) { gBleAdvArea = ParseSignedInt(fields[6]); }
+        if (mask & BLE_ADV_VALID_GRID_PLUS) { gBleAdvGridPlus = ParseSignedInt(fields[7]); }
+        if (mask & BLE_ADV_VALID_MEMORY) { gBleAdvMemory = ParseSignedInt(fields[8]); }
+        if (mask & BLE_ADV_VALID_GRID_CURRENT)
+        {
+            gBleAdvGridMaxCurrent = ParseSignedInt(fields[9]);
+            if (!gBleAdvGridCurrentDirty) { gBleAdvGridCurrentDraft = gBleAdvGridMaxCurrent; SetAdvancedEditValue(gBleAdvancedGridCurrentEdit,gBleAdvGridCurrentDraft); }
+            else if (gBleAdvGridCurrentDraft == gBleAdvGridMaxCurrent) { gBleAdvGridCurrentDirty = FALSE; SetAdvancedEditValue(gBleAdvancedGridCurrentEdit,gBleAdvGridCurrentDraft); }
+        }
+        WCopy(gBleAdvancedLastUpdate,fields[10],32); WCopy(gBleAdvancedStatus,fields[11],192); gBleAdvancedValid=(mask==BLE_ADV_VALID_ALL);
+        if (gCurrentPage==9) { EnableWindow(gBleAdvancedGridCurrentEdit,gBleConnected&&(mask&BLE_ADV_VALID_GRID_CURRENT)); EnableWindow(gBleAdvancedChgCurrentEdit,gBleConnected&&(mask&BLE_ADV_VALID_CHG_CURRENT)&&(mask&BLE_ADV_VALID_GRID_CURRENT)); }
+    }
+    else if (WStartsWithNoCase(fields[0],L"ADVANCEDWAIT"))
+    {
+        if (field>2) { WCopy(gBleAdvancedStatus,fields[2],192); } gBleAdvancedValid=FALSE;
+        if (gCurrentPage==9) { EnableWindow(gBleAdvancedGridCurrentEdit,FALSE); EnableWindow(gBleAdvancedChgCurrentEdit,FALSE); }
     }
 }
 
@@ -1812,22 +2718,105 @@ static void AddLog(LPCWSTR text)
 }
 
 
-static COLORREF ThemeBackground(void) { return gDarkMode ? RGB(0,0,0) : RGB(245,245,247); }
-static COLORREF ThemeTopBar(void) { return gDarkMode ? RGB(12,12,14) : RGB(255,255,255); }
+static COLORREF ThemeBackground(void) { return gDarkMode ? RGB(0,0,0) : RGB(241,244,248); }
+static COLORREF ThemeTopBar(void) { return gDarkMode ? RGB(12,12,14) : RGB(252,253,255); }
 static COLORREF ThemeSurface(void) { return gDarkMode ? RGB(28,28,30) : RGB(255,255,255); }
-static COLORREF ThemeSurfaceAlt(void) { return gDarkMode ? RGB(36,36,38) : RGB(250,250,252); }
-static COLORREF ThemeBorder(void) { return gDarkMode ? RGB(58,58,60) : RGB(220,220,225); }
-static COLORREF ThemeGrid(void) { return gDarkMode ? RGB(15,15,18) : RGB(239,239,243); }
-static COLORREF ThemeText(void) { return gDarkMode ? RGB(245,245,247) : RGB(29,29,31); }
-static COLORREF ThemeMuted(void) { return gDarkMode ? RGB(174,174,178) : RGB(99,99,102); }
-static COLORREF ThemeMuted2(void) { return gDarkMode ? RGB(99,99,102) : RGB(142,142,147); }
-static COLORREF ThemeAccent(void) { return gDarkMode ? RGB(10,132,255) : RGB(0,113,227); }
-static COLORREF ThemeAccentSoft(void) { return gDarkMode ? RGB(20,43,70) : RGB(235,245,255); }
-static COLORREF ThemeInputFill(void) { return gDarkMode ? RGB(28,28,30) : RGB(250,250,252); }
-static COLORREF ThemeInputBorder(void) { return gDarkMode ? RGB(72,72,74) : RGB(209,209,214); }
-static COLORREF ThemeShadow(void) { return gDarkMode ? RGB(0,0,0) : RGB(232,232,236); }
+static COLORREF ThemeSurfaceAlt(void) { return gDarkMode ? RGB(36,36,38) : RGB(248,250,253); }
+static COLORREF ThemeBorder(void) { return gDarkMode ? RGB(58,58,60) : RGB(193,201,211); }
+static COLORREF ThemeGrid(void) { return gDarkMode ? RGB(15,15,18) : RGB(226,232,240); }
+static COLORREF ThemeText(void) { return gDarkMode ? RGB(245,245,247) : RGB(24,28,34); }
+static COLORREF ThemeMuted(void) { return gDarkMode ? RGB(174,174,178) : RGB(74,82,94); }
+static COLORREF ThemeMuted2(void) { return gDarkMode ? RGB(99,99,102) : RGB(112,121,134); }
+static COLORREF ThemeAccent(void) { return gDarkMode ? RGB(10,132,255) : RGB(0,102,204); }
+static COLORREF ThemeAccentSoft(void) { return gDarkMode ? RGB(20,43,70) : RGB(228,240,255); }
+static COLORREF ThemeInputFill(void) { return gDarkMode ? RGB(28,28,30) : RGB(255,255,255); }
+static COLORREF ThemeInputBorder(void) { return gDarkMode ? RGB(72,72,74) : RGB(174,184,198); }
+static COLORREF ThemeShadow(void) { return gDarkMode ? RGB(0,0,0) : RGB(218,224,232); }
+static COLORREF ThemeAdvancedAccent(void) { return gDarkMode ? RGB(100,102,255) : RGB(82,79,214); }
+static COLORREF ThemeAdvancedSoft(void) { return gDarkMode ? RGB(38,35,74) : RGB(239,238,255); }
+
+/* Keep the Windows non-client title bar visually consistent with Device Studio. */
+static void ApplyNativeWindowTheme(HWND hwnd)
+{
+    HMODULE module;
+    PFN_DwmSetWindowAttribute setAttribute;
+    BOOL dark = gDarkMode ? TRUE : FALSE;
+    DWORD captionColor = (DWORD)(gDarkMode ? RGB(12,12,14) : RGB(245,245,247));
+    DWORD textColor = (DWORD)(gDarkMode ? RGB(245,245,247) : RGB(29,29,31));
+
+    if (hwnd == NULL) { return; }
+    module = LoadLibraryW(L"dwmapi.dll");
+    if (module != NULL)
+    {
+        setAttribute = (PFN_DwmSetWindowAttribute)GetProcAddress(module, "DwmSetWindowAttribute");
+        if (setAttribute != NULL)
+        {
+            /* 20 is current DWMWA_USE_IMMERSIVE_DARK_MODE; 19 is the older Windows 10 value. */
+            if (setAttribute(hwnd, 20, &dark, sizeof(dark)) != 0) { setAttribute(hwnd, 19, &dark, sizeof(dark)); }
+            /* Windows 11: force caption/text colors to follow the in-app theme when supported. */
+            setAttribute(hwnd, 35, &captionColor, sizeof(captionColor));
+            setAttribute(hwnd, 36, &textColor, sizeof(textColor));
+        }
+        FreeLibrary(module);
+    }
+}
+
+/* Give the native multiline Modbus viewport a dark/light themed scrollbar. */
+static void ApplyModbusViewportTheme(void)
+{
+    HMODULE module;
+    PFN_SetWindowTheme setTheme;
+    if (gBleModbusResultEdit == NULL) { return; }
+
+    module = LoadLibraryW(L"uxtheme.dll");
+    if (module != NULL)
+    {
+        setTheme = (PFN_SetWindowTheme)GetProcAddress(module, "SetWindowTheme");
+        if (setTheme != NULL)
+        {
+            setTheme(gBleModbusResultEdit, gDarkMode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+        }
+        FreeLibrary(module);
+    }
+    InvalidateRect(gBleModbusResultEdit, NULL, TRUE);
+}
+
+/* V1.0.10: native EDIT controls must follow Device Studio colors, not the OS/app dark theme cache.
+ * Disable the themed EDIT skin and let WM_CTLCOLOREDIT own text/background colors in both modes. */
+static void ApplyPlainEditTheme(HWND control)
+{
+    HMODULE module;
+    PFN_SetWindowTheme setTheme;
+    if (control == NULL) { return; }
+    module = LoadLibraryW(L"uxtheme.dll");
+    if (module != NULL)
+    {
+        setTheme = (PFN_SetWindowTheme)GetProcAddress(module, "SetWindowTheme");
+        if (setTheme != NULL) { setTheme(control, L"", L""); }
+        FreeLibrary(module);
+    }
+    InvalidateRect(control, NULL, TRUE);
+}
+
+static void ApplyAllEditThemes(void)
+{
+    ApplyPlainEditTheme(gRepeatEdit); ApplyPlainEditTheme(gWaitEdit);
+    ApplyPlainEditTheme(gCanLocalEdit); ApplyPlainEditTheme(gCanTargetEdit);
+    ApplyPlainEditTheme(gCanRepeatEdit); ApplyPlainEditTheme(gCanWaitEdit);
+    ApplyPlainEditTheme(gBleFilterEdit); ApplyPlainEditTheme(gBleSlaveEdit);
+    ApplyPlainEditTheme(gBleModbusSlaveEdit); ApplyPlainEditTheme(gBleModbusFunctionEdit);
+    ApplyPlainEditTheme(gBleModbusRegisterEdit); ApplyPlainEditTheme(gBleModbusValueEdit);
+    ApplyPlainEditTheme(gBleModbusTimeoutEdit); ApplyPlainEditTheme(gBleOtaGapEdit);
+    ApplyPlainEditTheme(gBleOtaTimeoutEdit); ApplyPlainEditTheme(gBleSettingDcPowerEdit); ApplyPlainEditTheme(gBleAdvancedGridCurrentEdit); ApplyPlainEditTheme(gBleAdvancedChgCurrentEdit);
+    ApplyPlainEditTheme(gBleSettingAcPowerEdit); ApplyPlainEditTheme(gBleSettingSocLowEdit);
+    ApplyPlainEditTheme(gBleSettingSocHighEdit);
+    /* Multiline result keeps a themed scrollbar but its client colors still come from WM_CTLCOLOREDIT. */
+    ApplyModbusViewportTheme();
+}
+
 static COLORREF ThemeSuccess(void) { return RGB(48,209,88); }
 static COLORREF ThemeDanger(void) { return RGB(255,69,58); }
+static COLORREF ThemeDangerSoft(void) { return gDarkMode ? RGB(64,28,28) : RGB(255,240,240); }
 static COLORREF ThemeWarning(void) { return RGB(255,159,10); }
 
 static void UseFillAndPen(HDC dc, COLORREF fillColor, COLORREF penColor)
@@ -1858,6 +2847,123 @@ static void DrawLine(HDC dc, int x1, int y1, int x2, int y2, COLORREF color)
     SetDCPenColor(dc, color);
     MoveToEx(dc, x1, y1, NULL);
     LineTo(dc, x2, y2);
+}
+
+
+/* V1.0.10: symmetric energy-flow diagram helpers. Repeated 1px lines avoid new GDI imports. */
+static void DrawThickLine(HDC dc, int x1, int y1, int x2, int y2, COLORREF color, int thickness)
+{
+    int offset;
+    if (thickness < 1) { thickness = 1; }
+    if (x1 == x2)
+    {
+        for (offset = -(thickness / 2); offset <= thickness / 2; offset++) { DrawLine(dc, x1 + offset, y1, x2 + offset, y2, color); }
+    }
+    else
+    {
+        for (offset = -(thickness / 2); offset <= thickness / 2; offset++) { DrawLine(dc, x1, y1 + offset, x2, y2 + offset, color); }
+    }
+}
+
+static void DrawEnergyChevron(HDC dc, int x, int y, BOOL horizontal, BOOL forward, COLORREF color)
+{
+    int d = forward ? 1 : -1;
+    if (horizontal)
+    {
+        DrawThickLine(dc, x - 5 * d, y - 5, x, y, color, 2);
+        DrawThickLine(dc, x, y, x - 5 * d, y + 5, color, 2);
+    }
+    else
+    {
+        DrawThickLine(dc, x - 5, y - 5 * d, x, y, color, 2);
+        DrawThickLine(dc, x, y, x + 5, y - 5 * d, color, 2);
+    }
+}
+
+static void DrawEnergyNode(HDC dc, int cx, int cy, LPCWSTR shortName, LPCWSTR title, int power, COLORREF accent, BOOL valid, BOOL active, BOOL labelLeft)
+{
+    RECT outer = { cx - 28, cy - 28, cx + 28, cy + 28 };
+    RECT inner = { cx - 22, cy - 22, cx + 22, cy + 22 };
+    RECT iconText = { cx - 24, cy - 13, cx + 24, cy + 13 };
+    RECT powerRect;
+    RECT titleRect;
+    UINT align;
+    wchar_t value[64];
+
+    if (labelLeft)
+    {
+        powerRect.left = cx - 210; powerRect.right = cx - 42;
+        titleRect.left = cx - 210; titleRect.right = cx - 42;
+        align = DT_RIGHT;
+    }
+    else
+    {
+        powerRect.left = cx + 42; powerRect.right = cx + 210;
+        titleRect.left = cx + 42; titleRect.right = cx + 210;
+        align = DT_LEFT;
+    }
+    powerRect.top = cy - 25; powerRect.bottom = cy + 4;
+    titleRect.top = cy + 3; titleRect.bottom = cy + 27;
+
+    UseFillAndPen(dc, gDarkMode ? RGB(42,44,48) : RGB(245,247,250), active ? accent : ThemeBorder());
+    Ellipse(dc, outer.left, outer.top, outer.right, outer.bottom);
+    UseFillAndPen(dc, active ? accent : ThemeMuted2(), active ? accent : ThemeMuted2());
+    Ellipse(dc, inner.left, inner.top, inner.right, inner.bottom);
+    DrawTextBlock(dc, shortName, iconText, gFontTiny, RGB(255,255,255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    if (valid) { wsprintfW(value, L"%d W", power); }
+    else { WCopy(value, L"-- W", 64); }
+    DrawTextBlock(dc, value, powerRect, gFontCardTitle, active ? accent : ThemeText(), align | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, title, titleRect, gFontTiny, ThemeMuted(), align | DT_VCENTER | DT_SINGLELINE);
+}
+
+
+static void DrawEnergyCard(HDC dc, RECT card, LPCWSTR shortName, LPCWSTR title, int power, COLORREF accent, BOOL valid, BOOL active, BOOL alignRight)
+{
+    RECT badge;
+    RECT titleRect;
+    RECT powerRect;
+    RECT stateDot;
+    wchar_t value[64];
+    COLORREF border = active ? accent : ThemeBorder();
+    COLORREF fill = gDarkMode ? RGB(30,31,35) : RGB(252,253,255);
+    COLORREF valueColor = active ? accent : ThemeText();
+    UINT textAlign = alignRight ? DT_RIGHT : DT_LEFT;
+
+    DrawRoundBox(dc, &card, 16, fill, border);
+
+    if (alignRight)
+    {
+        badge.left = card.right - 54; badge.right = card.right - 14;
+        titleRect.left = card.left + 14; titleRect.right = badge.left - 12;
+        powerRect.left = card.left + 14; powerRect.right = badge.left - 12;
+    }
+    else
+    {
+        badge.left = card.left + 14; badge.right = card.left + 54;
+        titleRect.left = badge.right + 12; titleRect.right = card.right - 14;
+        powerRect.left = badge.right + 12; powerRect.right = card.right - 14;
+    }
+
+    badge.top = card.top + 14; badge.bottom = card.top + 54;
+    titleRect.top = card.top + 9; titleRect.bottom = card.top + 29;
+    powerRect.top = card.top + 27; powerRect.bottom = card.bottom - 7;
+
+    UseFillAndPen(dc, active ? accent : (gDarkMode ? RGB(69,72,78) : RGB(205,211,220)), active ? accent : border);
+    Ellipse(dc, badge.left, badge.top, badge.right, badge.bottom);
+    DrawTextBlock(dc, shortName, badge, gFontTiny, RGB(255,255,255), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    DrawTextBlock(dc, title, titleRect, gFontTiny, ThemeMuted(), textAlign | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    if (valid) { wsprintfW(value, L"%d W", power); }
+    else { WCopy(value, L"-- W", 64); }
+    DrawTextBlock(dc, value, powerRect, gFontCardTitle, valueColor, textAlign | DT_VCENTER | DT_SINGLELINE);
+
+    stateDot.left = alignRight ? card.left + 12 : card.right - 19;
+    stateDot.right = stateDot.left + 7;
+    stateDot.top = card.top + 12;
+    stateDot.bottom = stateDot.top + 7;
+    UseFillAndPen(dc, active ? accent : ThemeMuted2(), active ? accent : ThemeMuted2());
+    Ellipse(dc, stateDot.left, stateDot.top, stateDot.right, stateDot.bottom);
 }
 
 static void DrawPill(HDC dc, RECT rect, LPCWSTR text, COLORREF fill, COLORREF border, COLORREF textColor, BOOL highlighted)
@@ -1975,7 +3081,7 @@ static void DrawTopBar(HDC dc, const RECT* client)
     RECT themeText;
 
     DrawTextBlock(dc, L"BLUETTI  /  DEVICE STUDIO", brand, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawTextBlock(dc, L"SERIAL · CAN · BLE · OTA   |   V1.0", version, gFontTiny, ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"SERIAL · CAN · BLE · OTA · SETTINGS   |   V1.0.20 TEST", version, gFontTiny, ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
 
     gThemeRect.left = client->right - 174;
     gThemeRect.top = 14;
@@ -2092,23 +3198,88 @@ static void DrawHomePage(HDC dc, const RECT* client)
     }
 }
 
+static void CalculateBleDashboardPanels(const RECT* client, RECT* product, RECT* energyPanel, RECT* infoPanel, RECT* modbusPanel)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int bottom = client->bottom - 60;
+    int innerLeft;
+    int innerRight;
+    int availableHeight;
+    int modbusHeight;
+    int topBottom;
+    int splitX;
+
+    SetRectCoords(product, left, 150, right, bottom);
+    innerLeft = product->left + 24;
+    innerRight = product->right - 24;
+    availableHeight = (product->bottom - 24) - (product->top + 24);
+
+    /* V1.0.10: keep enough vertical room for the symmetric energy and device panels.
+     * The Modbus viewport remains large enough for a multi-line scrollable response. */
+    modbusHeight = availableHeight * 24 / 100;
+    if (modbusHeight < 180) { modbusHeight = 180; }
+    if (modbusHeight > 215) { modbusHeight = 215; }
+
+    topBottom = product->bottom - 24 - modbusHeight - 18;
+
+    /* V1.0.10: energy and device-information panels use the same width. */
+    splitX = innerLeft + (innerRight - innerLeft) / 2;
+
+    SetRectCoords(energyPanel, innerLeft, product->top + 20, splitX - 10, topBottom);
+    SetRectCoords(infoPanel, splitX + 10, product->top + 20, innerRight, topBottom);
+    SetRectCoords(modbusPanel, innerLeft, topBottom + 18, innerRight, product->bottom - 24);
+}
+
+/* Native EDIT/COMBO controls are real child HWNDs. When a page changes, parking a hidden
+ * child outside the client area prevents old pixels from surviving a parent-drawn page.
+ * The next Layout* call moves it back before it is shown again. */
+static void ParkAndHideControl(HWND control)
+{
+    if (control != NULL)
+    {
+        ShowWindow(control, SW_HIDE);
+        MoveWindow(control, -4096, -4096, 1, 1, FALSE);
+    }
+}
+
+static void ShowNativeControl(HWND control)
+{
+    if (control != NULL) { ShowWindow(control, SW_SHOW); }
+}
+
 static void SetBleControlsVisible(BOOL visible)
 {
     BOOL pageVisible = visible && !gChipDialogOpen;
     BOOL dashboardVisible = pageVisible && gBleConnected;
-    ShowWindow(gBleFilterEdit, pageVisible && !gBleConnected ? SW_SHOW : SW_HIDE);
-    /* V1.3.9: selection is custom-drawn; legacy ComboBox is backing data only. */
-    ShowWindow(gBleIntervalCombo, SW_HIDE);
-    ShowWindow(gBleSlaveEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    ShowWindow(gBleModbusSlaveEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    ShowWindow(gBleModbusFunctionEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    ShowWindow(gBleModbusRegisterEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    ShowWindow(gBleModbusValueEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    ShowWindow(gBleModbusTimeoutEdit, dashboardVisible ? SW_SHOW : SW_HIDE);
-    /* Native multiline EDITs caused the white scrollbar/flicker and stale content.
-     * Keep them hidden as data backends; the parent window paints their content. */
-    ShowWindow(gBleModbusResultEdit, SW_HIDE);
-    ShowWindow(gBleVersionListEdit, SW_HIDE);
+
+    if (pageVisible && !gBleConnected) { ShowNativeControl(gBleFilterEdit); }
+    else { ParkAndHideControl(gBleFilterEdit); }
+
+    ParkAndHideControl(gBleIntervalCombo);
+
+    if (dashboardVisible)
+    {
+        ShowNativeControl(gBleSlaveEdit);
+        ShowNativeControl(gBleModbusSlaveEdit);
+        ShowNativeControl(gBleModbusFunctionEdit);
+        ShowNativeControl(gBleModbusRegisterEdit);
+        ShowNativeControl(gBleModbusValueEdit);
+        ShowNativeControl(gBleModbusTimeoutEdit);
+        ShowNativeControl(gBleModbusResultEdit);
+    }
+    else
+    {
+        ParkAndHideControl(gBleSlaveEdit);
+        ParkAndHideControl(gBleModbusSlaveEdit);
+        ParkAndHideControl(gBleModbusFunctionEdit);
+        ParkAndHideControl(gBleModbusRegisterEdit);
+        ParkAndHideControl(gBleModbusValueEdit);
+        ParkAndHideControl(gBleModbusTimeoutEdit);
+        ParkAndHideControl(gBleModbusResultEdit);
+    }
+
+    ParkAndHideControl(gBleVersionListEdit);
 }
 
 static void RefreshParentAfterChildVisibility(void)
@@ -2119,33 +3290,806 @@ static void RefreshParentAfterChildVisibility(void)
 
 static void LayoutBleControls(const RECT* client)
 {
-    int identityRight = client->right - 78;
-    int lowerLeft = 78;
-    int lowerRight = client->right - 78;
-    int totalWidth = lowerRight - lowerLeft;
-    int statusRight = lowerLeft + totalWidth * 32 / 100;
-    int modbusLeft = statusRight + 12;
-    int modbusRight = lowerRight;
-    int statusTop = 682;
-    int resultTop = statusTop + 91;
-    int resultHeight = client->bottom - 84 - resultTop - 12;
-    int modbusWidth = modbusRight - modbusLeft;
+    RECT product;
+    RECT energyPanel;
+    RECT infoPanel;
+    RECT modbusPanel;
+    int infoTop;
+    int resultTop;
+    int resultHeight;
+    int modbusWidth;
+
+    CalculateBleDashboardPanels(client, &product, &energyPanel, &infoPanel, &modbusPanel);
+    infoTop = infoPanel.top;
+    resultTop = modbusPanel.top + 91;
+    resultHeight = modbusPanel.bottom - 10 - resultTop;
+    modbusWidth = modbusPanel.right - modbusPanel.left;
     if (resultHeight < 42) { resultHeight = 42; }
+
     MoveWindow(gBleFilterEdit, 86, 203, 470, 34, TRUE);
-    MoveWindow(gBleSlaveEdit, identityRight - 680, 215, 84, 34, TRUE);
-    MoveWindow(gBleModbusSlaveEdit, modbusLeft + 18, statusTop + 48, 48, 32, TRUE);
-    MoveWindow(gBleModbusFunctionEdit, modbusLeft + 76, statusTop + 48, 50, 32, TRUE);
-    MoveWindow(gBleModbusRegisterEdit, modbusLeft + 136, statusTop + 48, 78, 32, TRUE);
-    MoveWindow(gBleModbusValueEdit, modbusLeft + 224, statusTop + 48, 78, 32, TRUE);
-    MoveWindow(gBleModbusTimeoutEdit, modbusLeft + 312, statusTop + 48, 72, 32, TRUE);
-    MoveWindow(gBleModbusResultEdit, modbusLeft + 18, resultTop, modbusWidth - 36, resultHeight, TRUE);
+
+    /* V1.0.10: slave address belongs to the right-side communication section. */
+    MoveWindow(gBleSlaveEdit, infoPanel.left + 28, infoTop + 215, 82, 26, TRUE);
+
+    MoveWindow(gBleModbusSlaveEdit, modbusPanel.left + 18, modbusPanel.top + 48, 48, 32, TRUE);
+    MoveWindow(gBleModbusFunctionEdit, modbusPanel.left + 76, modbusPanel.top + 48, 50, 32, TRUE);
+    MoveWindow(gBleModbusRegisterEdit, modbusPanel.left + 136, modbusPanel.top + 48, 78, 32, TRUE);
+    MoveWindow(gBleModbusValueEdit, modbusPanel.left + 224, modbusPanel.top + 48, 78, 32, TRUE);
+    MoveWindow(gBleModbusTimeoutEdit, modbusPanel.left + 312, modbusPanel.top + 48, 72, 32, TRUE);
+    MoveWindow(gBleModbusResultEdit, modbusPanel.left + 18, resultTop + 2, modbusWidth - 36, resultHeight - 4, TRUE);
+}
+
+static void SetBleSettingsControlsVisible(BOOL visible)
+{
+    BOOL dcEcoReady = visible && !gChipDialogOpen && gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_DC_ECO) != 0);
+    BOOL dcDetailReady = visible && !gChipDialogOpen && gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_DC_DETAIL) != 0);
+    BOOL acEcoReady = visible && !gChipDialogOpen && gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_AC_ECO) != 0);
+    BOOL acDetailReady = visible && !gChipDialogOpen && gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_AC_DETAIL) != 0);
+    BOOL socReady = visible && !gChipDialogOpen && gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_SOC_HIGH) != 0);
+
+    if (dcEcoReady && (gBleSetDcEco == 1)) { ShowNativeControl(gBleSettingDcPowerEdit); }
+    else { ParkAndHideControl(gBleSettingDcPowerEdit); }
+
+    if (acEcoReady && (gBleSetAcEco == 1)) { ShowNativeControl(gBleSettingAcPowerEdit); }
+    else { ParkAndHideControl(gBleSettingAcPowerEdit); }
+
+    ParkAndHideControl(gBleSettingSocLowEdit);
+
+    if (visible && !gChipDialogOpen) { ShowNativeControl(gBleSettingSocHighEdit); }
+    else { ParkAndHideControl(gBleSettingSocHighEdit); }
+
+    EnableWindow(gBleSettingDcPowerEdit, dcEcoReady && dcDetailReady && (gBleSetDcEco == 1));
+    EnableWindow(gBleSettingAcPowerEdit, acEcoReady && acDetailReady && (gBleSetAcEco == 1));
+    EnableWindow(gBleSettingSocLowEdit, FALSE);
+    EnableWindow(gBleSettingSocHighEdit, socReady);
+}
+
+static void LayoutBleSettingsControls(const RECT* client)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int gap = 14;
+    int half = (right - left - gap) / 2;
+    int rightLeft = left + half + gap;
+    int ecoTop = 150;
+    int dcEcoHeight = (((gBleSettingsValidMask & BLE_SET_VALID_DC_ECO) != 0) && (gBleSetDcEco == 1)) ? 220 : 106;
+    int acEcoHeight = (((gBleSettingsValidMask & BLE_SET_VALID_AC_ECO) != 0) && (gBleSetAcEco == 1)) ? 220 : 106;
+    int ecoBottom = ecoTop + ((dcEcoHeight > acEcoHeight) ? dcEcoHeight : acEcoHeight);
+    int row2Top = ecoBottom + 16;
+    int row3Top = row2Top + 176 + 16;
+
+    if (gBleSetDcEco == 1) { MoveWindow(gBleSettingDcPowerEdit, left + 154, ecoTop + 164, 92, 28, TRUE); }
+    if (gBleSetAcEco == 1) { MoveWindow(gBleSettingAcPowerEdit, rightLeft + 154, ecoTop + 164, 92, 28, TRUE); }
+    MoveWindow(gBleSettingSocLowEdit, 0, 0, 0, 0, FALSE);
+    MoveWindow(gBleSettingSocHighEdit, left + 182, row3Top + 58, 72, 30, TRUE);
+}
+
+static void DrawSettingChoice(HDC dc, RECT rect, LPCWSTR text, BOOL selected, BOOL enabled, int hitCode)
+{
+    COLORREF fill = selected ? ThemeAccentSoft() : ThemeSurfaceAlt();
+    COLORREF border = selected ? ThemeAccent() : ThemeBorder();
+    COLORREF textColor = selected ? ThemeAccent() : (enabled ? ThemeText() : ThemeMuted2());
+    if (!enabled) { fill = ThemeSurfaceAlt(); border = ThemeBorder(); }
+    DrawButton(dc, rect, text, fill, border, textColor, gHoverItem == hitCode && enabled);
+}
+
+static void DrawSettingToggle(HDC dc, RECT rect, BOOL on, BOOL enabled, int hitCode)
+{
+    int height = rect.bottom - rect.top;
+    int knob = height - 8;
+    int knobLeft = on ? rect.right - knob - 4 : rect.left + 4;
+    COLORREF track = on ? ThemeAccent() : ThemeSurfaceAlt();
+    COLORREF border = on ? ThemeAccent() : ThemeBorder();
+    COLORREF knobColor = enabled ? ThemeSurface() : ThemeMuted2();
+    if (!enabled) { track = ThemeSurfaceAlt(); border = ThemeBorder(); }
+    if (gHoverItem == hitCode && enabled && !on) { border = ThemeAccent(); }
+    DrawRoundBox(dc, &rect, height / 2, track, border);
+    UseFillAndPen(dc, knobColor, knobColor);
+    Ellipse(dc, knobLeft, rect.top + 4, knobLeft + knob, rect.top + 4 + knob);
+}
+
+static void DrawBleSettingsPage(HDC dc, const RECT* client)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int gap = 14;
+    int half = (right - left - gap) / 2;
+    int rightLeft = left + half + gap;
+    int ecoTop = 150;
+    BOOL dcEcoOn = ((gBleSettingsValidMask & BLE_SET_VALID_DC_ECO) != 0) && (gBleSetDcEco == 1);
+    BOOL acEcoOn = ((gBleSettingsValidMask & BLE_SET_VALID_AC_ECO) != 0) && (gBleSetAcEco == 1);
+    int dcEcoHeight = dcEcoOn ? 220 : 106;
+    int acEcoHeight = acEcoOn ? 220 : 106;
+    int ecoBottom = ecoTop + ((dcEcoHeight > acEcoHeight) ? dcEcoHeight : acEcoHeight);
+    int row2Top = ecoBottom + 16;
+    int row3Top = row2Top + 176 + 16;
+    RECT title = { 194, 78, right, 118 };
+    RECT subtitle = { 194, 114, right, 144 };
+    RECT dcCard = { left, ecoTop, left + half, ecoTop + dcEcoHeight };
+    RECT acCard = { rightLeft, ecoTop, right, ecoTop + acEcoHeight };
+    RECT chargeCard = { left, row2Top, left + half, row2Top + 176 };
+    RECT displayCard = { rightLeft, row2Top, right, row2Top + 176 };
+    RECT socCard = { left, row3Top, left + half, row3Top + 178 };
+    RECT deviceCard = { rightLeft, row3Top, right, row3Top + 178 };
+    RECT label;
+    RECT shell;
+    wchar_t text[256];
+    BOOL connected = gBleConnected;
+    BOOL dcEcoEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_DC_ECO) != 0);
+    BOOL dcDetailEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_DC_DETAIL) != 0);
+    BOOL acEcoEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_AC_ECO) != 0);
+    BOOL acDetailEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_AC_DETAIL) != 0);
+    BOOL chargeEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_CHARGE) != 0);
+    BOOL displayEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_LCD) != 0);
+    BOOL childSwitchEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_CHILD_SWITCH) != 0);
+    BOOL childLevelEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_CHILD_LEVEL) != 0);
+    BOOL socEnabled = gBleConnected && ((gBleSettingsValidMask & BLE_SET_VALID_SOC_HIGH) != 0);
+    int i;
+    static const wchar_t* hourNames[4] = { L"1小时", L"2小时", L"3小时", L"4小时" };
+    static const wchar_t* chargerNames[3] = { L"标准", L"静音", L"快充" };
+    static const int chargerValues[3] = { 0, 1, 2 };
+    static const wchar_t* lcdNames[5] = { L"15秒", L"30秒", L"1分钟", L"5分钟", L"常亮" };
+
+    gBackRect.left = left; gBackRect.top = 82; gBackRect.right = left + 118; gBackRect.bottom = 122;
+    DrawPill(dc, gBackRect, L"←  返回设备", ThemeSurface(), ThemeBorder(), ThemeText(), gHoverItem == 10);
+    DrawTextBlock(dc, L"设备设置", title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextBlock(dc, L"以设备寄存器回读值为准；写入后自动回读确认", subtitle, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingsRefreshRect, right - 160, 86, right, 124);
+    DrawButton(dc, gBleSettingsRefreshRect, L"立即同步", ThemeSurface(), ThemeAccent(), connected ? ThemeAccent() : ThemeMuted(), gHoverItem == 380 && connected);
+    wsprintfW(text, L"%s  ·  %s", gBleSettingsStatus, gBleSettingsLastUpdate);
+    SetRectCoords(&label, right - 520, 86, right - 174, 124);
+    DrawTextBlock(dc, text, label, gFontTiny, gBleSettingsValid ? ThemeSuccess() : ThemeWarning(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    /* DC ECO：仅保留开/关；关闭时不展示时间和功率。 */
+    DrawRoundBox(dc, &dcCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, dcCard.left + 20, dcCard.top + 14, dcCard.right - 170, dcCard.top + 46);
+    DrawTextBlock(dc, L"DC ECO", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, dcCard.right - 162, dcCard.top + 16, dcCard.right - 94, dcCard.top + 44);
+    DrawTextBlock(dc, !dcEcoEnabled ? L"同步中" : (dcEcoOn ? L"已开启" : L"已关闭"), label, gFontSmall, dcEcoOn ? ThemeAccent() : ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingDcEcoRects[0], dcCard.right - 84, dcCard.top + 15, dcCard.right - 20, dcCard.top + 47);
+    DrawSettingToggle(dc, gBleSettingDcEcoRects[0], dcEcoOn, dcEcoEnabled, 300);
+    SetRectCoords(&gBleSettingDcEcoRects[1], 0, 0, 0, 0); SetRectCoords(&gBleSettingDcEcoRects[2], 0, 0, 0, 0);
+    if (dcEcoOn)
     {
-        int versionTop = statusTop + 109;
-        int versionBottom = client->bottom - 94;
-        int versionHeight = versionBottom - versionTop;
-        if (versionHeight < 34) { versionHeight = 34; }
-        (void)versionTop; (void)versionHeight;
+        SetRectCoords(&label, dcCard.left + 20, dcCard.top + 62, dcCard.right - 20, dcCard.top + 84);
+        DrawTextBlock(dc, L"无负载关机时间", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        for (i = 0; i < 4; i++)
+        {
+            SetRectCoords(&gBleSettingDcTimeRects[i], dcCard.left + 20 + i * 98, dcCard.top + 88, dcCard.left + 108 + i * 98, dcCard.top + 122);
+            DrawSettingChoice(dc, gBleSettingDcTimeRects[i], hourNames[i], gBleSetDcEcoTime == i + 1, dcDetailEnabled, 303 + i);
+        }
+        SetRectCoords(&label, dcCard.left + 20, dcCard.top + 143, dcCard.left + 126, dcCard.top + 171);
+        DrawTextBlock(dc, L"触发功率", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&shell, dcCard.left + 146, dcCard.top + 158, dcCard.left + 254, dcCard.top + 198); DrawInputShell(dc, shell, !dcDetailEnabled);
+        SetRectCoords(&label, dcCard.left + 260, dcCard.top + 160, dcCard.left + 290, dcCard.top + 196); DrawTextBlock(dc, L"W", label, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleSettingDcPowerApplyRect, dcCard.left + 306, dcCard.top + 158, dcCard.left + 406, dcCard.top + 198);
+        DrawButton(dc, gBleSettingDcPowerApplyRect, L"应用", ThemeSurfaceAlt(), ThemeAccent(), dcDetailEnabled ? ThemeAccent() : ThemeMuted(), gHoverItem == 307 && dcDetailEnabled);
     }
+    else
+    {
+        for (i = 0; i < 4; i++) { SetRectCoords(&gBleSettingDcTimeRects[i], 0, 0, 0, 0); }
+        SetRectCoords(&gBleSettingDcPowerApplyRect, 0, 0, 0, 0);
+    }
+
+    /* AC ECO：仅保留开/关；关闭时不展示时间和功率。 */
+    DrawRoundBox(dc, &acCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, acCard.left + 20, acCard.top + 14, acCard.right - 170, acCard.top + 46);
+    DrawTextBlock(dc, L"AC ECO", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, acCard.right - 162, acCard.top + 16, acCard.right - 94, acCard.top + 44);
+    DrawTextBlock(dc, !acEcoEnabled ? L"同步中" : (acEcoOn ? L"已开启" : L"已关闭"), label, gFontSmall, acEcoOn ? ThemeAccent() : ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingAcEcoRects[0], acCard.right - 84, acCard.top + 15, acCard.right - 20, acCard.top + 47);
+    DrawSettingToggle(dc, gBleSettingAcEcoRects[0], acEcoOn, acEcoEnabled, 310);
+    SetRectCoords(&gBleSettingAcEcoRects[1], 0, 0, 0, 0); SetRectCoords(&gBleSettingAcEcoRects[2], 0, 0, 0, 0);
+    if (acEcoOn)
+    {
+        SetRectCoords(&label, acCard.left + 20, acCard.top + 62, acCard.right - 20, acCard.top + 84);
+        DrawTextBlock(dc, L"无负载关机时间", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        for (i = 0; i < 4; i++)
+        {
+            SetRectCoords(&gBleSettingAcTimeRects[i], acCard.left + 20 + i * 98, acCard.top + 88, acCard.left + 108 + i * 98, acCard.top + 122);
+            DrawSettingChoice(dc, gBleSettingAcTimeRects[i], hourNames[i], gBleSetAcEcoTime == i + 1, acDetailEnabled, 313 + i);
+        }
+        SetRectCoords(&label, acCard.left + 20, acCard.top + 143, acCard.left + 126, acCard.top + 171);
+        DrawTextBlock(dc, L"触发功率", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&shell, acCard.left + 146, acCard.top + 158, acCard.left + 254, acCard.top + 198); DrawInputShell(dc, shell, !acDetailEnabled);
+        SetRectCoords(&label, acCard.left + 260, acCard.top + 160, acCard.left + 290, acCard.top + 196); DrawTextBlock(dc, L"W", label, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleSettingAcPowerApplyRect, acCard.left + 306, acCard.top + 158, acCard.left + 406, acCard.top + 198);
+        DrawButton(dc, gBleSettingAcPowerApplyRect, L"应用", ThemeSurfaceAlt(), ThemeAccent(), acDetailEnabled ? ThemeAccent() : ThemeMuted(), gHoverItem == 317 && acDetailEnabled);
+    }
+    else
+    {
+        for (i = 0; i < 4; i++) { SetRectCoords(&gBleSettingAcTimeRects[i], 0, 0, 0, 0); }
+        SetRectCoords(&gBleSettingAcPowerApplyRect, 0, 0, 0, 0);
+    }
+
+    DrawRoundBox(dc, &chargeCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, chargeCard.left + 20, chargeCard.top + 14, chargeCard.right - 20, chargeCard.top + 43);
+    DrawTextBlock(dc, L"充电设置", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, chargeCard.left + 20, chargeCard.top + 48, chargeCard.left + 110, chargeCard.top + 70);
+    DrawTextBlock(dc, L"充电模式", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    for (i = 0; i < 3; i++)
+    {
+        int chipWidth = (half - 56) / 3;
+        SetRectCoords(&gBleSettingChargerRects[i], chargeCard.left + 20 + i * (chipWidth + 8), chargeCard.top + 74, chargeCard.left + 20 + i * (chipWidth + 8) + chipWidth, chargeCard.top + 112);
+        DrawSettingChoice(dc, gBleSettingChargerRects[i], chargerNames[i], gBleSetChargerMode == chargerValues[i], chargeEnabled, 320 + i);
+    }
+    SetRectCoords(&gBleSettingChargerRects[3], 0, 0, 0, 0);
+    SetRectCoords(&label, chargeCard.left + 20, chargeCard.top + 128, chargeCard.left + 190, chargeCard.top + 158);
+    DrawTextBlock(dc, L"大力士模式", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, chargeCard.right - 162, chargeCard.top + 128, chargeCard.right - 94, chargeCard.top + 158);
+    DrawTextBlock(dc, !chargeEnabled ? L"同步中" : (gBleSetSuperPower == 1 ? L"已开启" : L"已关闭"), label, gFontSmall, gBleSetSuperPower == 1 ? ThemeAccent() : ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingSuperPowerRect, chargeCard.right - 84, chargeCard.top + 127, chargeCard.right - 20, chargeCard.top + 159);
+    DrawSettingToggle(dc, gBleSettingSuperPowerRect, gBleSetSuperPower == 1, chargeEnabled, 324);
+
+    DrawRoundBox(dc, &displayCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, displayCard.left + 20, displayCard.top + 14, displayCard.right - 20, displayCard.top + 43);
+    DrawTextBlock(dc, L"显示设置", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, displayCard.left + 20, displayCard.top + 50, displayCard.right - 20, displayCard.top + 72);
+    DrawTextBlock(dc, L"LCD 显示时间", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    for (i = 0; i < 5; i++)
+    {
+        int chipWidth = (half - 72) / 5;
+        SetRectCoords(&gBleSettingLcdRects[i], displayCard.left + 20 + i * (chipWidth + 8), displayCard.top + 78, displayCard.left + 20 + i * (chipWidth + 8) + chipWidth, displayCard.top + 116);
+        DrawSettingChoice(dc, gBleSettingLcdRects[i], lcdNames[i], gBleSetLcdActiveTime == i + 1, displayEnabled, 330 + i);
+    }
+    SetRectCoords(&label, displayCard.left + 20, displayCard.top + 132, displayCard.right - 20, displayCard.top + 160);
+    DrawTextBlock(dc, L"关闭/重连后仍以设备实际回读值为准。", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    DrawRoundBox(dc, &socCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, socCard.left + 20, socCard.top + 14, socCard.right - 20, socCard.top + 43);
+    DrawTextBlock(dc, L"充电上限", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, socCard.left + 20, socCard.top + 54, socCard.left + 180, socCard.top + 84);
+    DrawTextBlock(dc, L"最高充电 SOC", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingSocHighToggleRect, 0, 0, 0, 0);
+    SetRectCoords(&shell, socCard.left + 174, socCard.top + 52, socCard.left + 266, socCard.top + 94); DrawInputShell(dc, shell, !socEnabled);
+    SetRectCoords(&label, socCard.left + 272, socCard.top + 55, socCard.left + 304, socCard.top + 91); DrawTextBlock(dc, L"%", label, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingSocHighApplyRect, socCard.left + 320, socCard.top + 52, socCard.left + 424, socCard.top + 94);
+    DrawButton(dc, gBleSettingSocHighApplyRect, L"应用上限", ThemeSurfaceAlt(), ThemeAccent(), socEnabled ? ThemeAccent() : ThemeMuted(), gHoverItem == 361 && socEnabled);
+    SetRectCoords(&label, socCard.left + 20, socCard.top + 128, socCard.right - 20, socCard.top + 158);
+    DrawTextBlock(dc, L"通过 PV / AC 充电达到该 SOC 后停止继续充电。", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingSocLowToggleRect, 0, 0, 0, 0); SetRectCoords(&gBleSettingSocLowApplyRect, 0, 0, 0, 0);
+
+    DrawRoundBox(dc, &deviceCard, 22, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&label, deviceCard.left + 20, deviceCard.top + 14, deviceCard.right - 20, deviceCard.top + 43);
+    DrawTextBlock(dc, L"设备控制", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, deviceCard.left + 20, deviceCard.top + 54, deviceCard.left + 170, deviceCard.top + 86);
+    DrawTextBlock(dc, L"童锁", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, deviceCard.right - 162, deviceCard.top + 54, deviceCard.right - 94, deviceCard.top + 86);
+    DrawTextBlock(dc, !childSwitchEnabled ? L"同步中" : (gBleSetChildSwitch == 1 ? L"已开启" : L"已关闭"), label, gFontSmall, gBleSetChildSwitch == 1 ? ThemeAccent() : ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&gBleSettingChildRects[0], deviceCard.right - 84, deviceCard.top + 53, deviceCard.right - 20, deviceCard.top + 85);
+    DrawSettingToggle(dc, gBleSettingChildRects[0], gBleSetChildSwitch == 1, childSwitchEnabled, 350);
+    if (gBleSetChildSwitch == 1)
+    {
+        SetRectCoords(&label, deviceCard.left + 20, deviceCard.top + 100, deviceCard.left + 130, deviceCard.top + 122);
+        DrawTextBlock(dc, L"童锁等级", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleSettingChildRects[1], deviceCard.left + 138, deviceCard.top + 94, deviceCard.left + 248, deviceCard.top + 132);
+        SetRectCoords(&gBleSettingChildRects[2], deviceCard.left + 260, deviceCard.top + 94, deviceCard.left + 370, deviceCard.top + 132);
+        DrawSettingChoice(dc, gBleSettingChildRects[1], L"等级 1", gBleSetChildLevel == 1, childLevelEnabled, 351);
+        DrawSettingChoice(dc, gBleSettingChildRects[2], L"等级 2", gBleSetChildLevel == 2, childLevelEnabled, 352);
+        SetRectCoords(&label, deviceCard.left + 20, deviceCard.top + 140, deviceCard.right - 20, deviceCard.top + 166);
+        DrawTextBlock(dc, L"开关：2072 bit5/4；等级：2076低字节。", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    else
+    {
+        SetRectCoords(&gBleSettingChildRects[1], 0, 0, 0, 0);
+        SetRectCoords(&gBleSettingChildRects[2], 0, 0, 0, 0);
+        SetRectCoords(&label, deviceCard.left + 20, deviceCard.top + 110, deviceCard.right - 20, deviceCard.top + 142);
+        DrawTextBlock(dc, L"开启童锁后，可继续设置等级1或等级2。", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    SetRectCoords(&gBleSettingDcVoltageRects[0], 0, 0, 0, 0); SetRectCoords(&gBleSettingDcVoltageRects[1], 0, 0, 0, 0);
+}
+
+
+static void DrawBatteryMetric(HDC dc, const RECT* card, LPCWSTR title, LPCWSTR value, LPCWSTR hint, COLORREF accent)
+{
+    RECT label;
+    RECT dot;
+    DrawRoundBox(dc, card, 16, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&dot, card->left + 16, card->top + 18, card->left + 24, card->top + 26);
+    DrawRoundBox(dc, &dot, 4, accent, accent);
+    SetRectCoords(&label, card->left + 32, card->top + 10, card->right - 14, card->top + 36);
+    DrawTextBlock(dc, title, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&label, card->left + 16, card->top + 38, card->right - 14, card->top + 74);
+    DrawTextBlock(dc, value, label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&label, card->left + 16, card->bottom - 28, card->right - 14, card->bottom - 8);
+    DrawTextBlock(dc, hint, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void DrawPackMetric(HDC dc, const RECT* card, LPCWSTR title, LPCWSTR value, LPCWSTR hint, COLORREF accent)
+{
+    RECT label;
+    RECT dot;
+    DrawRoundBox(dc, card, 14, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&dot, card->left + 14, card->top + 14, card->left + 21, card->top + 21);
+    DrawRoundBox(dc, &dot, 4, accent, accent);
+    SetRectCoords(&label, card->left + 28, card->top + 7, card->right - 12, card->top + 28);
+    DrawTextBlock(dc, title, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&label, card->left + 14, card->top + 29, card->right - 12, card->top + 60);
+    DrawTextBlock(dc, value, label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&label, card->left + 14, card->bottom - 23, card->right - 12, card->bottom - 5);
+    DrawTextBlock(dc, hint, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void DrawBatteryStatusPill(HDC dc, RECT rect, LPCWSTR text, BOOL active, BOOL alarm)
+{
+    COLORREF border = alarm ? RGB(255,82,82) : (active ? ThemeSuccess() : ThemeBorder());
+    COLORREF fill = alarm ? (gDarkMode ? RGB(67,31,34) : RGB(255,240,240)) : (active ? (gDarkMode ? RGB(22,54,39) : RGB(239,252,244)) : ThemeSurfaceAlt());
+    COLORREF textColor = alarm ? RGB(255,91,91) : (active ? ThemeSuccess() : ThemeMuted());
+    DrawRoundBox(dc, &rect, 13, fill, border);
+    DrawTextBlock(dc, text, rect, gFontTiny, textColor, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void DrawBleBatteryInfoPage(HDC dc, const RECT* client)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int bottom = client->bottom - 60;
+    RECT title = { 194, 78, right - 180, 118 };
+    RECT subtitle = { 194, 114, right - 180, 144 };
+    RECT panel = { left, 154, right, bottom };
+    RECT overview;
+    RECT capability;
+    RECT topology;
+    RECT diagnostics;
+    RECT label;
+    RECT card;
+    RECT pill;
+    RECT batteryOuter;
+    RECT batteryInner;
+    RECT water;
+    RECT wave;
+    int gap = 18;
+    int innerLeft = panel.left + 22;
+    int innerRight = panel.right - 22;
+    int innerTop = panel.top + 22;
+    int innerBottom = panel.bottom - 22;
+    int topHeight = (innerBottom - innerTop) * 56 / 100;
+    int halfW = (innerRight - innerLeft - gap) / 2;
+    wchar_t text[128];
+    wchar_t value[64];
+    unsigned short ctrl1 = BleBatteryReg(6013);
+    unsigned short ctrl2 = BleBatteryReg(6014);
+    unsigned short onlineMask = BleBatteryReg(6002);
+    unsigned short capOnlineMask = BleBatteryReg(6016);
+    unsigned short runState = BleBatteryReg(6008);
+    unsigned short flowState = BleBatteryReg(6009);
+    int soc = (int)BleBatteryReg(6005);
+    int soh = (int)BleBatteryReg(6006);
+    unsigned short tempRaw = BleBatteryReg(6007);
+    int temp = (int)tempRaw - 40;
+    BOOL tempValid = gBleBatteryValid && tempRaw != 0;
+    int packCount = BleBatteryConfiguredPackCount();
+    int onlineCount = BleCountBits16(onlineMask);
+    int totalCurrentRaw = BleBatterySigned16(6004);
+    BOOL protectActive = (BleBatteryReg(6036) != 0 || BleBatteryReg(6037) != 0);
+    BOOL faultActive = (BleBatteryReg(6031) != 0 || BleBatteryReg(6038) != 0 || BleBatteryReg(6039) != 0 || BleBatteryReg(6040) != 0);
+    BOOL alarmActive = (BleBatteryReg(6029) != 0 || BleBatteryReg(6030) != 0 || BleBatteryReg(6041) != 0 || ctrl2 != 0);
+    BOOL dcdcActive = (BleBatteryReg(6046) != 0 || BleBatteryReg(6047) != 0 || BleBatteryReg(6048) != 0);
+    BOOL diagnosticValid = (gBleBatteryValidMask & 0x02) != 0;
+
+    if (soc < 0) { soc = 0; } if (soc > 100) { soc = 100; }
+    if (soh > 100) { soh = 100; }
+
+    gBackRect.left = left; gBackRect.top = 82; gBackRect.right = left + 118; gBackRect.bottom = 122;
+    DrawPill(dc, gBackRect, L"←  返回设备", ThemeSurface(), ThemeBorder(), ThemeText(), gHoverItem == 10);
+    DrawTextBlock(dc, L"Battery Center", title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    wsprintfW(text, L"PACK汇总 · BMS状态 · %s", gBleBatteryValid ? gBleBatteryStatus : L"等待数据");
+    DrawTextBlock(dc, text, subtitle, gFontSmall, gBleBatteryValid ? ThemeSuccess() : ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&gBleBatteryRefreshRect, right - 150, 88, right, 126);
+    DrawButton(dc, gBleBatteryRefreshRect, L"立即刷新", ThemeSurfaceAlt(), ThemeAccent(), ThemeAccent(), gHoverItem == 390);
+
+    DrawRoundBox(dc, &panel, 24, ThemeSurface(), ThemeBorder());
+    SetRectCoords(&overview, innerLeft, innerTop, innerLeft + halfW, innerTop + topHeight);
+    SetRectCoords(&capability, overview.right + gap, innerTop, innerRight, overview.bottom);
+    SetRectCoords(&topology, innerLeft, overview.bottom + gap, innerLeft + halfW, innerBottom);
+    SetRectCoords(&diagnostics, topology.right + gap, overview.bottom + gap, innerRight, innerBottom);
+
+    /* Overview */
+    DrawRoundBox(dc, &overview, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, overview.left + 20, overview.top + 14, overview.right - 20, overview.top + 44);
+    DrawTextBlock(dc, L"电池系统概览", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, overview.left + 20, overview.top + 43, overview.right - 20, overview.top + 66);
+    if (gBleBatteryValid) { wsprintfW(text, L"%s · %s · 更新 %s", BleBatteryRunStateText(runState), BleBatteryFlowStateText(flowState), gBleBatteryLastUpdate); }
+    else { WCopy(text, L"等待首帧BMS汇总数据", 128); }
+    DrawTextBlock(dc, text, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    SetRectCoords(&batteryOuter, overview.left + 28, overview.top + 82, overview.left + 228, overview.bottom - 28);
+    DrawRoundBox(dc, &batteryOuter, 20, gDarkMode ? RGB(20,24,29) : RGB(248,251,255), ThemeAccent());
+    SetRectCoords(&batteryInner, batteryOuter.left + 9, batteryOuter.top + 9, batteryOuter.right - 9, batteryOuter.bottom - 9);
+    DrawRoundBox(dc, &batteryInner, 15, gDarkMode ? RGB(28,31,36) : RGB(255,255,255), ThemeBorder());
+    if (gBleBatteryValid)
+    {
+        int available = batteryInner.bottom - batteryInner.top;
+        int waterHeight = available * soc / 100;
+        int surfaceY = batteryInner.bottom - waterHeight;
+        SetRectCoords(&water, batteryInner.left + 2, surfaceY, batteryInner.right - 2, batteryInner.bottom - 2);
+        if (water.bottom > water.top) { DrawRoundBox(dc, &water, 10, gDarkMode ? RGB(24,78,126) : RGB(210,235,255), gDarkMode ? RGB(24,78,126) : RGB(210,235,255)); }
+        /* 简单波浪水面：五段交替高低，保持CRT-free。 */
+        if (waterHeight > 8)
+        {
+            int waveW = (batteryInner.right - batteryInner.left - 8) / 5;
+            int i;
+            for (i = 0; i < 5; i++)
+            {
+                int y = surfaceY + ((i & 1) ? 3 : 0);
+                SetRectCoords(&wave, batteryInner.left + 4 + i * waveW, y, batteryInner.left + 4 + (i + 1) * waveW + 1, y + 4);
+                DrawRoundBox(dc, &wave, 2, ThemeAccent(), ThemeAccent());
+            }
+        }
+    }
+    SetRectCoords(&label, batteryInner.left + 10, batteryInner.top + 22, batteryInner.right - 10, batteryInner.top + 52);
+    DrawTextBlock(dc, L"PACK SOC", label, gFontTiny, ThemeMuted(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    wsprintfW(text, gBleBatteryValid ? L"%d%%" : L"--", soc);
+    SetRectCoords(&label, batteryInner.left + 8, batteryInner.top + 56, batteryInner.right - 8, batteryInner.top + 122);
+    DrawTextBlock(dc, text, label, gFontPercent, ThemeAccent(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, batteryInner.left + 10, batteryInner.bottom - 40, batteryInner.right - 10, batteryInner.bottom - 12);
+    DrawTextBlock(dc, BleBatteryFlowStateText(flowState), label, gFontSmall, ThemeText(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+    {
+        int metricsLeft = batteryOuter.right + 24;
+        int metricGap = 10;
+        int metricW = (overview.right - 20 - metricsLeft - metricGap) / 2;
+        int metricH = (overview.bottom - (overview.top + 82) - 28 - metricGap) / 2;
+        RECT metrics[4];
+        SetRectCoords(&metrics[0], metricsLeft, overview.top + 82, metricsLeft + metricW, overview.top + 82 + metricH);
+        SetRectCoords(&metrics[1], metrics[0].right + metricGap, metrics[0].top, overview.right - 20, metrics[0].bottom);
+        SetRectCoords(&metrics[2], metricsLeft, metrics[0].bottom + metricGap, metricsLeft + metricW, overview.bottom - 28);
+        SetRectCoords(&metrics[3], metrics[2].right + metricGap, metrics[2].top, overview.right - 20, overview.bottom - 28);
+        FormatHundredthValue(value, 64, (int)BleBatteryReg(6003), L"V"); DrawBatteryMetric(dc, &metrics[0], L"总电压", gBleBatteryValid ? value : L"--", L"6003 · 0.01V（实机确认）", ThemeAccent());
+        FormatTenthValue(value, 64, totalCurrentRaw, L"A"); DrawBatteryMetric(dc, &metrics[1], L"总电流", gBleBatteryValid ? value : L"--", L"6004 · 当前PACK电流", ThemeWarning());
+        if (tempValid) { wsprintfW(value, L"%d ℃", temp); } else { WCopy(value, L"--", 64); } DrawBatteryMetric(dc, &metrics[2], L"平均温度", value, L"6007 · Raw-40；Raw=0按无效", ThemeSuccess());
+        wsprintfW(value, L"%d%%", soh); DrawBatteryMetric(dc, &metrics[3], L"SOH", gBleBatteryValid ? value : L"--", L"6006 · 健康度", ThemeSuccess());
+    }
+
+    /* Capability */
+    DrawRoundBox(dc, &capability, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, capability.left + 20, capability.top + 14, capability.right - 20, capability.top + 44);
+    DrawTextBlock(dc, L"充放电能力与控制状态", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, capability.left + 20, capability.top + 43, capability.right - 20, capability.top + 66);
+    DrawTextBlock(dc, L"直接反映BMS当前是否允许充/放以及限流能力", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    {
+        int y = capability.top + 82;
+        int metricGap = 10;
+        int metricW = (capability.right - capability.left - 50 - metricGap) / 2;
+        RECT metrics[4];
+        SetRectCoords(&metrics[0], capability.left + 20, y, capability.left + 20 + metricW, y + 96);
+        SetRectCoords(&metrics[1], metrics[0].right + metricGap, y, capability.right - 20, y + 96);
+        SetRectCoords(&metrics[2], capability.left + 20, y + 106, capability.left + 20 + metricW, y + 202);
+        SetRectCoords(&metrics[3], metrics[2].right + metricGap, y + 106, capability.right - 20, y + 202);
+        FormatHundredthValue(value,64,(int)BleBatteryReg(6010),L"V"); DrawBatteryMetric(dc,&metrics[0],L"最大充电电压",gBleBatteryValid?value:L"--",L"6010 · 0.01V（实机确认）",ThemeAccent());
+        FormatTenthValue(value,64,(int)BleBatteryReg(6011),L"A"); DrawBatteryMetric(dc,&metrics[1],L"最大充电电流",gBleBatteryValid?value:L"--",L"6011 · 0A表示不可充",ThemeSuccess());
+        FormatTenthValue(value,64,(int)BleBatteryReg(6012),L"A"); DrawBatteryMetric(dc,&metrics[2],L"最大放电电流",gBleBatteryValid?value:L"--",L"6012 · 0A表示不可放",ThemeWarning());
+        wsprintfW(value,L"%d 个",packCount); DrawBatteryMetric(dc,&metrics[3],L"PACK数量",gBleBatteryValid?value:L"--",L"6001 · 当前并包数量",ThemeSuccess());
+        y += 220;
+        SetRectCoords(&pill, capability.left + 20, y, capability.left + 142, y + 32); DrawBatteryStatusPill(dc,pill,L"允许充电",(ctrl1&0x0001)!=0,FALSE);
+        SetRectCoords(&pill, capability.left + 152, y, capability.left + 274, y + 32); DrawBatteryStatusPill(dc,pill,L"允许放电",(ctrl1&0x0002)!=0,FALSE);
+        SetRectCoords(&pill, capability.left + 284, y, capability.left + 406, y + 32); DrawBatteryStatusPill(dc,pill,L"加热",(ctrl1&0x0040)!=0,FALSE);
+        SetRectCoords(&pill, capability.left + 416, y, capability.left + 538, y + 32); DrawBatteryStatusPill(dc,pill,L"均衡中",(ctrl1&0x0080)!=0,FALSE);
+        SetRectCoords(&pill, capability.left + 548, y, capability.right - 20, y + 32); DrawBatteryStatusPill(dc,pill,L"系统故障",faultActive,(ctrl1&0x0020)!=0||faultActive);
+        y += 42;
+        SetRectCoords(&pill, capability.left + 20, y, capability.left + 164, y + 32); DrawBatteryStatusPill(dc,pill,L"充电保护",(ctrl1&0x0008)!=0,(ctrl1&0x0008)!=0);
+        SetRectCoords(&pill, capability.left + 174, y, capability.left + 318, y + 32); DrawBatteryStatusPill(dc,pill,L"放电保护",(ctrl1&0x0010)!=0,(ctrl1&0x0010)!=0);
+        SetRectCoords(&pill, capability.left + 328, y, capability.left + 472, y + 32); DrawBatteryStatusPill(dc,pill,L"充电告警",(ctrl2&0x0001)!=0,(ctrl2&0x0001)!=0);
+        SetRectCoords(&pill, capability.left + 482, y, capability.right - 20, y + 32); DrawBatteryStatusPill(dc,pill,L"放电告警",(ctrl2&0x0002)!=0,(ctrl2&0x0002)!=0);
+    }
+
+    /* PACK topology */
+    DrawRoundBox(dc, &topology, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, topology.left + 20, topology.top + 12, topology.right - 20, topology.top + 42);
+    DrawTextBlock(dc, L"PACK拓扑", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    wsprintfW(text, L"%s · PACK数量 %d · 在线位图 0x%04X · 点击已配置PACK查看单包", BleBatteryReg(6000) == 1 ? L"低压平台" : L"高压平台", packCount, (UINT)onlineMask);
+    SetRectCoords(&label, topology.left + 20, topology.top + 42, topology.right - 20, topology.top + 66);
+    DrawTextBlock(dc, gBleBatteryValid ? text : L"等待PACK数量", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    {
+        int i;
+        int cols = 8;
+        int boxGap = 8;
+        int availableW = topology.right - topology.left - 40;
+        int boxW = (availableW - boxGap * (cols - 1)) / cols;
+        int boxH = 52;
+        int y = topology.top + 78;
+        for (i = 0; i < 16; i++)
+        {
+            int row = i / cols;
+            int col = i % cols;
+            BOOL configured = gBleBatteryValid && i < packCount;
+            BOOL online = (onlineMask & (1u << i)) != 0;
+            COLORREF border = configured ? (online ? ThemeSuccess() : ThemeAccent()) : ThemeBorder();
+            COLORREF fill = configured ? (online ? (gDarkMode ? RGB(22,54,39) : RGB(239,252,244)) : ThemeAccentSoft()) : ThemeSurface();
+            SetRectCoords(&gBlePackRects[i], topology.left + 20 + col * (boxW + boxGap), y + row * (boxH + 8), topology.left + 20 + col * (boxW + boxGap) + boxW, y + row * (boxH + 8) + boxH);
+            DrawRoundBox(dc,&gBlePackRects[i],12,fill,border);
+            wsprintfW(text,L"PACK %d",i+1);
+            SetRectCoords(&label,gBlePackRects[i].left+4,gBlePackRects[i].top+6,gBlePackRects[i].right-4,gBlePackRects[i].top+28);
+            DrawTextBlock(dc,text,label,gFontTiny,configured?ThemeText():ThemeMuted(),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            SetRectCoords(&label,gBlePackRects[i].left+4,gBlePackRects[i].top+27,gBlePackRects[i].right-4,gBlePackRects[i].bottom-4);
+            DrawTextBlock(dc,configured?(online?L"ONLINE":L"已配置"):L"--",label,gFontTiny,configured?(online?ThemeSuccess():ThemeAccent()):ThemeMuted2(),DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+        }
+    }
+
+    /* Diagnostics */
+    DrawRoundBox(dc, &diagnostics, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, diagnostics.left + 20, diagnostics.top + 12, diagnostics.right - 20, diagnostics.top + 42);
+    DrawTextBlock(dc, L"健康与诊断摘要", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    {
+        int y = diagnostics.top + 52;
+        int colW = (diagnostics.right - diagnostics.left - 50) / 2;
+        unsigned long capacity = BleBatteryU32(6044);
+        unsigned long totalChg = BleBatteryU32(6019);
+        unsigned long totalDsg = BleBatteryU32(6021);
+        int fullMin = (int)BleBatteryReg(6017);
+        int emptyMin = (int)BleBatteryReg(6018);
+        RECT leftCol = { diagnostics.left + 20, y, diagnostics.left + 20 + colW, y + 22 };
+        RECT rightCol = { diagnostics.left + 30 + colW, y, diagnostics.right - 20, y + 22 };
+        if (diagnosticValid) { wsprintfW(text,L"循环次数    %d",(int)BleBatteryReg(6035)); } else { WCopy(text,L"循环次数    --",128); } DrawTextBlock(dc,text,leftCol,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        if (diagnosticValid) { FormatMilliValue(value,64,capacity,L"Ah"); wsprintfW(text,L"并包容量    %s",value); } else { WCopy(text,L"并包容量    --",128); } DrawTextBlock(dc,text,rightCol,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+        y += 30; leftCol.top=y;leftCol.bottom=y+22; rightCol.top=y;rightCol.bottom=y+22;
+        if (diagnosticValid) { wsprintfW(text,L"累计充电    %u.%u kWh",(UINT)(totalChg/10UL),(UINT)(totalChg%10UL)); } else { WCopy(text,L"累计充电    --",128); } DrawTextBlock(dc,text,leftCol,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+        if (diagnosticValid) { wsprintfW(text,L"累计放电    %u.%u kWh",(UINT)(totalDsg/10UL),(UINT)(totalDsg%10UL)); } else { WCopy(text,L"累计放电    --",128); } DrawTextBlock(dc,text,rightCol,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+        y += 30; leftCol.top=y;leftCol.bottom=y+22; rightCol.top=y;rightCol.bottom=y+22;
+        {
+            int inputPower = (gBlePvInputPower > 0 ? gBlePvInputPower : 0) + (gBleAcInputPower > 0 ? gBleAcInputPower : 0);
+            int outputPower = (gBleDcOutputPower > 0 ? gBleDcOutputPower : 0) + (gBleAcOutputPower > 0 ? gBleAcOutputPower : 0);
+            int estimateMode = 0; /* 1 charge, 2 discharge */
+            if (gBleDataValid && inputPower > outputPower && inputPower > 0) { estimateMode = 1; }
+            else if (gBleDataValid && outputPower > inputPower) { estimateMode = 2; }
+            else if (gBleDataValid && (gBleAcState > 0 || gBleDcState > 0)) { estimateMode = 2; }
+            else if (gBleDataValid && inputPower > 0) { estimateMode = 1; }
+
+            if (gBleBatteryValid && estimateMode == 1) { FormatMinutesSmart(value,64,(UINT)fullMin); wsprintfW(text,L"预计充满    %s",value); } else { WCopy(text,L"预计充满    --",128); }
+            DrawTextBlock(dc,text,leftCol,gFontSmall,estimateMode==1?ThemeSuccess():ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+            if (gBleBatteryValid && estimateMode == 2) { FormatMinutesSmart(value,64,(UINT)emptyMin); wsprintfW(text,L"预计放空    %s",value); } else { WCopy(text,L"预计放空    --",128); }
+            DrawTextBlock(dc,text,rightCol,gFontSmall,estimateMode==2?ThemeWarning():ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        }
+        y += 38;
+        SetRectCoords(&pill, diagnostics.left + 20, y, diagnostics.left + 132, y + 32); DrawBatteryStatusPill(dc,pill,L"PACK保护",protectActive,protectActive);
+        SetRectCoords(&pill, diagnostics.left + 142, y, diagnostics.left + 254, y + 32); DrawBatteryStatusPill(dc,pill,L"BMS故障",faultActive,faultActive);
+        SetRectCoords(&pill, diagnostics.left + 264, y, diagnostics.left + 376, y + 32); DrawBatteryStatusPill(dc,pill,L"告警",alarmActive,alarmActive);
+        SetRectCoords(&pill, diagnostics.left + 386, y, diagnostics.right - 20, y + 32); DrawBatteryStatusPill(dc,pill,L"DCDC状态",dcdcActive,dcdcActive);
+        y += 42;
+        SetRectCoords(&label, diagnostics.left + 20, y, diagnostics.right - 20, diagnostics.bottom - 14);
+        wsprintfW(text,L"RAW  Protect=%04X/%04X · Fault=%04X/%04X/%04X · Alarm=%04X · DCDC=%04X/%04X/%04X",(UINT)BleBatteryReg(6036),(UINT)BleBatteryReg(6037),(UINT)BleBatteryReg(6038),(UINT)BleBatteryReg(6039),(UINT)BleBatteryReg(6040),(UINT)BleBatteryReg(6041),(UINT)BleBatteryReg(6046),(UINT)BleBatteryReg(6047),(UINT)BleBatteryReg(6048));
+        DrawTextBlock(dc,(gBleBatteryValid && diagnosticValid)?text:(gBleBatteryValid?L"诊断区6019~6048正在低频同步；核心状态不受影响。":gBleBatteryStatus),label,gFontTiny,ThemeMuted(),DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
+    }
+}
+
+static void DrawBleFaultPage(HDC dc, const RECT* client)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int bottom = client->bottom - 60;
+    RECT title = { 194, 78, right, 118 };
+    RECT subtitle = { 194, 114, right, 144 };
+    RECT panel = { left, 154, right, bottom };
+    RECT faultPanel = { left + 22, 176, (left + right) / 2 - 9, bottom - 22 };
+    RECT warnPanel = { (left + right) / 2 + 9, 176, right - 22, bottom - 22 };
+    RECT label;
+    wchar_t text[256];
+    int i;
+    int row;
+    int activeKnown;
+    BOOL anyFault = BleAnyFault();
+    BOOL anyWarn = BleAnyWarning();
+
+    gBackRect.left = left; gBackRect.top = 82; gBackRect.right = left + 118; gBackRect.bottom = 122;
+    DrawPill(dc, gBackRect, L"←  返回设备", ThemeSurface(), ThemeBorder(), ThemeText(), gHoverItem == 10);
+    DrawTextBlock(dc, L"故障与告警", title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    wsprintfW(text, L"寄存器126~129告警 · 133~138故障 · 当前 %d 项故障 / %d 项告警", BleKnownFaultCount(FALSE), BleKnownFaultCount(TRUE));
+    DrawTextBlock(dc, text, subtitle, gFontSmall, anyFault ? ThemeDanger() : (anyWarn ? ThemeWarning() : ThemeSuccess()), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawRoundBox(dc, &panel, 24, ThemeSurface(), ThemeBorder());
+
+    DrawRoundBox(dc, &faultPanel, 20, ThemeSurfaceAlt(), anyFault ? ThemeDanger() : ThemeBorder());
+    SetRectCoords(&label, faultPanel.left + 20, faultPanel.top + 14, faultPanel.right - 20, faultPanel.top + 44);
+    DrawTextBlock(dc, L"故障 · FaultInformation1~6", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, faultPanel.left + 20, faultPanel.top + 45, faultPanel.right - 20, faultPanel.top + 74);
+    DrawTextBlock(dc, anyFault ? L"X  检测到故障，已点亮当前有效项" : L"√  无故障", label, gFontSmall, anyFault ? ThemeDanger() : ThemeSuccess(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    row = 0; activeKnown = 0;
+    for (i = 0; i < (int)(sizeof(BLE_FAULT_DEFS) / sizeof(BLE_FAULT_DEFS[0])); i++)
+    {
+        if (BleFaultDefActive(&BLE_FAULT_DEFS[i], FALSE))
+        {
+            RECT item = { faultPanel.left + 20, faultPanel.top + 86 + row * 38, faultPanel.right - 20, faultPanel.top + 118 + row * 38 };
+            RECT dot = { item.left + 4, item.top + 10, item.left + 14, item.top + 20 };
+            RECT code = { item.left + 24, item.top, item.left + 90, item.bottom };
+            RECT name = { item.left + 96, item.top, item.right - 8, item.bottom };
+            DrawRoundBox(dc, &item, 10, ThemeSurface(), ThemeBorder());
+            DrawRoundBox(dc, &dot, 10, ThemeDanger(), ThemeDanger());
+            DrawTextBlock(dc, BLE_FAULT_DEFS[i].Code, code, gFontSmall, ThemeDanger(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextBlock(dc, BLE_FAULT_DEFS[i].Name, name, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            row++; activeKnown++;
+            if (row >= 12) { break; }
+        }
+    }
+    if (anyFault && activeKnown == 0)
+    {
+        SetRectCoords(&label, faultPanel.left + 20, faultPanel.top + 92, faultPanel.right - 20, faultPanel.top + 136);
+        DrawTextBlock(dc, L"存在未定义/保留故障位，请查看下方 RAW。", label, gFontSmall, ThemeDanger(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    SetRectCoords(&label, faultPanel.left + 20, faultPanel.bottom - 62, faultPanel.right - 20, faultPanel.bottom - 18);
+    wsprintfW(text, L"RAW 133~138: %04X  %04X  %04X  %04X  %04X  %04X", (UINT)gBleFaultRaw[0],(UINT)gBleFaultRaw[1],(UINT)gBleFaultRaw[2],(UINT)gBleFaultRaw[3],(UINT)gBleFaultRaw[4],(UINT)gBleFaultRaw[5]);
+    DrawTextBlock(dc, text, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+    DrawRoundBox(dc, &warnPanel, 20, ThemeSurfaceAlt(), anyWarn ? ThemeWarning() : ThemeBorder());
+    SetRectCoords(&label, warnPanel.left + 20, warnPanel.top + 14, warnPanel.right - 20, warnPanel.top + 44);
+    DrawTextBlock(dc, L"告警 · WarnInformation1~4", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    SetRectCoords(&label, warnPanel.left + 20, warnPanel.top + 45, warnPanel.right - 20, warnPanel.top + 74);
+    DrawTextBlock(dc, anyWarn ? L"!  检测到告警，已点亮当前有效项" : L"√  无告警", label, gFontSmall, anyWarn ? ThemeWarning() : ThemeSuccess(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    row = 0; activeKnown = 0;
+    for (i = 0; i < (int)(sizeof(BLE_WARN_DEFS) / sizeof(BLE_WARN_DEFS[0])); i++)
+    {
+        if (BleFaultDefActive(&BLE_WARN_DEFS[i], TRUE))
+        {
+            RECT item = { warnPanel.left + 20, warnPanel.top + 86 + row * 38, warnPanel.right - 20, warnPanel.top + 118 + row * 38 };
+            RECT dot = { item.left + 4, item.top + 10, item.left + 14, item.top + 20 };
+            RECT code = { item.left + 24, item.top, item.left + 90, item.bottom };
+            RECT name = { item.left + 96, item.top, item.right - 8, item.bottom };
+            DrawRoundBox(dc, &item, 10, ThemeSurface(), ThemeBorder());
+            DrawRoundBox(dc, &dot, 10, ThemeWarning(), ThemeWarning());
+            DrawTextBlock(dc, BLE_WARN_DEFS[i].Code, code, gFontSmall, ThemeWarning(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawTextBlock(dc, BLE_WARN_DEFS[i].Name, name, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            row++; activeKnown++;
+            if (row >= 12) { break; }
+        }
+    }
+    if (anyWarn && activeKnown == 0)
+    {
+        SetRectCoords(&label, warnPanel.left + 20, warnPanel.top + 92, warnPanel.right - 20, warnPanel.top + 136);
+        DrawTextBlock(dc, L"存在未定义/保留告警位，请查看下方 RAW。", label, gFontSmall, ThemeWarning(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    SetRectCoords(&label, warnPanel.left + 20, warnPanel.bottom - 62, warnPanel.right - 20, warnPanel.bottom - 18);
+    wsprintfW(text, L"RAW 126~129: %04X  %04X  %04X  %04X", (UINT)gBleWarnRaw[0],(UINT)gBleWarnRaw[1],(UINT)gBleWarnRaw[2],(UINT)gBleWarnRaw[3]);
+    DrawTextBlock(dc, text, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+static void DrawBlePackInfoPage(HDC dc, const RECT* client)
+{
+    int left = 54;
+    int right = client->right - 54;
+    int bottom = client->bottom - 60;
+    RECT title = { 194, 78, right - 180, 118 };
+    RECT subtitle = { 194, 114, right - 180, 144 };
+    RECT panel = { left, 154, right, bottom };
+    RECT topCard = { left + 22, 176, right - 22, 392 };
+    RECT cellCard = { left + 22, 410, (left + right) / 2 - 9, bottom - 22 };
+    RECT healthCard = { (left + right) / 2 + 9, 410, right - 22, bottom - 22 };
+    RECT label;
+    wchar_t text[256];
+    wchar_t value[96];
+    wchar_t model[64];
+    wchar_t snDecimal[48];
+    int packId = (int)BlePackReg(6100);
+    int soc = (int)BlePackReg(6113);
+    int soh = (int)BlePackReg(6114);
+    int tempRaw = (int)BlePackReg(6115);
+    int minTempRaw = (int)BlePackReg(6120);
+    int maxTempRaw = (int)BlePackReg(6121);
+    int currentRaw = BlePackSigned16(6112);
+    unsigned long capacity = BlePackU32(6131);
+    int packCycle = (int)BlePackReg(6143);
+    int packOnline = (int)BlePackReg(6127);
+    int canError = (int)BlePackReg(6130);
+    int cellCount = (int)BlePackReg(6152);
+    int ntcCount = (int)BlePackReg(6153);
+    int bmuCount = (int)BlePackReg(6154);
+    int softwareNumber = (int)BlePackReg(6173);
+    int softwareType1 = (int)BlePackReg(6174);
+    unsigned long softwareVersion1 = BlePackU32(6175);
+    int row;
+
+    BlePackModelText(model, 64);
+    BlePackSnDecimal(snDecimal, 48);
+    gBackRect.left = left; gBackRect.top = 82; gBackRect.right = left + 118; gBackRect.bottom = 122;
+    DrawPill(dc, gBackRect, L"←  返回电池", ThemeSurface(), ThemeBorder(), ThemeText(), gHoverItem == 10);
+    wsprintfW(text, L"PACK %d 详情", gBlePackSelected + 1);
+    DrawTextBlock(dc, text, title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    wsprintfW(text, L"6100~6176 · %s · 更新 %s", gBlePackValid ? gBlePackStatus : L"等待数据", gBlePackLastUpdate);
+    DrawTextBlock(dc, text, subtitle, gFontSmall, gBlePackValid ? ThemeSuccess() : ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&gBlePackRefreshRect, right - 150, 88, right, 126);
+    DrawButton(dc, gBlePackRefreshRect, L"立即刷新", ThemeSurfaceAlt(), ThemeAccent(), ThemeAccent(), gHoverItem == 430);
+    DrawRoundBox(dc, &panel, 24, ThemeSurface(), ThemeBorder());
+
+    DrawRoundBox(dc, &topCard, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, topCard.left + 22, topCard.top + 12, topCard.right - 22, topCard.top + 42);
+    wsprintfW(text, L"PACK %d  ·  型号 %s  ·  PackID %d", gBlePackSelected + 1, model, packId);
+    DrawTextBlock(dc, gBlePackValid ? text : L"等待单PACK基础信息", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SetRectCoords(&label, topCard.left + 22, topCard.top + 44, topCard.right - 22, topCard.top + 70);
+    wsprintfW(text, L"SN %s  ·  数据读取正常  ·  PACK通讯位 %s  ·  %s  ·  从机 %d", snDecimal, packOnline ? L"在线" : L"未通讯", canError ? L"CAN异常" : L"CAN正常", gBlePackSlaveId);
+    DrawTextBlock(dc, gBlePackValid ? text : L"SN --", label, gFontSmall, canError ? ThemeDanger() : ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    {
+        RECT metrics[6];
+        int gap = 10;
+        int x0 = topCard.left + 22;
+        int x1 = topCard.right - 22;
+        int w = (x1 - x0 - gap * 5) / 6;
+        int i;
+        for (i = 0; i < 6; i++) { SetRectCoords(&metrics[i], x0 + i * (w + gap), topCard.top + 84, x0 + i * (w + gap) + w, topCard.bottom - 18); }
+        wsprintfW(value, L"%d%%", soc); DrawPackMetric(dc,&metrics[0],L"SOC",gBlePackValid?value:L"--",L"6113",ThemeAccent());
+        wsprintfW(value, L"%d%%", soh); DrawPackMetric(dc,&metrics[1],L"SOH",gBlePackValid?value:L"--",L"6114",ThemeSuccess());
+        FormatHundredthValue(value,96,(int)BlePackReg(6111),L"V"); DrawPackMetric(dc,&metrics[2],L"电压",gBlePackValid?value:L"--",L"6111 · 0.01V（实机确认）",ThemeAccent());
+        FormatTenthValue(value,96,currentRaw,L"A"); DrawPackMetric(dc,&metrics[3],L"电流",gBlePackValid?value:L"--",L"6112",ThemeWarning());
+        if (gBlePackValid && tempRaw != 0) { wsprintfW(value,L"%d ℃",tempRaw-40); } else { WCopy(value,L"--",96); } DrawPackMetric(dc,&metrics[4],L"平均温度",value,L"6115 · Raw-40",ThemeSuccess());
+        wsprintfW(value,L"%d",packCycle); DrawPackMetric(dc,&metrics[5],L"循环次数",gBlePackValid?value:L"--",L"6143",ThemeText());
+    }
+
+    DrawRoundBox(dc, &cellCard, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, cellCard.left + 20, cellCard.top + 14, cellCard.right - 20, cellCard.top + 44);
+    DrawTextBlock(dc, L"电芯 / 温度健康", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    row = cellCard.top + 60;
+    FormatMilliValue(value,96,(unsigned long)BlePackReg(6116),L"V"); wsprintfW(text,L"最低电芯    %s   · Cell %d",value,(int)BlePackReg(6118)); SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"最低电芯    --",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=34;
+    FormatMilliValue(value,96,(unsigned long)BlePackReg(6117),L"V"); wsprintfW(text,L"最高电芯    %s   · Cell %d",value,(int)BlePackReg(6119)); SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"最高电芯    --",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=34;
+    if (gBlePackValid) { int delta = (int)BlePackReg(6117)-(int)BlePackReg(6116); wsprintfW(text,L"电芯压差    %d mV",delta); } else { WCopy(text,L"电芯压差    --",256); } SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,text,label,gFontBody,ThemeAccent(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=44;
+    if (gBlePackValid && minTempRaw != 0) { wsprintfW(text,L"最低温度    %d ℃   · NTC %d",minTempRaw-40,(int)BlePackReg(6122)); } else { WCopy(text,L"最低温度    --",256); } SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,text,label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=34;
+    if (gBlePackValid && maxTempRaw != 0) { wsprintfW(text,L"最高温度    %d ℃   · NTC %d",maxTempRaw-40,(int)BlePackReg(6123)); } else { WCopy(text,L"最高温度    --",256); } SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,text,label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=34;
+    wsprintfW(text,L"电芯 %d · NTC %d · BMU %d",cellCount,ntcCount,bmuCount); SetRectCoords(&label,cellCard.left+20,row,cellCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"电芯 / NTC / BMU --",label,gFontSmall,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+
+    DrawRoundBox(dc, &healthCard, 20, ThemeSurfaceAlt(), ThemeBorder());
+    SetRectCoords(&label, healthCard.left + 20, healthCard.top + 14, healthCard.right - 20, healthCard.top + 44);
+    DrawTextBlock(dc, L"容量 / 能力 / 状态", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    row = healthCard.top + 60;
+    FormatMilliValue(value,96,capacity,L"Ah"); wsprintfW(text,L"PACK容量          %s",value); SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"PACK容量          --",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=36;
+    FormatTenthValue(value,96,(int)BlePackReg(6160),L"A"); wsprintfW(text,L"最大允许充电电流  %s",value); SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"最大允许充电电流  --",label,gFontBody,ThemeSuccess(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=36;
+    FormatTenthValue(value,96,(int)BlePackReg(6161),L"A"); wsprintfW(text,L"最大允许放电电流  %s",value); SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"最大允许放电电流  --",label,gFontBody,ThemeWarning(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=42;
+    wsprintfW(text,L"运行状态  %s   ·   充放电  %s",BleBatteryRunStateText(BlePackReg(6124)),BleBatteryFlowStateText(BlePackReg(6125))); SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+26); DrawTextBlock(dc,gBlePackValid?text:L"运行状态 --",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); row+=36;
+    if (gBlePackValid && softwareNumber > 0)
+    {
+        wsprintfW(text,L"软件1  %s (Type %d)   ·   版本 %u",BlePackSoftwareTypeText(softwareType1),softwareType1,(UINT)softwareVersion1);
+    }
+    else { WCopy(text,L"软件1  --   ·   版本 --",256); }
+    SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+26); DrawTextBlock(dc,text,label,gFontSmall,ThemeAccent(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS); row+=34;
+    wsprintfW(text,L"保护 RAW %04X/%04X   · 故障 %04X/%04X/%04X   · 告警 %04X",(UINT)BlePackReg(6144),(UINT)BlePackReg(6145),(UINT)BlePackReg(6146),(UINT)BlePackReg(6147),(UINT)BlePackReg(6148),(UINT)BlePackReg(6149)); SetRectCoords(&label,healthCard.left+20,row,healthCard.right-20,row+44); DrawTextBlock(dc,gBlePackValid?text:gBlePackStatus,label,gFontTiny,ThemeMuted(),DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
+}
+
+static LPCWSTR BleAdvancedAreaText(int area)
+{
+    switch(area){case 1:return L"美规 · 120V/60Hz";case 2:return L"日规 · 100V/50Hz";case 3:return L"欧规 · 230V/50Hz";case 4:return L"澳规 · 240V/50Hz";case 5:return L"中国 · 220V/50Hz";case 6:return L"非洲";case 7:return L"德国";case 8:return L"中国台湾 · 110V/60Hz";case 9:return L"英规 · 230V/50Hz";case 10:return L"菲律宾 · 220V/60Hz";case 11:return L"120V/50Hz";case 12:return L"100V/60Hz";case 13:return L"110V/50Hz";case 14:return L"230V/60Hz";case 15:return L"240V/60Hz";default:return L"未识别";}
+}
+static void DrawBleAdvancedSettingsPage(HDC dc,const RECT* client)
+{
+    int left=54,right=client->right-54,bottom=client->bottom-60,gap=18,half=(right-left-gap)/2,rightLeft=left+half+gap,top=158,topH=242,lowerTop=418,index;
+    RECT title={194,78,right,118},subtitle={194,114,right-180,144},cardInv={left,top,left+half,top+topH},cardCurrent={rightLeft,top,right,top+topH},cardSystem={left,lowerTop,left+half,bottom},cardFactory={rightLeft,lowerTop,right,bottom},label;
+    wchar_t text[256];
+    BOOL connected=gBleConnected,invVReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_INV_VOLT),invFReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_INV_FREQ),gridReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT),chgReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_CHG_CURRENT)&&gridReady,gridPlusReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_GRID_PLUS),memoryReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_MEMORY),areaReady=connected&&(gBleAdvancedValidMask&BLE_ADV_VALID_AREA)&&gBleAdvArea>=1&&gBleAdvArea<=15;
+    static const wchar_t* voltNames[3]={L"100V / 220V",L"120V / 230V",L"208V / 240V"}; static const wchar_t* freqNames[2]={L"50 Hz",L"60 Hz"};
+    gBackRect.left=left;gBackRect.top=82;gBackRect.right=left+118;gBackRect.bottom=122; DrawPill(dc,gBackRect,L"←  返回设备",ThemeSurface(),ThemeBorder(),ThemeText(),gHoverItem==10);
+    DrawTextBlock(dc,L"高级设置",title,gFontTitle,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); DrawTextBlock(dc,L"工程参数 · 自动读取设备真实值，写入后回读确认",subtitle,gFontSmall,ThemeWarning(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    SetRectCoords(&gBleAdvancedRefreshRect,right-150,86,right,124); DrawButton(dc,gBleAdvancedRefreshRect,L"立即同步",ThemeSurface(),ThemeAccent(),connected?ThemeAccent():ThemeMuted(),gHoverItem==440&&connected);
+    wsprintfW(text,L"%s · %s",gBleAdvancedStatus,gBleAdvancedLastUpdate); SetRectCoords(&label,right-520,126,right,150); DrawTextBlock(dc,text,label,gFontTiny,gBleAdvancedValid?ThemeSuccess():ThemeWarning(),DT_RIGHT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+
+    DrawRoundBox(dc,&cardInv,20,ThemeSurface(),ThemeBorder()); SetRectCoords(&label,cardInv.left+22,cardInv.top+14,cardInv.right-22,cardInv.top+44); DrawTextBlock(dc,L"逆变输出参数",label,gFontCardTitle,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    SetRectCoords(&label,cardInv.left+22,cardInv.top+48,cardInv.right-22,cardInv.top+74); DrawTextBlock(dc,L"逆变电压 · 2209",label,gFontSmall,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    {int cg=10,cw=(half-44-cg*2)/3;for(index=0;index<3;index++){SetRectCoords(&gBleAdvancedInvVoltageRects[index],cardInv.left+22+index*(cw+cg),cardInv.top+78,cardInv.left+22+index*(cw+cg)+cw,cardInv.top+118);DrawSettingChoice(dc,gBleAdvancedInvVoltageRects[index],voltNames[index],invVReady&&gBleAdvInvVoltage==index,invVReady,441+index);}}
+    SetRectCoords(&label,cardInv.left+22,cardInv.top+132,cardInv.right-22,cardInv.top+158); DrawTextBlock(dc,L"逆变频率 · 2210",label,gFontSmall,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    {int cg=12,cw=(half-44-cg)/2;for(index=0;index<2;index++){SetRectCoords(&gBleAdvancedFreqRects[index],cardInv.left+22+index*(cw+cg),cardInv.top+162,cardInv.left+22+index*(cw+cg)+cw,cardInv.top+202);DrawSettingChoice(dc,gBleAdvancedFreqRects[index],freqNames[index],invFReady&&gBleAdvInvFreq==index,invFReady,444+index);}}
+
+    DrawRoundBox(dc,&cardCurrent,20,ThemeSurface(),ThemeBorder()); SetRectCoords(&label,cardCurrent.left+22,cardCurrent.top+14,cardCurrent.right-22,cardCurrent.top+44); DrawTextBlock(dc,L"电流限制",label,gFontCardTitle,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    {
+        int gridMax = AdvancedGridSliderMax();
+        int gridBase = (gBleAdvGridCurrentDraft >= 0) ? gBleAdvGridCurrentDraft : gBleAdvGridMaxCurrent;
+        int gridValue = ReadAdvancedEditValueClamped(gBleAdvancedGridCurrentEdit,gridBase,0,gridMax);
+        int chargeMaxBase = (gBleAdvGridCurrentDraft >= 0) ? gBleAdvGridCurrentDraft : gBleAdvGridMaxCurrent;
+        int chargeMax = (gridReady && chargeMaxBase > 0) ? chargeMaxBase : 1;
+        int chargeBase = (gBleAdvChgCurrentDraft >= 0) ? gBleAdvChgCurrentDraft : gBleAdvChgMaxCurrent;
+        int chargeValue = ReadAdvancedEditValueClamped(gBleAdvancedChgCurrentEdit,chargeBase,0,chargeMax);
+        SetRectCoords(&label,cardCurrent.left+22,cardCurrent.top+48,cardCurrent.right-22,cardCurrent.top+72); DrawTextBlock(dc,L"最大电网输入电流 · 2272",label,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        SetRectCoords(&gBleAdvancedGridCurrentSliderRect,cardCurrent.left+22,cardCurrent.top+78,cardCurrent.right-244,cardCurrent.top+106); DrawAdvancedCurrentSlider(dc,&gBleAdvancedGridCurrentSliderRect,gridValue,gridMax,gridReady,ThemeAccent());
+        { RECT editShell={cardCurrent.right-242,cardCurrent.top+72,cardCurrent.right-164,cardCurrent.top+112}; DrawInputShell(dc,editShell,gridReady); }
+        SetRectCoords(&label,cardCurrent.right-162,cardCurrent.top+78,cardCurrent.right-142,cardCurrent.top+106); DrawTextBlock(dc,L"A",label,gFontBody,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        SetRectCoords(&gBleAdvancedGridCurrentApplyRect,cardCurrent.right-132,cardCurrent.top+74,cardCurrent.right-22,cardCurrent.top+110); DrawButton(dc,gBleAdvancedGridCurrentApplyRect,L"应用",ThemeAccentSoft(),ThemeAccent(),gridReady?ThemeAccent():ThemeMuted2(),gHoverItem==448&&gridReady);
+        SetRectCoords(&label,cardCurrent.left+22,cardCurrent.top+116,cardCurrent.right-22,cardCurrent.top+140); DrawTextBlock(dc,L"最大充电电流 · 2214",label,gFontSmall,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        SetRectCoords(&gBleAdvancedChgCurrentSliderRect,cardCurrent.left+22,cardCurrent.top+146,cardCurrent.right-244,cardCurrent.top+174); DrawAdvancedCurrentSlider(dc,&gBleAdvancedChgCurrentSliderRect,chargeValue,chargeMax,chgReady,ThemeSuccess());
+        { RECT editShell={cardCurrent.right-242,cardCurrent.top+140,cardCurrent.right-164,cardCurrent.top+180}; DrawInputShell(dc,editShell,chgReady); }
+        SetRectCoords(&label,cardCurrent.right-162,cardCurrent.top+146,cardCurrent.right-142,cardCurrent.top+174); DrawTextBlock(dc,L"A",label,gFontBody,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+        SetRectCoords(&gBleAdvancedChgCurrentApplyRect,cardCurrent.right-132,cardCurrent.top+142,cardCurrent.right-22,cardCurrent.top+178); DrawButton(dc,gBleAdvancedChgCurrentApplyRect,L"应用",ThemeAccentSoft(),ThemeAccent(),chgReady?ThemeAccent():ThemeMuted2(),gHoverItem==449&&chgReady);
+        if(gridReady){int shownLimit=(gBleAdvGridCurrentDraft>=0)?gBleAdvGridCurrentDraft:gBleAdvGridMaxCurrent;wsprintfW(text,L"充电电流范围 0 ~ %d A · 待设置值不会被轮询覆盖，点击应用后写入并回读",shownLimit);}else{WCopy(text,L"最大充电电流上限由最大电网输入电流决定",256);} SetRectCoords(&label,cardCurrent.left+22,cardCurrent.top+190,cardCurrent.right-22,cardCurrent.top+220); DrawTextBlock(dc,text,label,gFontTiny,ThemeWarning(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    }
+
+    DrawRoundBox(dc,&cardSystem,20,ThemeSurface(),ThemeBorder()); SetRectCoords(&label,cardSystem.left+22,cardSystem.top+14,cardSystem.right-22,cardSystem.top+44); DrawTextBlock(dc,L"系统功能",label,gFontCardTitle,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    SetRectCoords(&label,cardSystem.left+22,cardSystem.top+62,cardSystem.right-110,cardSystem.top+94); DrawTextBlock(dc,L"电网增强模式",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); SetRectCoords(&gBleAdvancedGridPlusRect,cardSystem.right-84,cardSystem.top+62,cardSystem.right-24,cardSystem.top+92); DrawSettingToggle(dc,gBleAdvancedGridPlusRect,gBleAdvGridPlus==1,gridPlusReady,446); SetRectCoords(&label,cardSystem.left+22,cardSystem.top+96,cardSystem.right-110,cardSystem.top+122); DrawTextBlock(dc,L"2225 · 0关闭 / 1开启",label,gFontTiny,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    SetRectCoords(&label,cardSystem.left+22,cardSystem.top+142,cardSystem.right-110,cardSystem.top+174); DrawTextBlock(dc,L"系统记忆开关",label,gFontBody,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE); SetRectCoords(&gBleAdvancedMemoryRect,cardSystem.right-84,cardSystem.top+142,cardSystem.right-24,cardSystem.top+172); DrawSettingToggle(dc,gBleAdvancedMemoryRect,gBleAdvMemory==1,memoryReady,447); SetRectCoords(&label,cardSystem.left+22,cardSystem.top+176,cardSystem.right-22,cardSystem.top+208); DrawTextBlock(dc,L"2226 · 记录 AC / DC 输出状态，设备重启后用于恢复",label,gFontTiny,ThemeMuted(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+
+    DrawRoundBox(dc,&cardFactory,20,ThemeSurface(),ThemeBorder()); SetRectCoords(&label,cardFactory.left+22,cardFactory.top+14,cardFactory.right-22,cardFactory.top+44); DrawTextBlock(dc,L"恢复出厂设置",label,gFontCardTitle,ThemeText(),DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+    if(areaReady){wsprintfW(text,L"当前地区：%s · Area %d",BleAdvancedAreaText(gBleAdvArea),gBleAdvArea);}else{WCopy(text,L"当前地区：等待读取 2218 SetArea",256);} SetRectCoords(&label,cardFactory.left+22,cardFactory.top+62,cardFactory.right-22,cardFactory.top+94); DrawTextBlock(dc,text,label,gFontBody,areaReady?ThemeText():ThemeWarning(),DT_LEFT|DT_VCENTER|DT_SINGLELINE|DT_END_ELLIPSIS);
+    SetRectCoords(&label,cardFactory.left+22,cardFactory.top+102,cardFactory.right-22,cardFactory.top+144); DrawTextBlock(dc,L"2206 · 按当前地区规格恢复出厂参数，包含历史记录；执行后设备可能重启。",label,gFontSmall,ThemeMuted(),DT_LEFT|DT_WORDBREAK|DT_END_ELLIPSIS);
+    SetRectCoords(&gBleAdvancedFactoryResetRect,cardFactory.left+22,cardFactory.bottom-62,cardFactory.right-22,cardFactory.bottom-22); DrawButton(dc,gBleAdvancedFactoryResetRect,L"恢复出厂设置",ThemeDangerSoft(),ThemeDanger(),areaReady?ThemeDanger():ThemeMuted2(),gHoverItem==450&&areaReady);
 }
 
 static void DrawBlePage(HDC dc, const RECT* client)
@@ -2159,7 +4103,7 @@ static void DrawBlePage(HDC dc, const RECT* client)
     RECT listPanel = { left, 282, right - 380, bottom };
     RECT sidePanel = { right - 360, 282, right, bottom };
     RECT label;
-    int rowHeight = 58;
+    int rowHeight = 44;
     int index;
     wchar_t text[256];
 
@@ -2168,156 +4112,262 @@ static void DrawBlePage(HDC dc, const RECT* client)
 
     if (gBleConnected)
     {
-        RECT product = { left, 150, right, bottom };
-        RECT identity = { product.left + 24, product.top + 20, product.right - 24, product.top + 126 };
-        RECT socCard = { product.left + 24, product.top + 146, product.left + 342, product.top + 378 };
-        int metricLeft = socCard.right + 18;
-        int metricRight = product.right - 24;
-        int metricGap = 16;
-        int metricWidth = (metricRight - metricLeft - metricGap) / 2;
-        RECT acOutCard = { metricLeft, product.top + 146, metricLeft + metricWidth, product.top + 252 };
-        RECT dcOutCard = { acOutCard.right + metricGap, acOutCard.top, metricRight, acOutCard.bottom };
-        RECT pvInCard = { metricLeft, product.top + 270, metricLeft + metricWidth, product.top + 378 };
-        RECT acInCard = { pvInCard.right + metricGap, pvInCard.top, metricRight, pvInCard.bottom };
-        RECT controlPanel = { product.left + 24, product.top + 398, product.right - 24, product.top + 512 };
-        RECT acControlCard = { controlPanel.left + 18, controlPanel.top + 40, (controlPanel.left + controlPanel.right) / 2 - 9, controlPanel.bottom - 14 };
-        RECT dcControlCard = { (controlPanel.left + controlPanel.right) / 2 + 9, controlPanel.top + 40, controlPanel.right - 18, controlPanel.bottom - 14 };
-        RECT lowerPanel = { product.left + 24, product.top + 532, product.right - 24, product.bottom - 24 };
-        int lowerWidth = lowerPanel.right - lowerPanel.left;
-        RECT statusPanel = { lowerPanel.left, lowerPanel.top, lowerPanel.left + lowerWidth * 32 / 100, lowerPanel.bottom };
-        RECT modbusPanel = { statusPanel.right + 12, lowerPanel.top, lowerPanel.right, lowerPanel.bottom };
-        RECT valueRect;
-        RECT bar;
-        RECT fill;
+        RECT product;
+        RECT energyPanel;
+        RECT infoPanel;
+        RECT modbusPanel;
+        RECT flowRect;
+        RECT dcControlCard;
+        RECT acControlCard;
         COLORREF acStateColor = gBleAcState > 0 ? ThemeSuccess() : ThemeMuted2();
         COLORREF dcStateColor = gBleDcState > 0 ? ThemeSuccess() : ThemeMuted2();
 
+        CalculateBleDashboardPanels(client, &product, &energyPanel, &infoPanel, &modbusPanel);
+
         DrawTextBlock(dc, L"设备能量中心", title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawTextBlock(dc, L"蓝牙加密 Modbus 实时监控与输出控制", subtitle, gFontSmall, ThemeSuccess(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextBlock(dc, L"实时能量流 · 设备信息 · 蓝牙加密 Modbus", subtitle, gFontSmall, ThemeSuccess(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         DrawRoundBox(dc, &product, 28, ThemeSurface(), ThemeBorder());
-        DrawRoundBox(dc, &identity, 20, ThemeSurfaceAlt(), ThemeBorder());
 
-        label.left = identity.left + 22; label.top = identity.top + 15; label.right = identity.right - 500; label.bottom = identity.top + 50;
-        DrawTextBlock(dc, gBleConnectedName[0] ? gBleConnectedName : L"BLE Device", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        label.top = identity.top + 50; label.bottom = identity.top + 80;
-        DrawTextBlock(dc, gBleConnectedMac[0] ? gBleConnectedMac : L"--:--:--:--:--:--", label, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = identity.left + 300; label.right = identity.left + 520; label.top = identity.top + 50; label.bottom = identity.top + 80;
-        DrawTextBlock(dc, gBleDataValid ? L"●  MODBUS ONLINE" : L"●  BLE CONNECTED", label, gFontSmall, ThemeSuccess(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        /* ------------------------------------------------------------------ */
+        /* Left: SOC + four-way energy flow + AC/DC output controls.           */
+        /* ------------------------------------------------------------------ */
+        DrawRoundBox(dc, &energyPanel, 22, ThemeSurfaceAlt(), ThemeBorder());
+        SetRectCoords(&label, energyPanel.left + 22, energyPanel.top + 12, energyPanel.right - 22, energyPanel.top + 44);
+        DrawTextBlock(dc, L"实时能量流", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&label, energyPanel.left + 22, energyPanel.top + 42, energyPanel.right - 22, energyPanel.top + 67);
+        DrawTextBlock(dc, gBleDataValid ? gBleDataStatus : L"等待设备实时数据", label, gFontTiny, gBleDataValid ? ThemeSuccess() : ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-        label.left = identity.right - 680; label.top = identity.top + 14; label.right = identity.right - 590; label.bottom = identity.top + 40;
-        DrawTextBlock(dc, L"从机地址", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        { RECT shell = { identity.right - 684, identity.top + 47, identity.right - 590, identity.top + 87 }; DrawInputShell(dc, shell, TRUE); }
-        gBleSlaveApplyRect.left = identity.right - 578; gBleSlaveApplyRect.top = identity.top + 47; gBleSlaveApplyRect.right = identity.right - 458; gBleSlaveApplyRect.bottom = identity.top + 87;
-        DrawButton(dc, gBleSlaveApplyRect, L"应用地址", ThemeSurface(), ThemeAccent(), ThemeAccent(), gHoverItem == 56);
-        label.left = identity.right - 438; label.top = identity.top + 14; label.right = identity.right - 342; label.bottom = identity.top + 40;
-        DrawTextBlock(dc, L"刷新周期", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        gBleIntervalSelectorRect.left = identity.right - 442; gBleIntervalSelectorRect.top = identity.top + 47;
-        gBleIntervalSelectorRect.right = identity.right - 338; gBleIntervalSelectorRect.bottom = identity.top + 87;
-        DrawUiSelectorControl(dc, &gBleIntervalSelectorRect, UI_SELECTOR_BLE_INTERVAL, gUiSelectorOpen == UI_SELECTOR_BLE_INTERVAL, gHoverItem == 185);
-        gBleOtaEntryRect.left = identity.right - 322; gBleOtaEntryRect.top = identity.top + 8; gBleOtaEntryRect.right = identity.right - 202; gBleOtaEntryRect.bottom = identity.top + 39;
-        DrawButton(dc, gBleOtaEntryRect, L"OTA 一键升级", ThemeAccentSoft(), ThemeAccent(), ThemeAccent(), gHoverItem == 58);
-        gBleRefreshRect.left = identity.right - 322; gBleRefreshRect.top = identity.top + 47; gBleRefreshRect.right = identity.right - 202; gBleRefreshRect.bottom = identity.top + 87;
-        DrawButton(dc, gBleRefreshRect, L"立即刷新", ThemeSurface(), ThemeAccent(), ThemeAccent(), gHoverItem == 55);
-        gBleDisconnectRect.left = identity.right - 184; gBleDisconnectRect.top = identity.top + 47; gBleDisconnectRect.right = identity.right - 20; gBleDisconnectRect.bottom = identity.top + 87;
+        SetRectCoords(&flowRect, energyPanel.left + 18, energyPanel.top + 72, energyPanel.right - 18, energyPanel.bottom - 106);
+        {
+            int centerX = (flowRect.left + flowRect.right) / 2;
+            int centerY = (flowRect.top + flowRect.bottom) / 2;
+            int soc = gBleDataValid ? gBleSoc : 0;
+            int cardWidth = 168;
+            int cardHeight = 62;
+            int tankWidth = 152;
+            int tankHeight = 126;
+            int branchOffsetY = 78;
+            int tankPortOffsetY = 32;
+            BOOL pvActive = gBleDataValid && (gBlePvInputPower > 0);
+            BOOL gridActive = gBleDataValid && (gBleAcInputPower > 0);
+            BOOL dcActive = gBleDataValid && ((gBleDcState > 0) || (gBleDcOutputPower > 0));
+            BOOL acActive = gBleDataValid && ((gBleAcState > 0) || (gBleAcOutputPower > 0));
+            COLORREF inactiveLine = gDarkMode ? RGB(63,66,72) : RGB(213,219,227);
+            COLORREF pvColor = pvActive ? ThemeSuccess() : inactiveLine;
+            COLORREF gridColor = gridActive ? ThemeAccent() : inactiveLine;
+            COLORREF dcColor = dcActive ? ThemeWarning() : inactiveLine;
+            COLORREF acColor = acActive ? ThemeWarning() : inactiveLine;
+            RECT tankRect = { centerX - tankWidth / 2, centerY - tankHeight / 2, centerX + tankWidth / 2, centerY + tankHeight / 2 };
+            RECT tankInner = { tankRect.left + 8, tankRect.top + 8, tankRect.right - 8, tankRect.bottom - 8 };
+            RECT tankShadow = { tankRect.left + 3, tankRect.top + 5, tankRect.right + 3, tankRect.bottom + 5 };
+            RECT pvCard = { flowRect.left + 8, centerY - branchOffsetY - cardHeight / 2, flowRect.left + 8 + cardWidth, centerY - branchOffsetY + cardHeight / 2 };
+            RECT dcCard = { flowRect.left + 8, centerY + branchOffsetY - cardHeight / 2, flowRect.left + 8 + cardWidth, centerY + branchOffsetY + cardHeight / 2 };
+            RECT gridCard = { flowRect.right - 8 - cardWidth, centerY - branchOffsetY - cardHeight / 2, flowRect.right - 8, centerY - branchOffsetY + cardHeight / 2 };
+            RECT acCard = { flowRect.right - 8 - cardWidth, centerY + branchOffsetY - cardHeight / 2, flowRect.right - 8, centerY + branchOffsetY + cardHeight / 2 };
+            int leftRouteX = (pvCard.right + tankRect.left) / 2;
+            int rightRouteX = (gridCard.left + tankRect.right) / 2;
+            int upperY = centerY - branchOffsetY;
+            int lowerY = centerY + branchOffsetY;
+            int tankUpperY = centerY - tankPortOffsetY;
+            int tankLowerY = centerY + tankPortOffsetY;
+            RECT socTitle = { tankRect.left + 16, tankRect.top + 12, tankRect.right - 16, tankRect.top + 34 };
+            RECT socValue = { tankRect.left + 12, centerY - 28, tankRect.right - 12, centerY + 30 };
+            RECT socLabel = { tankRect.left + 16, tankRect.bottom - 31, tankRect.right - 16, tankRect.bottom - 11 };
+            RECT waterRect;
+            int fillHeight;
+            COLORREF waterFill = gDarkMode ? RGB(18,69,117) : RGB(208,232,255);
+
+            if (soc < 0) { soc = 0; }
+            if (soc > 100) { soc = 100; }
+
+            /* V1.0.10: mirrored four-way routes. All top/bottom branches use the same geometry. */
+            DrawThickLine(dc, pvCard.right, upperY, leftRouteX, upperY, pvColor, 3);
+            DrawThickLine(dc, leftRouteX, upperY, leftRouteX, tankUpperY, pvColor, 3);
+            DrawThickLine(dc, leftRouteX, tankUpperY, tankRect.left, tankUpperY, pvColor, 3);
+
+            DrawThickLine(dc, gridCard.left, upperY, rightRouteX, upperY, gridColor, 3);
+            DrawThickLine(dc, rightRouteX, upperY, rightRouteX, tankUpperY, gridColor, 3);
+            DrawThickLine(dc, tankRect.right, tankUpperY, rightRouteX, tankUpperY, gridColor, 3);
+
+            DrawThickLine(dc, tankRect.left, tankLowerY, leftRouteX, tankLowerY, dcColor, 3);
+            DrawThickLine(dc, leftRouteX, tankLowerY, leftRouteX, lowerY, dcColor, 3);
+            DrawThickLine(dc, leftRouteX, lowerY, dcCard.right, lowerY, dcColor, 3);
+
+            DrawThickLine(dc, tankRect.right, tankLowerY, rightRouteX, tankLowerY, acColor, 3);
+            DrawThickLine(dc, rightRouteX, tankLowerY, rightRouteX, lowerY, acColor, 3);
+            DrawThickLine(dc, rightRouteX, lowerY, acCard.left, lowerY, acColor, 3);
+
+            DrawEnergyCard(dc, pvCard, L"PV", L"PV / DC 输入", gBlePvInputPower, ThemeSuccess(), gBleDataValid, pvActive, FALSE);
+            DrawEnergyCard(dc, gridCard, L"GRID", L"电网 / AC 输入", gBleAcInputPower, ThemeAccent(), gBleDataValid, gridActive, TRUE);
+            DrawEnergyCard(dc, dcCard, L"DC", L"DC 输出", gBleDcOutputPower, ThemeWarning(), gBleDataValid, dcActive, FALSE);
+            DrawEnergyCard(dc, acCard, L"AC", L"AC 输出", gBleAcOutputPower, ThemeWarning(), gBleDataValid, acActive, TRUE);
+
+            /* V1.0.10: central battery is clickable. SOC fill uses a wave surface instead of a flat waterline. */
+            gBleBatteryRect = tankRect;
+            DrawRoundBox(dc, &tankShadow, 18, ThemeShadow(), ThemeShadow());
+            DrawRoundBox(dc, &tankRect, 18, gDarkMode ? RGB(25,27,31) : RGB(255,255,255), gHoverItem == 188 ? ThemeSuccess() : ThemeAccent());
+            DrawRoundBox(dc, &tankInner, 13, gDarkMode ? RGB(31,33,38) : RGB(248,251,255), ThemeBorder());
+
+            fillHeight = (tankInner.bottom - tankInner.top) * soc / 100;
+            if (fillHeight > 0)
+            {
+                static const int waveOffset[17] = { 0,-2,-4,-3,0,3,4,2,0,-2,-4,-3,0,3,4,2,0 };
+                int waveTop = tankInner.bottom - fillHeight;
+                int waveLeft = tankInner.left + 3;
+                int waveRight = tankInner.right - 3;
+                int waveBottom = tankInner.bottom - 3;
+                int waveWidth = waveRight - waveLeft;
+                int wx;
+                if (waveTop < tankInner.top + 4) { waveTop = tankInner.top + 4; }
+                /* Fill by vertical 1px columns so the wave needs no extra Win32/GDI imports. */
+                for (wx = waveLeft; wx <= waveRight; wx++)
+                {
+                    int waveIndex = ((wx - waveLeft) * 16) / (waveWidth > 0 ? waveWidth : 1);
+                    int topY = waveTop + waveOffset[waveIndex];
+                    if (topY < tankInner.top + 3) { topY = tankInner.top + 3; }
+                    if (topY > waveBottom - 2) { topY = waveBottom - 2; }
+                    DrawLine(dc, wx, topY, wx, waveBottom, waterFill);
+                }
+            }
+
+            DrawTextBlock(dc, L"BATTERY", socTitle, gFontTiny, ThemeMuted(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            if (gBleDataValid) { wsprintfW(text, L"%d%%", soc); } else { WCopy(text, L"--%", 256); }
+            DrawTextBlock(dc, text, socValue, gFontPercent, ThemeAccent(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawTextBlock(dc, L"SOC", socLabel, gFontTiny, ThemeText(), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
+        /* Output switches are part of the energy card, directly below the flow. */
+        SetRectCoords(&dcControlCard, energyPanel.left + 18, energyPanel.bottom - 88, (energyPanel.left + energyPanel.right) / 2 - 9, energyPanel.bottom - 16);
+        SetRectCoords(&acControlCard, (energyPanel.left + energyPanel.right) / 2 + 9, energyPanel.bottom - 88, energyPanel.right - 18, energyPanel.bottom - 16);
+        DrawRoundBox(dc, &dcControlCard, 15, ThemeSurface(), gBleDcState > 0 ? ThemeWarning() : ThemeBorder());
+        SetRectCoords(&label, dcControlCard.left + 16, dcControlCard.top + 10, dcControlCard.left + 130, dcControlCard.top + 34);
+        DrawTextBlock(dc, L"DC 输出", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&label, dcControlCard.left + 16, dcControlCard.top + 34, dcControlCard.left + 160, dcControlCard.bottom - 8);
+        DrawTextBlock(dc, gBleDcState > 0 ? L"● 已开启" : (gBleDcState == 0 ? L"○ 已关闭" : L"状态未知"), label, gFontTiny, dcStateColor, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleDcControlRect, dcControlCard.right - 136, dcControlCard.top + 15, dcControlCard.right - 14, dcControlCard.bottom - 15);
+        DrawButton(dc, gBleDcControlRect, gBleDcState > 0 ? L"关闭 DC" : L"开启 DC", ThemeSurfaceAlt(), gBleDcState > 0 ? ThemeWarning() : ThemeSuccess(), gBleDcState > 0 ? ThemeWarning() : ThemeSuccess(), gHoverItem == 54);
+
+        DrawRoundBox(dc, &acControlCard, 15, ThemeSurface(), gBleAcState > 0 ? ThemeWarning() : ThemeBorder());
+        SetRectCoords(&label, acControlCard.left + 16, acControlCard.top + 10, acControlCard.left + 130, acControlCard.top + 34);
+        DrawTextBlock(dc, L"AC 输出", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&label, acControlCard.left + 16, acControlCard.top + 34, acControlCard.left + 160, acControlCard.bottom - 8);
+        DrawTextBlock(dc, gBleAcState > 0 ? L"● 已开启" : (gBleAcState == 0 ? L"○ 已关闭" : L"状态未知"), label, gFontTiny, acStateColor, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleAcControlRect, acControlCard.right - 136, acControlCard.top + 15, acControlCard.right - 14, acControlCard.bottom - 15);
+        DrawButton(dc, gBleAcControlRect, gBleAcState > 0 ? L"关闭 AC" : L"开启 AC", ThemeSurfaceAlt(), gBleAcState > 0 ? ThemeWarning() : ThemeSuccess(), gBleAcState > 0 ? ThemeWarning() : ThemeSuccess(), gHoverItem == 53);
+
+        /* ------------------------------------------------------------------ */
+        /* Right: device identity, actions, communication controls and firmware. */
+        /* ------------------------------------------------------------------ */
+        DrawRoundBox(dc, &infoPanel, 22, ThemeSurfaceAlt(), ThemeBorder());
+
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 12, infoPanel.right - 330, infoPanel.top + 42);
+        DrawTextBlock(dc, L"设备信息", label, gFontCardTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        {
+            RECT online = { infoPanel.right - 132, infoPanel.top + 14, infoPanel.right - 22, infoPanel.top + 42 };
+            BOOL hasFault = BleAnyFault();
+            BOOL hasWarn = BleAnyWarning();
+            COLORREF statusColor = hasFault ? ThemeDanger() : (hasWarn ? ThemeWarning() : ThemeSuccess());
+            COLORREF statusFill = hasFault ? (gDarkMode ? RGB(67,28,29) : RGB(255,239,237))
+                                           : (hasWarn ? (gDarkMode ? RGB(66,47,18) : RGB(255,247,230))
+                                                      : (gDarkMode ? RGB(20,58,34) : RGB(235,249,239)));
+            LPCWSTR statusText = hasFault ? L"X  故障" : (hasWarn ? L"!  告警" : L"√  无故障");
+            SetRectCoords(&gBleFaultEntryRect, infoPanel.right - 326, infoPanel.top + 10, infoPanel.right - 146, infoPanel.top + 46);
+            DrawRoundBox(dc, &gBleFaultEntryRect, 18, statusFill, statusColor);
+            DrawTextBlock(dc, statusText, gBleFaultEntryRect, gFontBody, statusColor, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawPill(dc, online, gBleDataValid ? L"● MODBUS" : L"● BLE", ThemeSurface(), ThemeBorder(),
+                     gBleDataValid ? ThemeSuccess() : ThemeAccent(), FALSE);
+        }
+
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 46, infoPanel.right - 22, infoPanel.top + 72);
+        DrawTextBlock(dc, gBleConnectedName[0] ? gBleConnectedName : L"BLE Device", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 70, infoPanel.right - 22, infoPanel.top + 92);
+        DrawTextBlock(dc, gBleConnectedMac[0] ? gBleConnectedMac : L"--:--:--:--:--:--", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+        /* V1.0.10: three primary entries, with Advanced Settings reserved for future protocols. */
+        {
+            int actionLeft = infoPanel.left + 22;
+            int actionRight = infoPanel.right - 22;
+            int actionGap = 8;
+            int actionWidth = (actionRight - actionLeft - actionGap * 2) / 3;
+            SetRectCoords(&gBleSettingsEntryRect, actionLeft, infoPanel.top + 100, actionLeft + actionWidth, infoPanel.top + 138);
+            SetRectCoords(&gBleAdvancedEntryRect, actionLeft + actionWidth + actionGap, infoPanel.top + 100, actionLeft + actionWidth * 2 + actionGap, infoPanel.top + 138);
+            SetRectCoords(&gBleOtaEntryRect, actionLeft + actionWidth * 2 + actionGap * 2, infoPanel.top + 100, actionRight, infoPanel.top + 138);
+        }
+        DrawButton(dc, gBleSettingsEntryRect, L"设备设置", ThemeAccentSoft(), ThemeAccent(), ThemeAccent(), gHoverItem == 59);
+        DrawButton(dc, gBleAdvancedEntryRect, L"高级设置", ThemeAdvancedSoft(), ThemeAdvancedAccent(), ThemeAdvancedAccent(), gHoverItem == 189);
+        DrawButton(dc, gBleOtaEntryRect, L"OTA 一键升级", ThemeAccent(), ThemeAccent(), RGB(255,255,255), gHoverItem == 58);
+
+        DrawLine(dc, infoPanel.left + 20, infoPanel.top + 148, infoPanel.right - 20, infoPanel.top + 148, ThemeBorder());
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 156, infoPanel.right - 190, infoPanel.top + 180);
+        DrawTextBlock(dc, L"通信参数", label, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        SetRectCoords(&gBleDisconnectRect, infoPanel.right - 166, infoPanel.top + 154, infoPanel.right - 22, infoPanel.top + 190);
         DrawButton(dc, gBleDisconnectRect, L"断开蓝牙", ThemeSurface(), ThemeDanger(), ThemeDanger(), gHoverItem == 52);
 
-        DrawRoundBox(dc, &socCard, 22, ThemeAccentSoft(), ThemeAccent());
-        label.left = socCard.left + 22; label.top = socCard.top + 18; label.right = socCard.right - 22; label.bottom = socCard.top + 46;
-        DrawTextBlock(dc, L"电池电量  /  SOC", label, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        valueRect.left = socCard.left + 22; valueRect.top = socCard.top + 54; valueRect.right = socCard.right - 22; valueRect.bottom = socCard.top + 140;
-        if (gBleDataValid) { wsprintfW(text, L"%d%%", gBleSoc); } else { WCopy(text, L"--%", 256); }
-        DrawTextBlock(dc, text, valueRect, gFontPercent, ThemeAccent(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        bar.left = socCard.left + 22; bar.top = socCard.bottom - 52; bar.right = socCard.right - 22; bar.bottom = bar.top + 12;
-        DrawRoundBox(dc, &bar, 6, gDarkMode ? RGB(37,52,72) : RGB(226,234,244), gDarkMode ? RGB(37,52,72) : RGB(226,234,244));
-        fill = bar;
-        if (gBleDataValid) { int soc = gBleSoc < 0 ? 0 : (gBleSoc > 100 ? 100 : gBleSoc); fill.right = fill.left + (bar.right - bar.left) * soc / 100; }
-        else { fill.right = fill.left; }
-        if (fill.right > fill.left) { DrawRoundBox(dc, &fill, 6, ThemeAccent(), ThemeAccent()); }
-        label.left = socCard.left + 22; label.top = socCard.bottom - 34; label.right = socCard.right - 22; label.bottom = socCard.bottom - 12;
-        DrawTextBlock(dc, gBleDataValid ? L"设备实时上报" : L"等待首次轮询", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        /* V1.0.10: two-column communication form. Labels sit on their own row and never overlap native controls. */
+        {
+            int commMid = (infoPanel.left + infoPanel.right) / 2;
+            SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 190, commMid - 12, infoPanel.top + 208);
+            DrawTextBlock(dc, L"从机地址", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            SetRectCoords(&label, commMid + 12, infoPanel.top + 190, infoPanel.right - 22, infoPanel.top + 208);
+            DrawTextBlock(dc, L"刷新周期", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-#define DRAW_BLE_POWER_CARD(cardRect, cardTitle, powerValue, valueColor) \
-        DrawRoundBox(dc, &(cardRect), 18, ThemeSurfaceAlt(), ThemeBorder()); \
-        label.left = (cardRect).left + 18; label.top = (cardRect).top + 12; label.right = (cardRect).right - 18; label.bottom = (cardRect).top + 36; \
-        DrawTextBlock(dc, (cardTitle), label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE); \
-        if (gBleDataValid) { wsprintfW(text, L"%d W", (powerValue)); } else { WCopy(text, L"-- W", 256); } \
-        label.top = (cardRect).top + 40; label.bottom = (cardRect).bottom - 12; \
-        DrawTextBlock(dc, text, label, gFontCardTitle, (valueColor), DT_LEFT | DT_VCENTER | DT_SINGLELINE)
-        DRAW_BLE_POWER_CARD(acOutCard, L"AC 输出功率", gBleAcOutputPower, ThemeAccent());
-        DRAW_BLE_POWER_CARD(dcOutCard, L"DC 输出功率", gBleDcOutputPower, ThemeWarning());
-        DRAW_BLE_POWER_CARD(pvInCard, L"PV 输入功率", gBlePvInputPower, ThemeSuccess());
-        DRAW_BLE_POWER_CARD(acInCard, L"AC 输入功率", gBleAcInputPower, ThemeText());
-#undef DRAW_BLE_POWER_CARD
+            { RECT shell = { infoPanel.left + 20, infoPanel.top + 210, infoPanel.left + 116, infoPanel.top + 246 }; DrawInputShell(dc, shell, TRUE); }
+            SetRectCoords(&gBleSlaveApplyRect, infoPanel.left + 128, infoPanel.top + 210, commMid - 12, infoPanel.top + 246);
+            DrawButton(dc, gBleSlaveApplyRect, L"应用地址", ThemeSurface(), ThemeAccent(), ThemeAccent(), gHoverItem == 56);
 
-        DrawRoundBox(dc, &controlPanel, 20, ThemeSurfaceAlt(), ThemeBorder());
-        label.left = controlPanel.left + 18; label.top = controlPanel.top + 10; label.right = controlPanel.right - 18; label.bottom = controlPanel.top + 38;
-        DrawTextBlock(dc, L"输出控制", label, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawRoundBox(dc, &acControlCard, 16, ThemeSurface(), ThemeBorder());
-        label.left = acControlCard.left + 18; label.top = acControlCard.top + 12; label.right = acControlCard.left + 170; label.bottom = acControlCard.bottom - 12;
-        DrawTextBlock(dc, L"AC 输出", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = acControlCard.left + 130; label.right = acControlCard.left + 240;
-        DrawTextBlock(dc, gBleAcState > 0 ? L"已开启" : (gBleAcState == 0 ? L"已关闭" : L"未知"), label, gFontSmall, acStateColor, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        gBleAcControlRect.left = acControlCard.right - 170; gBleAcControlRect.top = acControlCard.top + 10; gBleAcControlRect.right = acControlCard.right - 16; gBleAcControlRect.bottom = acControlCard.bottom - 10;
-        DrawButton(dc, gBleAcControlRect, gBleAcState > 0 ? L"关闭 AC" : L"开启 AC", gBleDataValid ? (gBleAcState > 0 ? ThemeSurfaceAlt() : ThemeSuccess()) : ThemeSurfaceAlt(), gBleDataValid ? (gBleAcState > 0 ? ThemeDanger() : ThemeSuccess()) : ThemeBorder(), gBleDataValid ? (gBleAcState > 0 ? ThemeDanger() : RGB(255,255,255)) : ThemeMuted(), gHoverItem == 53);
+            SetRectCoords(&gBleIntervalSelectorRect, commMid + 10, infoPanel.top + 210, commMid + 116, infoPanel.top + 246);
+            DrawUiSelectorControl(dc, &gBleIntervalSelectorRect, UI_SELECTOR_BLE_INTERVAL, gUiSelectorOpen == UI_SELECTOR_BLE_INTERVAL, gHoverItem == 185);
+            SetRectCoords(&gBleRefreshRect, commMid + 128, infoPanel.top + 210, infoPanel.right - 22, infoPanel.top + 246);
+            DrawButton(dc, gBleRefreshRect, L"立即刷新", ThemeSurface(), ThemeAccent(), ThemeAccent(), gHoverItem == 55);
+        }
 
-        DrawRoundBox(dc, &dcControlCard, 16, ThemeSurface(), ThemeBorder());
-        label.left = dcControlCard.left + 18; label.top = dcControlCard.top + 12; label.right = dcControlCard.left + 170; label.bottom = dcControlCard.bottom - 12;
-        DrawTextBlock(dc, L"DC 输出", label, gFontBody, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = dcControlCard.left + 130; label.right = dcControlCard.left + 240;
-        DrawTextBlock(dc, gBleDcState > 0 ? L"已开启" : (gBleDcState == 0 ? L"已关闭" : L"未知"), label, gFontSmall, dcStateColor, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        gBleDcControlRect.left = dcControlCard.right - 170; gBleDcControlRect.top = dcControlCard.top + 10; gBleDcControlRect.right = dcControlCard.right - 16; gBleDcControlRect.bottom = dcControlCard.bottom - 10;
-        DrawButton(dc, gBleDcControlRect, gBleDcState > 0 ? L"关闭 DC" : L"开启 DC", gBleDataValid ? (gBleDcState > 0 ? ThemeSurfaceAlt() : ThemeSuccess()) : ThemeSurfaceAlt(), gBleDataValid ? (gBleDcState > 0 ? ThemeDanger() : ThemeSuccess()) : ThemeBorder(), gBleDataValid ? (gBleDcState > 0 ? ThemeDanger() : RGB(255,255,255)) : ThemeMuted(), gHoverItem == 54);
+        DrawLine(dc, infoPanel.left + 20, infoPanel.top + 260, infoPanel.right - 20, infoPanel.top + 260, ThemeBorder());
 
-        DrawRoundBox(dc, &statusPanel, 18, ThemeSurfaceAlt(), ThemeBorder());
-        label.left = statusPanel.left + 18; label.top = statusPanel.top + 8; label.right = statusPanel.right - 18; label.bottom = statusPanel.top + 30;
-        DrawTextBlock(dc, gBleDataStatus, label, gFontSmall, gBleDataValid ? ThemeSuccess() : ThemeWarning(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        wsprintfW(text, L"%s  ·  %d秒  ·  从机%d", gBleLastUpdate, gBlePollInterval, gBleConfiguredSlaveId);
-        label.top = statusPanel.top + 29; label.bottom = statusPanel.top + 48;
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 270, infoPanel.right - 22, infoPanel.top + 290);
+        wsprintfW(text, L"设备类型   %s", gBleDeviceType);
+        DrawTextBlock(dc, text, label, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 292, infoPanel.right - 22, infoPanel.top + 312);
+        wsprintfW(text, L"SN          %s", gBleDeviceSn);
+        DrawTextBlock(dc, text, label, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 314, infoPanel.right - 22, infoPanel.top + 334);
+        wsprintfW(text, L"最近更新   %s · %d秒 · 从机%d", gBleLastUpdate, gBlePollInterval, gBleConfiguredSlaveId);
         DrawTextBlock(dc, text, label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        wsprintfW(text, L"设备类型：%s", gBleDeviceType);
-        label.top = statusPanel.top + 48; label.bottom = statusPanel.top + 67;
-        DrawTextBlock(dc, text, label, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        wsprintfW(text, L"SN：%s", gBleDeviceSn);
-        label.top = statusPanel.top + 67; label.bottom = statusPanel.top + 86;
-        DrawTextBlock(dc, text, label, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        label.top = statusPanel.top + 86; label.bottom = statusPanel.top + 106;
-        DrawTextBlock(dc, L"版本列表（APP / BOOT）", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        gBleVersionViewportRect.left = statusPanel.left + 12; gBleVersionViewportRect.top = statusPanel.top + 105;
-        gBleVersionViewportRect.right = statusPanel.right - 12; gBleVersionViewportRect.bottom = statusPanel.bottom - 8;
+
+        SetRectCoords(&label, infoPanel.left + 22, infoPanel.top + 344, infoPanel.right - 22, infoPanel.top + 366);
+        wsprintfW(text, L"固件 · %d 模块", BleVersionGroupCount()); DrawTextBlock(dc, text, label, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        {
+            int versionTop = infoPanel.top + 370;
+            if (versionTop > infoPanel.bottom - 52) { versionTop = infoPanel.bottom - 52; }
+            SetRectCoords(&gBleVersionViewportRect, infoPanel.left + 14, versionTop, infoPanel.right - 14, infoPanel.bottom - 12);
+        }
         DrawBleVersionViewport(dc, &gBleVersionViewportRect);
 
+        /* ------------------------------------------------------------------ */
+        /* Bottom: full-width Modbus builder.                                  */
+        /* ------------------------------------------------------------------ */
         DrawRoundBox(dc, &modbusPanel, 18, ThemeSurfaceAlt(), ThemeBorder());
-        label.left = modbusPanel.left + 18; label.top = modbusPanel.top + 8; label.right = modbusPanel.right - 18; label.bottom = modbusPanel.top + 31;
+        SetRectCoords(&label, modbusPanel.left + 18, modbusPanel.top + 8, modbusPanel.right - 18, modbusPanel.top + 31);
         DrawTextBlock(dc, L"Modbus 加密指令构建器", label, gFontSmall, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.top = modbusPanel.top + 28; label.bottom = modbusPanel.top + 48;
+        SetRectCoords(&label, modbusPanel.left + 400, modbusPanel.top + 28, modbusPanel.right - 132, modbusPanel.top + 48);
         DrawTextBlock(dc, gBleModbusStatus, label, gFontTiny, ThemeMuted(), DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        label.left = modbusPanel.left + 18; label.right = modbusPanel.left + 66; label.top = modbusPanel.top + 28; label.bottom = modbusPanel.top + 47;
+        SetRectCoords(&label, modbusPanel.left + 18, modbusPanel.top + 28, modbusPanel.left + 66, modbusPanel.top + 47);
         DrawTextBlock(dc, L"从机", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = modbusPanel.left + 76; label.right = modbusPanel.left + 126;
+        SetRectCoords(&label, modbusPanel.left + 76, modbusPanel.top + 28, modbusPanel.left + 126, modbusPanel.top + 47);
         DrawTextBlock(dc, L"功能", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = modbusPanel.left + 136; label.right = modbusPanel.left + 214;
+        SetRectCoords(&label, modbusPanel.left + 136, modbusPanel.top + 28, modbusPanel.left + 214, modbusPanel.top + 47);
         DrawTextBlock(dc, L"寄存器", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = modbusPanel.left + 224; label.right = modbusPanel.left + 302;
+        SetRectCoords(&label, modbusPanel.left + 224, modbusPanel.top + 28, modbusPanel.left + 302, modbusPanel.top + 47);
         DrawTextBlock(dc, L"长度/值", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        label.left = modbusPanel.left + 312; label.right = modbusPanel.left + 384;
+        SetRectCoords(&label, modbusPanel.left + 312, modbusPanel.top + 28, modbusPanel.left + 384, modbusPanel.top + 47);
         DrawTextBlock(dc, L"超时", label, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         { RECT shell = { modbusPanel.left + 14, modbusPanel.top + 44, modbusPanel.left + 70, modbusPanel.top + 84 }; DrawInputShell(dc, shell, TRUE); }
         { RECT shell = { modbusPanel.left + 72, modbusPanel.top + 44, modbusPanel.left + 130, modbusPanel.top + 84 }; DrawInputShell(dc, shell, TRUE); }
         { RECT shell = { modbusPanel.left + 132, modbusPanel.top + 44, modbusPanel.left + 218, modbusPanel.top + 84 }; DrawInputShell(dc, shell, TRUE); }
         { RECT shell = { modbusPanel.left + 220, modbusPanel.top + 44, modbusPanel.left + 306, modbusPanel.top + 84 }; DrawInputShell(dc, shell, TRUE); }
         { RECT shell = { modbusPanel.left + 308, modbusPanel.top + 44, modbusPanel.left + 388, modbusPanel.top + 84 }; DrawInputShell(dc, shell, TRUE); }
-        gBleModbusSendRect.left = modbusPanel.right - 116; gBleModbusSendRect.top = modbusPanel.top + 44; gBleModbusSendRect.right = modbusPanel.right - 14; gBleModbusSendRect.bottom = modbusPanel.top + 84;
+        SetRectCoords(&gBleModbusSendRect, modbusPanel.right - 116, modbusPanel.top + 44, modbusPanel.right - 14, modbusPanel.top + 84);
         DrawButton(dc, gBleModbusSendRect, L"发送", ThemeAccent(), ThemeAccent(), RGB(255,255,255), gHoverItem == 57);
-        {
-            RECT shell = { modbusPanel.left + 14, modbusPanel.top + 87, modbusPanel.right - 14, modbusPanel.bottom - 10 };
-            RECT resultText = shell;
-            DrawInputShell(dc, shell, TRUE);
-            resultText.left += 12; resultText.top += 8; resultText.right -= 12; resultText.bottom -= 8;
-            static wchar_t modbusDrawText[8192];
-            GetWindowTextW(gBleModbusResultEdit, modbusDrawText, 8192);
-            DrawTextBlock(dc, modbusDrawText, resultText, gFontTiny, ThemeText(), DT_LEFT | DT_WORDBREAK);
-        }
-
+        { RECT shell = { modbusPanel.left + 14, modbusPanel.top + 87, modbusPanel.right - 14, modbusPanel.bottom - 10 }; DrawInputShell(dc, shell, TRUE); }
 
         SetRectCoords(&gBleScanRect, 0, 0, 0, 0);
         SetRectCoords(&gBleConnectRect, 0, 0, 0, 0);
@@ -2331,6 +4381,10 @@ static void DrawBlePage(HDC dc, const RECT* client)
     SetRectCoords(&gBleSlaveApplyRect, 0, 0, 0, 0);
     SetRectCoords(&gBleModbusSendRect, 0, 0, 0, 0);
     SetRectCoords(&gBleOtaEntryRect, 0, 0, 0, 0);
+    SetRectCoords(&gBleSettingsEntryRect, 0, 0, 0, 0);
+    SetRectCoords(&gBleAdvancedEntryRect, 0, 0, 0, 0);
+    SetRectCoords(&gBleBatteryRect, 0, 0, 0, 0);
+    SetRectCoords(&gBleFaultEntryRect, 0, 0, 0, 0);
     DrawTextBlock(dc, L"蓝牙连接", title, gFontTitle, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawTextBlock(dc, L"在当前窗口扫描并筛选 BLE 设备，连接成功后直接进入产品界面", subtitle, gFontSmall, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawRoundBox(dc, &toolbar, 22, ThemeSurface(), ThemeBorder());
@@ -2753,43 +4807,127 @@ static BOOL BleVersionGetLine(int wanted, LPWSTR output, int maxCount)
     return FALSE;
 }
 
+typedef struct
+{
+    wchar_t Name[48];
+    wchar_t App[64];
+    wchar_t Boot[64];
+} BLE_VERSION_GROUP;
+
+static BOOL WEqualsNoCase(LPCWSTR a, LPCWSTR b)
+{
+    int index = 0;
+    wchar_t ca;
+    wchar_t cb;
+    if (a == NULL || b == NULL) { return FALSE; }
+    while (a[index] != 0 || b[index] != 0)
+    {
+        ca = a[index]; cb = b[index];
+        if (ca >= L'a' && ca <= L'z') { ca = (wchar_t)(ca - L'a' + L'A'); }
+        if (cb >= L'a' && cb <= L'z') { cb = (wchar_t)(cb - L'a' + L'A'); }
+        if (ca != cb) { return FALSE; }
+        index++;
+    }
+    return TRUE;
+}
+
+static int BuildBleVersionGroups(BLE_VERSION_GROUP* groups, int maxGroups)
+{
+    int lineIndex;
+    int count = 0;
+    wchar_t line[160];
+    for (lineIndex = 0; lineIndex < BleVersionLineCount(); lineIndex++)
+    {
+        wchar_t name[64];
+        wchar_t base[64];
+        wchar_t version[64];
+        int p = 0;
+        int out = 0;
+        int groupIndex;
+        BOOL boot = FALSE;
+        int nameLen;
+        if (!BleVersionGetLine(lineIndex, line, 160)) { continue; }
+        while (line[p] != 0 && line[p] != L' ' && line[p] != L'\t' && out < 63) { name[out++] = line[p++]; }
+        name[out] = 0;
+        while (line[p] == L' ' || line[p] == L'\t') { p++; }
+        WCopy(version, line + p, 64);
+        if (name[0] == 0 || version[0] == 0) { continue; }
+        WCopy(base, name, 64);
+        nameLen = WLen(base);
+        if (nameLen > 5 && base[nameLen-5] == L'-' && WStartsWithNoCase(base + nameLen - 4, L"BOOT"))
+        {
+            base[nameLen-5] = 0;
+            boot = TRUE;
+        }
+        else if (nameLen > 5 && WContainsNoCase(base, L"_BOOT"))
+        {
+            int i;
+            for (i = 0; base[i] != 0; i++) { if (base[i] == L'_' && WStartsWithNoCase(base + i + 1, L"BOOT")) { base[i] = 0; boot = TRUE; break; } }
+        }
+        for (groupIndex = 0; groupIndex < count; groupIndex++) { if (WEqualsNoCase(groups[groupIndex].Name, base)) { break; } }
+        if (groupIndex == count)
+        {
+            if (count >= maxGroups) { continue; }
+            WCopy(groups[count].Name, base, 48); groups[count].App[0] = 0; groups[count].Boot[0] = 0; count++;
+        }
+        if (boot) { WCopy(groups[groupIndex].Boot, version, 64); }
+        else { WCopy(groups[groupIndex].App, version, 64); }
+    }
+    return count;
+}
+
+static int BleVersionGroupCount(void)
+{
+    BLE_VERSION_GROUP groups[16];
+    return BuildBleVersionGroups(groups, 16);
+}
+
 static void DrawBleVersionViewport(HDC dc, const RECT* rect)
 {
+    BLE_VERSION_GROUP groups[16];
+    int groupCount = BuildBleVersionGroups(groups, 16);
     RECT inner = *rect;
-    RECT row;
+    RECT card;
+    RECT label;
+    RECT appPill;
+    RECT bootPill;
     RECT track;
     RECT thumb;
-    wchar_t line[160];
-    int lineCount = BleVersionLineCount();
-    int rowHeight = 20;
+    int rowHeight = 58;
     int visibleRows;
-    int index;
     int maxScroll;
+    int index;
+    wchar_t text[160];
     DrawRoundBox(dc, rect, 12, ThemeInputFill(), ThemeInputBorder());
-    inner.left += 12; inner.top += 8; inner.right -= 26; inner.bottom -= 8;
-    visibleRows = (inner.bottom - inner.top) / rowHeight;
+    inner.left += 10; inner.top += 8; inner.right -= 26; inner.bottom -= 8;
+    visibleRows = (inner.bottom - inner.top + 4) / rowHeight;
     if (visibleRows < 1) { visibleRows = 1; }
-    maxScroll = lineCount - visibleRows;
+    maxScroll = groupCount - visibleRows;
     if (maxScroll < 0) { maxScroll = 0; }
     if (gBleVersionScroll > maxScroll) { gBleVersionScroll = maxScroll; }
     if (gBleVersionScroll < 0) { gBleVersionScroll = 0; }
-    if (lineCount <= 0)
+    if (groupCount <= 0)
     {
         DrawTextBlock(dc, L"等待设备版本信息……", inner, gFontTiny, ThemeMuted(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
     else
     {
-        for (index = 0; index < visibleRows && gBleVersionScroll + index < lineCount; index++)
+        for (index = 0; index < visibleRows && gBleVersionScroll + index < groupCount; index++)
         {
-            if (BleVersionGetLine(gBleVersionScroll + index, line, 160))
-            {
-                row.left = inner.left; row.right = inner.right;
-                row.top = inner.top + index * rowHeight; row.bottom = row.top + rowHeight;
-                DrawTextBlock(dc, line, row, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            }
+            BLE_VERSION_GROUP* item = &groups[gBleVersionScroll + index];
+            card.left = inner.left; card.right = inner.right;
+            card.top = inner.top + index * rowHeight; card.bottom = card.top + rowHeight - 4;
+            DrawRoundBox(dc, &card, 10, ThemeSurface(), ThemeBorder());
+            label.left = card.left + 9; label.right = card.left + 116; label.top = card.top + 3; label.bottom = card.bottom - 3;
+            DrawTextBlock(dc, item->Name, label, gFontTiny, ThemeText(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            appPill.left = card.left + 120; appPill.right = (card.left + card.right) / 2 - 4; appPill.top = card.top + 6; appPill.bottom = card.bottom - 6;
+            bootPill.left = (card.left + card.right) / 2 + 4; bootPill.right = card.right - 6; bootPill.top = appPill.top; bootPill.bottom = appPill.bottom;
+            wsprintfW(text, L"APP  %s", item->App[0] ? item->App : L"--");
+            DrawPill(dc, appPill, text, ThemeAccentSoft(), ThemeAccent(), item->App[0] ? ThemeAccent() : ThemeMuted2(), FALSE);
+            wsprintfW(text, L"BOOT  %s", item->Boot[0] ? item->Boot : L"--");
+            DrawPill(dc, bootPill, text, ThemeSurfaceAlt(), ThemeBorder(), item->Boot[0] ? ThemeText() : ThemeMuted2(), FALSE);
         }
     }
-    /* Slim custom scrollbar + arrow affordances: no native white scrollbar and no child repaint flicker. */
     gBleVersionUpRect.left = rect->right - 22; gBleVersionUpRect.right = rect->right - 6;
     gBleVersionUpRect.top = rect->top + 5; gBleVersionUpRect.bottom = gBleVersionUpRect.top + 18;
     gBleVersionDownRect.left = gBleVersionUpRect.left; gBleVersionDownRect.right = gBleVersionUpRect.right;
@@ -2801,10 +4939,10 @@ static void DrawBleVersionViewport(HDC dc, const RECT* rect)
     {
         DrawRoundBox(dc, &track, 3, ThemeBorder(), ThemeBorder());
         thumb = track;
-        if (lineCount > visibleRows)
+        if (groupCount > visibleRows)
         {
             int trackHeight = track.bottom - track.top;
-            int thumbHeight = trackHeight * visibleRows / lineCount;
+            int thumbHeight = trackHeight * visibleRows / groupCount;
             int travel;
             if (thumbHeight < 14) { thumbHeight = 14; }
             if (thumbHeight > trackHeight) { thumbHeight = trackHeight; }
@@ -2818,15 +4956,25 @@ static void DrawBleVersionViewport(HDC dc, const RECT* rect)
 
 static void SetBleOtaControlsVisible(BOOL visible)
 {
-    int command = (visible && !gChipDialogOpen) ? SW_SHOW : SW_HIDE;
+    BOOL show = visible && !gChipDialogOpen;
     int index;
-    ShowWindow(gBleOtaGapEdit, command);
-    ShowWindow(gBleOtaTimeoutEdit, command);
-    ShowWindow(gBleOtaChannelCombo, SW_HIDE); /* AES自动加密已实机验证，固定使用，不再提供通道选择。 */
-    ShowWindow(gBleOtaChipCombo, SW_HIDE);    /* V1.3.6 芯片选择移动到每个固件队列行。 */
+
+    if (show)
+    {
+        ShowNativeControl(gBleOtaGapEdit);
+        ShowNativeControl(gBleOtaTimeoutEdit);
+    }
+    else
+    {
+        ParkAndHideControl(gBleOtaGapEdit);
+        ParkAndHideControl(gBleOtaTimeoutEdit);
+    }
+
+    ParkAndHideControl(gBleOtaChannelCombo);
+    ParkAndHideControl(gBleOtaChipCombo);
     for (index = 0; index < BLE_OTA_VISIBLE_ROWS; index++)
     {
-        if (gBleOtaRowChipCombos[index]) { ShowWindow(gBleOtaRowChipCombos[index], SW_HIDE); }
+        if (gBleOtaRowChipCombos[index]) { ParkAndHideControl(gBleOtaRowChipCombos[index]); }
     }
     if (!visible) { gBleOtaChipSelectorOpen = FALSE; gBleOtaChipSelectorRow = -1; }
 }
@@ -3074,13 +5222,21 @@ static void DrawBleOtaPage(HDC dc, const RECT* client)
 
 static void SetSerialControlsVisible(BOOL visible)
 {
-    int command = (visible && !gChipDialogOpen) ? SW_SHOW : SW_HIDE;
-    /* V1.3.9: hidden ComboBoxes keep the existing selections/business API; UI is parent-drawn. */
-    ShowWindow(gComCombo, SW_HIDE);
-    ShowWindow(gBaudCombo, SW_HIDE);
-    ShowWindow(gRepeatEdit, command);
-    ShowWindow(gWaitEdit, command);
-    ShowWindow(gChipCombo, SW_HIDE);
+    BOOL show = visible && !gChipDialogOpen;
+    ParkAndHideControl(gComCombo);
+    ParkAndHideControl(gBaudCombo);
+    ParkAndHideControl(gChipCombo);
+
+    if (show)
+    {
+        ShowNativeControl(gRepeatEdit);
+        ShowNativeControl(gWaitEdit);
+    }
+    else
+    {
+        ParkAndHideControl(gRepeatEdit);
+        ParkAndHideControl(gWaitEdit);
+    }
 }
 
 
@@ -3134,6 +5290,7 @@ static COLORREF CurrentBatchProgressColor(void)
 
 static void RefreshChildControlTheme(void)
 {
+    ApplyAllEditThemes();
     if (gComCombo) { InvalidateRect(gComCombo, NULL, TRUE); }
     if (gBaudCombo) { InvalidateRect(gBaudCombo, NULL, TRUE); }
     if (gRepeatEdit) { InvalidateRect(gRepeatEdit, NULL, TRUE); }
@@ -3148,6 +5305,7 @@ static void RefreshChildControlTheme(void)
     if (gCanWaitEdit) { InvalidateRect(gCanWaitEdit, NULL, TRUE); }
     if (gBleFilterEdit) { InvalidateRect(gBleFilterEdit, NULL, TRUE); }
     if (gBleIntervalCombo) { InvalidateRect(gBleIntervalCombo, NULL, TRUE); }
+    if (gBleModbusResultEdit) { InvalidateRect(gBleModbusResultEdit, NULL, TRUE); }
     if (gBleVersionListEdit) { InvalidateRect(gBleVersionListEdit, NULL, TRUE); }
     if (gBleOtaGapEdit) { InvalidateRect(gBleOtaGapEdit, NULL, TRUE); }
     if (gBleOtaTimeoutEdit) { InvalidateRect(gBleOtaTimeoutEdit, NULL, TRUE); }
@@ -3373,24 +5531,52 @@ static void DrawSerialPage(HDC dc, const RECT* client)
 
 
 
+static void SetBleAdvancedControlsVisible(BOOL visible)
+{
+    BOOL show = visible && !gChipDialogOpen && gBleConnected;
+    if (show) { ShowNativeControl(gBleAdvancedGridCurrentEdit); ShowNativeControl(gBleAdvancedChgCurrentEdit); }
+    else { ParkAndHideControl(gBleAdvancedGridCurrentEdit); ParkAndHideControl(gBleAdvancedChgCurrentEdit); gBleAdvancedSliderDrag=0; if(gBleAdvancedActiveEdit==gBleAdvancedGridCurrentEdit||gBleAdvancedActiveEdit==gBleAdvancedChgCurrentEdit)gBleAdvancedActiveEdit=NULL; }
+    EnableWindow(gBleAdvancedGridCurrentEdit,show&&((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)!=0));
+    EnableWindow(gBleAdvancedChgCurrentEdit,show&&((gBleAdvancedValidMask&BLE_ADV_VALID_CHG_CURRENT)!=0)&&((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)!=0));
+}
+static void LayoutBleAdvancedControls(const RECT* client)
+{
+    int left=54,right=client->right-54,gap=18,half=(right-left-gap)/2,rightLeft=left+half+gap,top=158;
+    MoveWindow(gBleAdvancedGridCurrentEdit,right-236,top+76,68,30,TRUE);
+    MoveWindow(gBleAdvancedChgCurrentEdit,right-236,top+144,68,30,TRUE);
+}
+
 static void SetCanControlsVisible(BOOL visible)
 {
-    int command = (visible && !gChipDialogOpen) ? SW_SHOW : SW_HIDE;
-    /* V1.3.9: visible device/channel/baud selectors are custom-drawn. */
-    ShowWindow(gCanDeviceCombo, SW_HIDE);
-    ShowWindow(gCanChannelCombo, SW_HIDE);
-    ShowWindow(gCanBaudCombo, SW_HIDE);
-    ShowWindow(gCanLocalEdit, command);
-    ShowWindow(gCanTargetEdit, command);
-    ShowWindow(gCanRepeatEdit, command);
-    ShowWindow(gCanWaitEdit, command);
-    ShowWindow(gChipCombo, SW_HIDE);
+    BOOL show = visible && !gChipDialogOpen;
+
+    ParkAndHideControl(gCanDeviceCombo);
+    ParkAndHideControl(gCanChannelCombo);
+    ParkAndHideControl(gCanBaudCombo);
+    ParkAndHideControl(gChipCombo);
+
+    if (show)
+    {
+        ShowNativeControl(gCanLocalEdit);
+        ShowNativeControl(gCanTargetEdit);
+        ShowNativeControl(gCanRepeatEdit);
+        ShowNativeControl(gCanWaitEdit);
+    }
+    else
+    {
+        ParkAndHideControl(gCanLocalEdit);
+        ParkAndHideControl(gCanTargetEdit);
+        ParkAndHideControl(gCanRepeatEdit);
+        ParkAndHideControl(gCanWaitEdit);
+    }
 }
 
 static void HideAllUpgradeControls(void)
 {
     gUiSelectorOpen = 0;
     SetBleControlsVisible(FALSE);
+    SetBleSettingsControlsVisible(FALSE);
+    SetBleAdvancedControlsVisible(FALSE);
     SetBleOtaControlsVisible(FALSE);
     SetSerialControlsVisible(FALSE);
     SetCanControlsVisible(FALSE);
@@ -6240,7 +8426,63 @@ static int HitTest(int x, int y)
             if (gBleConnected && PointInRectSimple(&gBleSlaveApplyRect, x, y)) { return 56; }
             if (gBleConnected && PointInRectSimple(&gBleModbusSendRect, x, y)) { return 57; }
             if (gBleConnected && PointInRectSimple(&gBleOtaEntryRect, x, y)) { return 58; }
+            if (gBleConnected && PointInRectSimple(&gBleSettingsEntryRect, x, y)) { return 59; }
+            if (gBleConnected && PointInRectSimple(&gBleBatteryRect, x, y)) { return 188; }
+            if (gBleConnected && PointInRectSimple(&gBleAdvancedEntryRect, x, y)) { return 189; }
+            if (gBleConnected && PointInRectSimple(&gBleFaultEntryRect, x, y)) { return 211; }
             for (index = 0; index < BLE_VISIBLE_ROWS; index++) { if (PointInRectSimple(&gBleDeviceRows[index], x, y)) { return 60 + index; } }
+        }
+        if (gCurrentPage == 7 && gBleConnected)
+        {
+            if (PointInRectSimple(&gBleSettingsRefreshRect, x, y)) { return 380; }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_DC_ECO) != 0) && PointInRectSimple(&gBleSettingDcEcoRects[0], x, y)) { return 300; }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_DC_DETAIL) != 0) && gBleSetDcEco == 1)
+            {
+                for (index = 0; index < 4; index++) { if (PointInRectSimple(&gBleSettingDcTimeRects[index], x, y)) { return 303 + index; } }
+                if (PointInRectSimple(&gBleSettingDcPowerApplyRect, x, y)) { return 307; }
+            }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_AC_ECO) != 0) && PointInRectSimple(&gBleSettingAcEcoRects[0], x, y)) { return 310; }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_AC_DETAIL) != 0) && gBleSetAcEco == 1)
+            {
+                for (index = 0; index < 4; index++) { if (PointInRectSimple(&gBleSettingAcTimeRects[index], x, y)) { return 313 + index; } }
+                if (PointInRectSimple(&gBleSettingAcPowerApplyRect, x, y)) { return 317; }
+            }
+            if ((gBleSettingsValidMask & BLE_SET_VALID_CHARGE) != 0)
+            {
+                for (index = 0; index < 3; index++) { if (PointInRectSimple(&gBleSettingChargerRects[index], x, y)) { return 320 + index; } }
+                if (PointInRectSimple(&gBleSettingSuperPowerRect, x, y)) { return 324; }
+            }
+            if ((gBleSettingsValidMask & BLE_SET_VALID_LCD) != 0) { for (index = 0; index < 5; index++) { if (PointInRectSimple(&gBleSettingLcdRects[index], x, y)) { return 330 + index; } } }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_CHILD_SWITCH) != 0) && PointInRectSimple(&gBleSettingChildRects[0], x, y)) { return 350; }
+            if (gBleSetChildSwitch == 1 && ((gBleSettingsValidMask & BLE_SET_VALID_CHILD_LEVEL) != 0))
+            {
+                if (PointInRectSimple(&gBleSettingChildRects[1], x, y)) { return 351; }
+                if (PointInRectSimple(&gBleSettingChildRects[2], x, y)) { return 352; }
+            }
+            if (((gBleSettingsValidMask & BLE_SET_VALID_SOC_HIGH) != 0) && PointInRectSimple(&gBleSettingSocHighApplyRect, x, y)) { return 361; }
+        }
+        if (gCurrentPage == 9 && gBleConnected)
+        {
+            if (PointInRectSimple(&gBleAdvancedRefreshRect,x,y)) return 440;
+            for(index=0;index<3;index++) if((gBleAdvancedValidMask&BLE_ADV_VALID_INV_VOLT)&&PointInRectSimple(&gBleAdvancedInvVoltageRects[index],x,y)) return 441+index;
+            for(index=0;index<2;index++) if((gBleAdvancedValidMask&BLE_ADV_VALID_INV_FREQ)&&PointInRectSimple(&gBleAdvancedFreqRects[index],x,y)) return 444+index;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_PLUS)&&PointInRectSimple(&gBleAdvancedGridPlusRect,x,y)) return 446;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_MEMORY)&&PointInRectSimple(&gBleAdvancedMemoryRect,x,y)) return 447;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)&&PointInRectSimple(&gBleAdvancedGridCurrentApplyRect,x,y)) return 448;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_CHG_CURRENT)&&(gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)&&PointInRectSimple(&gBleAdvancedChgCurrentApplyRect,x,y)) return 449;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)&&PointInRectSimple(&gBleAdvancedGridCurrentSliderRect,x,y)) return 451;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_CHG_CURRENT)&&(gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)&&PointInRectSimple(&gBleAdvancedChgCurrentSliderRect,x,y)) return 452;
+            if((gBleAdvancedValidMask&BLE_ADV_VALID_AREA)&&gBleAdvArea>=1&&gBleAdvArea<=15&&PointInRectSimple(&gBleAdvancedFactoryResetRect,x,y)) return 450;
+        }
+        if (gCurrentPage == 8 && gBleConnected)
+        {
+            int packCount = BleBatteryConfiguredPackCount();
+            if (PointInRectSimple(&gBleBatteryRefreshRect, x, y)) { return 390; }
+            for (index = 0; index < 16 && index < packCount; index++) { if (PointInRectSimple(&gBlePackRects[index], x, y)) { return 391 + index; } }
+        }
+        if (gCurrentPage == 11 && gBleConnected)
+        {
+            if (PointInRectSimple(&gBlePackRefreshRect, x, y)) { return 430; }
         }
         if (gCurrentPage == 6)
         {
@@ -6331,6 +8573,12 @@ static void CreateControls(HWND hwnd)
     gBleOtaChannelCombo = CreateWindowExW(0, L"COMBOBOX", L"", comboStyle, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_OTA_CHANNEL_COMBO, gInstance, NULL);
     gBleOtaChipCombo = CreateWindowExW(0, L"COMBOBOX", L"", comboStyle, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_OTA_CHIP_COMBO, gInstance, NULL);
     for (index = 0; index < BLE_OTA_VISIBLE_ROWS; index++) { gBleOtaRowChipCombos[index] = CreateWindowExW(0, L"COMBOBOX", L"", comboStyle, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)(ID_BLE_OTA_ROW_CHIP_BASE + index), gInstance, NULL); }
+    gBleSettingDcPowerEdit = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_SETTING_DC_POWER_EDIT, gInstance, NULL);
+    gBleSettingAcPowerEdit = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_SETTING_AC_POWER_EDIT, gInstance, NULL);
+    gBleSettingSocLowEdit = CreateWindowExW(0, L"EDIT", L"20", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_SETTING_SOC_LOW_EDIT, gInstance, NULL);
+    gBleSettingSocHighEdit = CreateWindowExW(0, L"EDIT", L"80", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_SETTING_SOC_HIGH_EDIT, gInstance, NULL);
+    gBleAdvancedGridCurrentEdit = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_ADV_GRID_CURRENT_EDIT, gInstance, NULL);
+    gBleAdvancedChgCurrentEdit = CreateWindowExW(0, L"EDIT", L"0", WS_CHILD | WS_TABSTOP | ES_NUMBER, 0,0,0,0, hwnd, (HANDLE)(UINT_PTR)ID_BLE_ADV_CHG_CURRENT_EDIT, gInstance, NULL);
 
     SendMessageW(gComCombo, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
     SendMessageW(gBaudCombo, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
@@ -6358,6 +8606,12 @@ static void CreateControls(HWND hwnd)
     SendMessageW(gBleOtaTimeoutEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
     SendMessageW(gBleOtaChannelCombo, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
     SendMessageW(gBleOtaChipCombo, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleSettingDcPowerEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleSettingAcPowerEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleSettingSocLowEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleSettingSocHighEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleAdvancedGridCurrentEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
+    SendMessageW(gBleAdvancedChgCurrentEdit, WM_SETFONT, (WPARAM)gFontSmall, TRUE);
     for (index = 0; index < BLE_OTA_VISIBLE_ROWS; index++) { SendMessageW(gBleOtaRowChipCombos[index], WM_SETFONT, (WPARAM)gFontSmall, TRUE); }
 
     SendMessageW(gRepeatEdit, EM_SETLIMITTEXT, 4, 0);
@@ -6374,6 +8628,7 @@ static void CreateControls(HWND hwnd)
     SendMessageW(gBleModbusValueEdit, EM_SETLIMITTEXT, 10, 0);
     SendMessageW(gBleModbusTimeoutEdit, EM_SETLIMITTEXT, 5, 0);
     SendMessageW(gBleModbusResultEdit, EM_SETLIMITTEXT, 8000, 0);
+    SendMessageW(gBleModbusResultEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, (LPARAM)((8 & 0xFFFF) | (8 << 16)));
     SendMessageW(gBleVersionListEdit, EM_SETLIMITTEXT, 1000, 0);
     SendMessageW(gBleOtaGapEdit, EM_SETLIMITTEXT, 3, 0);
     SendMessageW(gBleOtaTimeoutEdit, EM_SETLIMITTEXT, 3, 0);
@@ -6418,7 +8673,9 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
         case WM_CREATE:
             CreateFonts();
             CreateControls(hwnd);
-            AddLog(L"BLUETTI Device Studio V1.0 正式版已启动 · 串口 + CAN + BLE连接");
+            ApplyNativeWindowTheme(hwnd);
+            ApplyAllEditThemes();
+            AddLog(L"BLUETTI Device Studio V1.0.20 高级充电电流寄存器修正测试版已启动 · 母版V1.0正式发布版");
             SetTimer(hwnd, 1, 400, NULL);
             return 0;
 
@@ -6428,6 +8685,8 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             GetClientRect(hwnd, &client);
             if (gCurrentPage == 1) { LayoutBleControls(&client); }
             else if (gCurrentPage == 6) { LayoutBleOtaControls(&client); }
+            else if (gCurrentPage == 7) { LayoutBleSettingsControls(&client); }
+            else if (gCurrentPage == 9) { LayoutBleAdvancedControls(&client); }
             else if (gCurrentPage == 2) { LayoutSerialControls(&client); }
             else if (gCurrentPage == 4 || gCurrentPage == 5) { LayoutCanControls(&client); }
             InvalidateRect(hwnd, NULL, TRUE);
@@ -6487,6 +8746,32 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
 
         case WM_COMMAND:
         {
+            if (LOWORD(wParam) >= ID_BLE_SETTING_DC_POWER_EDIT && LOWORD(wParam) <= ID_BLE_SETTING_SOC_HIGH_EDIT)
+            {
+                HWND edit = NULL;
+                if (LOWORD(wParam) == ID_BLE_SETTING_DC_POWER_EDIT) { edit = gBleSettingDcPowerEdit; }
+                else if (LOWORD(wParam) == ID_BLE_SETTING_AC_POWER_EDIT) { edit = gBleSettingAcPowerEdit; }
+                else if (LOWORD(wParam) == ID_BLE_SETTING_SOC_LOW_EDIT) { edit = gBleSettingSocLowEdit; }
+                else if (LOWORD(wParam) == ID_BLE_SETTING_SOC_HIGH_EDIT) { edit = gBleSettingSocHighEdit; }
+                if (HIWORD(wParam) == EN_SETFOCUS) { gBleSettingsActiveEdit = edit; }
+                else if (HIWORD(wParam) == EN_KILLFOCUS && gBleSettingsActiveEdit == edit) { gBleSettingsActiveEdit = NULL; }
+            }
+            if (LOWORD(wParam) == ID_BLE_ADV_GRID_CURRENT_EDIT || LOWORD(wParam) == ID_BLE_ADV_CHG_CURRENT_EDIT)
+            {
+                HWND edit = (LOWORD(wParam) == ID_BLE_ADV_GRID_CURRENT_EDIT) ? gBleAdvancedGridCurrentEdit : gBleAdvancedChgCurrentEdit;
+                if (HIWORD(wParam) == EN_SETFOCUS) gBleAdvancedActiveEdit=edit;
+                else if (HIWORD(wParam) == EN_CHANGE && gBleAdvancedActiveEdit==edit)
+                {
+                    int draft = 0; wchar_t draftText[64]; GetWindowTextW(edit,draftText,64);
+                    if (ParseUserNumber(draftText,FALSE,&draft))
+                    {
+                        if (edit==gBleAdvancedGridCurrentEdit) { gBleAdvGridCurrentDraft=draft; gBleAdvGridCurrentDirty=TRUE; }
+                        else { gBleAdvChgCurrentDraft=draft; gBleAdvChgCurrentDirty=TRUE; }
+                    }
+                    InvalidateRect(hwnd,NULL,FALSE);
+                }
+                else if (HIWORD(wParam) == EN_KILLFOCUS && gBleAdvancedActiveEdit==edit) gBleAdvancedActiveEdit=NULL;
+            }
             if (LOWORD(wParam) >= ID_BLE_OTA_ROW_CHIP_BASE && LOWORD(wParam) < ID_BLE_OTA_ROW_CHIP_BASE + BLE_OTA_VISIBLE_ROWS && HIWORD(wParam) == CBN_SELCHANGE)
             {
                 int visibleRow = (int)LOWORD(wParam) - ID_BLE_OTA_ROW_CHIP_BASE;
@@ -6546,6 +8831,11 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
             int hit = HitTest(x, y);
+            if (gCurrentPage == 9 && gBleAdvancedSliderDrag != 0)
+            {
+                if ((wParam & MK_LBUTTON) != 0) { SetAdvancedSliderValueFromX(gBleAdvancedSliderDrag, x); return 0; }
+                gBleAdvancedSliderDrag = 0; gBleAdvancedActiveEdit = NULL;
+            }
             if (!gTrackingMouse)
             {
                 TRACKMOUSEEVENT track;
@@ -6574,11 +8864,36 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             if (gHoverItem != 0) { SetCursor(LoadCursorW(NULL, IDC_HAND)); return TRUE; }
             break;
 
+        case WM_LBUTTONDOWN:
+        {
+            int x = GET_X_LPARAM(lParam);
+            int y = GET_Y_LPARAM(lParam);
+            if (gCurrentPage == 9 && gBleConnected)
+            {
+                if ((gBleAdvancedValidMask & BLE_ADV_VALID_GRID_CURRENT) && PointInRectSimple(&gBleAdvancedGridCurrentSliderRect, x, y))
+                {
+                    gBleAdvancedSliderDrag = 1; gBleAdvancedActiveEdit = gBleAdvancedGridCurrentEdit; SetAdvancedSliderValueFromX(1, x); return 0;
+                }
+                if ((gBleAdvancedValidMask & BLE_ADV_VALID_CHG_CURRENT) && (gBleAdvancedValidMask & BLE_ADV_VALID_GRID_CURRENT) && PointInRectSimple(&gBleAdvancedChgCurrentSliderRect, x, y))
+                {
+                    gBleAdvancedSliderDrag = 2; gBleAdvancedActiveEdit = gBleAdvancedChgCurrentEdit; SetAdvancedSliderValueFromX(2, x); return 0;
+                }
+            }
+            break;
+        }
+
         case WM_LBUTTONUP:
         {
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
             int hit = HitTest(x, y);
+            if (gBleAdvancedSliderDrag != 0)
+            {
+                SetAdvancedSliderValueFromX(gBleAdvancedSliderDrag, x);
+                gBleAdvancedSliderDrag = 0;
+                gBleAdvancedActiveEdit = NULL;
+                return 0;
+            }
             if (gChipDialogOpen)
             {
                 if (hit == 170) { gChipSelectorOpen = !gChipSelectorOpen; InvalidateRect(hwnd, NULL, FALSE); }
@@ -6636,8 +8951,8 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             }
             if (hit == 187)
             {
-                int lineCount = BleVersionLineCount();
-                int visibleRows = (gBleVersionViewportRect.bottom - gBleVersionViewportRect.top - 16) / 20;
+                int lineCount = BleVersionGroupCount();
+                int visibleRows = (gBleVersionViewportRect.bottom - gBleVersionViewportRect.top - 12) / 58;
                 int maxScroll = lineCount - (visibleRows > 0 ? visibleRows : 1);
                 if (maxScroll < 0) { maxScroll = 0; }
                 if (gBleVersionScroll < maxScroll) { gBleVersionScroll++; }
@@ -6648,6 +8963,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             {
                 gUiSelectorOpen = 0;
                 gDarkMode = !gDarkMode;
+                ApplyNativeWindowTheme(hwnd);
                 RefreshChildControlTheme();
                 InvalidateRect(hwnd, NULL, TRUE);
                 return 0;
@@ -6660,10 +8976,18 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                 GetClientRect(hwnd, &client);
                 if (gCurrentPage == 1)
                 {
+                    /* V1.0.16: decide BLE page state before showing native EDIT controls.
+                     * Previously a still-connected session exposed dashboard EDITs first, then
+                     * StartBleScan() flipped gBleConnected to FALSE. The scan page was painted
+                     * underneath those child HWNDs, producing the visible "1 / 03 / 100 ..."
+                     * residue after Home -> BLE re-entry. Keep an active BLE session intact;
+                     * only start scanning when actually disconnected, then show the controls
+                     * that belong to the resulting page state. */
+                    if (!gBleConnected) { StartBleScan(); }
                     SetBleControlsVisible(TRUE);
                     LayoutBleControls(&client);
-                    StartBleScan();
-                    AddLog(L"蓝牙连接页面已进入 · 内置扫描后台启动");
+                    RefreshParentAfterChildVisibility();
+                    AddLog(gBleConnected ? L"蓝牙页面已恢复 · 保持当前已连接设备" : L"蓝牙连接页面已进入 · 内置扫描后台启动");
                 }
                 else if (gCurrentPage == 2)
                 {
@@ -6708,16 +9032,47 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                         InvalidateRect(hwnd, NULL, TRUE);
                     }
                 }
+                else if (gCurrentPage == 7)
+                {
+                    RECT client;
+                    SendBleCommand(L"SETTINGS_PAGE\t0");
+                    HideAllUpgradeControls();
+                    gCurrentPage = 1;
+                    GetClientRect(hwnd, &client);
+                    SetBleControlsVisible(TRUE);
+                    LayoutBleControls(&client);
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
+                else if (gCurrentPage == 11)
+                {
+                    wchar_t command[64];
+                    SendBleCommand(L"PACK_PAGE\t0");
+                    gCurrentPage = 8;
+                    gBleBatteryValid = FALSE;
+                    wsprintfW(command, L"BATTERY_PAGE\t1\t%d", gBleConfiguredSlaveId);
+                    SendBleCommand(command);
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
+                else if (gCurrentPage == 8 || gCurrentPage == 9 || gCurrentPage == 10)
+                {
+                    RECT client;
+                    if (gCurrentPage == 8) { SendBleCommand(L"BATTERY_PAGE\t0"); }
+                    HideAllUpgradeControls();
+                    gCurrentPage = 1;
+                    GetClientRect(hwnd, &client);
+                    SetBleControlsVisible(TRUE);
+                    LayoutBleControls(&client);
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
                 else if (gUpgradeRunning) { MessageBoxW(gWindow, L"请先终止当前升级任务，再返回。", L"升级进行中", MB_OK | MB_ICONWARNING); }
                 else
                 {
-                    if (gCurrentPage == 1) { StopBleScan(); }
+                    if (gCurrentPage == 1 && gBleScanning) { StopBleScan(); }
+                    /* V1.0.16: hide and park every native child before the parent switches
+                     * pages. This guarantees no EDIT/COMBO pixels survive the transition. */
                     HideAllUpgradeControls();
-                    if (gCurrentPage == 4 || gCurrentPage == 5)
-                    {
-                        gCurrentPage = 3;
-                        gCanMode = 0;
-                    }
+                    if (gCurrentPage == 4 || gCurrentPage == 5) { gCurrentPage = 3; gCanMode = 0; }
+                    else if (gCurrentPage == 9) { RECT client; SendBleCommand(L"ADVANCED_PAGE\t0"); gCurrentPage=1; GetClientRect(hwnd,&client); SetBleControlsVisible(TRUE); LayoutBleControls(&client); }
                     else { gCurrentPage = 0; }
                     InvalidateRect(hwnd, NULL, TRUE);
                 }
@@ -6797,10 +9152,150 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                     WCopy(gBleOtaMessage, gBleOtaCount > 0 ? L"OTA队列已保留 · 请确认每个固件均已完成芯片选择与读取验证" : L"添加固件后，在对应队列行选择芯片平台并读取验证", 192);
                     InvalidateRect(hwnd, NULL, TRUE);
                 }
+                else if (hit == 188 && gBleConnected)
+                {
+                    int slaveId;
+                    wchar_t command[64];
+                    if (ReadBleSlaveAddress(TRUE, &slaveId))
+                    {
+                        HideAllUpgradeControls();
+                        gCurrentPage = 8;
+                        gBleBatteryValid = FALSE;
+                        WCopy(gBleBatteryStatus, L"正在同步PACK汇总信息……", 192);
+                        wsprintfW(command, L"BATTERY_PAGE\t1\t%d", slaveId);
+                        SendBleCommand(command);
+                        InvalidateRect(hwnd, NULL, TRUE);
+                    }
+                }
+                else if (hit == 189 && gBleConnected)
+                {
+                    RECT client; int slaveId; wchar_t command[64];
+                    if(ReadBleSlaveAddress(TRUE,&slaveId))
+                    {
+                        HideAllUpgradeControls(); gCurrentPage=9; gBleAdvancedValid=FALSE; gBleAdvancedValidMask=0; WCopy(gBleAdvancedStatus,L"正在同步高级设置……",192);
+                        GetClientRect(hwnd,&client); SetBleAdvancedControlsVisible(TRUE); LayoutBleAdvancedControls(&client);
+                        wsprintfW(command,L"ADVANCED_PAGE\t1\t%d",slaveId); SendBleCommand(command); InvalidateRect(hwnd,NULL,TRUE);
+                    }
+                }
+                else if (hit == 211 && gBleConnected)
+                {
+                    HideAllUpgradeControls();
+                    gCurrentPage = 10;
+                    InvalidateRect(hwnd, NULL, TRUE);
+                }
+                else if (hit == 59 && gBleConnected)
+                {
+                    RECT client;
+                    int slaveId;
+                    wchar_t command[64];
+                    if (ReadBleSlaveAddress(TRUE, &slaveId))
+                    {
+                        HideAllUpgradeControls();
+                        gCurrentPage = 7;
+                        gBleSettingsValid = FALSE;
+                        GetClientRect(hwnd, &client);
+                        SetBleSettingsControlsVisible(TRUE);
+                        LayoutBleSettingsControls(&client);
+                        WCopy(gBleSettingsStatus, L"正在同步设备设置……", 192);
+                        wsprintfW(command, L"SETTINGS_PAGE\t1\t%d", slaveId);
+                        SendBleCommand(command);
+                        InvalidateRect(hwnd, NULL, TRUE);
+                    }
+                }
                 else if (hit >= 60 && hit < 60 + BLE_VISIBLE_ROWS)
                 {
                     int row = hit - 60;
                     if (row < gBleFilteredCount) { SelectBleDeviceByIndex(gBleFilteredIndices[row]); }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+            }
+            else if (gCurrentPage == 7)
+            {
+                if (hit == 380 && gBleConnected) { RequestBleSettingsNow(); }
+                else if (hit == 300 && gBleConnected) { SendBleSettingWrite(2014, gBleSetDcEco == 0 ? 1 : 0); }
+                else if (hit >= 303 && hit <= 306 && gBleConnected) { SendBleSettingWrite(2015, hit - 302); }
+                else if (hit == 307 && gBleConnected)
+                {
+                    int value; if (ReadSettingEditValue(gBleSettingDcPowerEdit, 0, 65535, L"DC ECO触发功率必须为0~65535W。", &value)) { SendBleSettingWrite(2016, value); }
+                }
+                else if (hit == 310 && gBleConnected) { SendBleSettingWrite(2017, gBleSetAcEco == 0 ? 1 : 0); }
+                else if (hit >= 313 && hit <= 316 && gBleConnected) { SendBleSettingWrite(2018, hit - 312); }
+                else if (hit == 317 && gBleConnected)
+                {
+                    int value; if (ReadSettingEditValue(gBleSettingAcPowerEdit, 0, 65535, L"AC ECO触发功率必须为0~65535W。", &value)) { SendBleSettingWrite(2019, value); }
+                }
+                else if (hit >= 320 && hit <= 322 && gBleConnected)
+                {
+                    int value = (hit == 320) ? 0 : ((hit == 321) ? 1 : 2);
+                    SendBleSettingWrite(2020, value);
+                }
+                else if (hit == 324 && gBleConnected) { SendBleSettingWrite(2021, gBleSetSuperPower == 1 ? 0 : 1); }
+                else if (hit >= 330 && hit <= 334 && gBleConnected) { SendBleSettingWrite(2067, hit - 329); }
+                else if (hit == 350 && gBleConnected) { SendBleSettingMaskWrite(2072, 0x0030, gBleSetChildSwitch == 1 ? 0x0020 : 0x0010); }
+                else if (hit == 351 && gBleConnected) { SendBleSettingMaskWrite(2076, 0x00FF, 1); }
+                else if (hit == 352 && gBleConnected) { SendBleSettingMaskWrite(2076, 0x00FF, 2); }
+                else if (hit == 361 && gBleConnected)
+                {
+                    int soc;
+                    if (ReadSettingEditValue(gBleSettingSocHighEdit, 1, 100, L"充电上限必须为1~100%。", &soc))
+                    {
+                        SendBleSettingWrite(2083, (soc << 8) | 1);
+                    }
+                }
+                InvalidateRect(hwnd, NULL, FALSE);
+            }
+
+            else if (gCurrentPage == 9)
+            {
+                if(hit==440&&gBleConnected) RequestBleAdvancedNow();
+                else if(hit>=441&&hit<=443&&gBleConnected) SendBleAdvancedWrite(2209,hit-441);
+                else if(hit>=444&&hit<=445&&gBleConnected) SendBleAdvancedWrite(2210,hit-444);
+                else if(hit==446&&gBleConnected) SendBleAdvancedWrite(2225,gBleAdvGridPlus==1?0:1);
+                else if(hit==447&&gBleConnected) SendBleAdvancedWrite(2226,gBleAdvMemory==1?0:1);
+                else if(hit==448&&gBleConnected){int value;if(ReadAdvancedEditValue(gBleAdvancedGridCurrentEdit,0,65535,L"最大电网输入电流必须为 0~65535A。",&value)){if((gBleAdvancedValidMask&BLE_ADV_VALID_CHG_CURRENT)&&value<gBleAdvChgMaxCurrent)MessageBoxW(gWindow,L"最大电网输入电流不能小于当前最大充电电流。请先降低最大充电电流。",L"高级设置",MB_OK|MB_ICONWARNING);else{gBleAdvGridCurrentDraft=value;gBleAdvGridCurrentDirty=TRUE;SendBleAdvancedWrite(2272,value);}}}
+                else if(hit==449&&gBleConnected){int value;int gridLimit=(gBleAdvGridCurrentDraft>=0)?gBleAdvGridCurrentDraft:gBleAdvGridMaxCurrent;int maxValue=((gBleAdvancedValidMask&BLE_ADV_VALID_GRID_CURRENT)&&gridLimit>=0)?gridLimit:0;if(ReadAdvancedEditValue(gBleAdvancedChgCurrentEdit,0,maxValue,L"最大充电电流不能大于最大电网输入电流设定值。",&value)){gBleAdvChgCurrentDraft=value;gBleAdvChgCurrentDirty=TRUE;SendBleAdvancedWrite(2214,value);}}
+                else if(hit==450&&gBleConnected&&gBleAdvArea>=1&&gBleAdvArea<=15){wchar_t confirm[512];wsprintfW(confirm,L"将按当前地区规格“%s”（代码 %d）恢复出厂设置。\\n\\n该操作包含历史记录，设备可能重启。\\n确定继续吗？",BleAdvancedAreaText(gBleAdvArea),gBleAdvArea);if(MessageBoxW(gWindow,confirm,L"恢复出厂设置",MB_OKCANCEL|MB_ICONWARNING)==IDOK)SendBleAdvancedWrite(2206,gBleAdvArea);}
+                InvalidateRect(hwnd,NULL,FALSE);
+            }
+            else if (gCurrentPage == 8)
+            {
+                if (hit == 390 && gBleConnected)
+                {
+                    int slaveId;
+                    wchar_t command[64];
+                    if (ReadBleSlaveAddress(FALSE, &slaveId))
+                    {
+                        wsprintfW(command, L"BATTERY_READNOW\t%d", slaveId);
+                        SendBleCommand(command);
+                        WCopy(gBleBatteryStatus, L"正在刷新PACK汇总信息……", 192);
+                    }
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+                else if (hit >= 391 && hit < 407 && gBleConnected)
+                {
+                    int packIndex = hit - 391;
+                    int packCount = BleBatteryConfiguredPackCount();
+                    if (packIndex < packCount)
+                    {
+                        wchar_t command[96];
+                        gBlePackSelected = packIndex;
+                        gBlePackValid = FALSE;
+                        WCopy(gBlePackStatus, L"正在同步单PACK信息……", 192);
+                        wsprintfW(command, L"PACK_PAGE\t1\t%d\t%d", gBleConfiguredSlaveId, packIndex);
+                        SendBleCommand(command);
+                        gCurrentPage = 11;
+                        InvalidateRect(hwnd, NULL, TRUE);
+                    }
+                }
+            }
+            else if (gCurrentPage == 11)
+            {
+                if (hit == 430 && gBleConnected)
+                {
+                    wchar_t command[64];
+                    wsprintfW(command, L"PACK_READNOW\t%d", gBleConfiguredSlaveId);
+                    SendBleCommand(command);
+                    WCopy(gBlePackStatus, L"正在刷新单PACK信息……", 192);
                     InvalidateRect(hwnd, NULL, FALSE);
                 }
             }
@@ -6880,11 +9375,23 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             if (wParam == 1)
             {
                 BOOL wasConnected = gBleConnected;
+                BOOL wasDataValid = gBleDataValid;
+                DWORD dataSequenceBefore = gBleDataSequence;
+                DWORD modbusSequenceBefore = gBleModbusSequence;
+                DWORD advancedSequenceBefore = gBleAdvancedSequence;
+                DWORD batterySequenceBefore = gBleBatterySequence;
+                DWORD packSequenceBefore = gBlePackSequence;
                 if (gBleBackendStarted)
                 {
                     RefreshBleDevices();
                     RefreshBleStatus();
                     RefreshBleData();
+                    RefreshBleSettings();
+                    RefreshBleAdvanced();
+                    RefreshBleBattery();
+                    RefreshBlePack();
+                    if (gCurrentPage == 7 && gBleConnected) { RECT settingsClient; GetClientRect(hwnd,&settingsClient); SetBleSettingsControlsVisible(TRUE); LayoutBleSettingsControls(&settingsClient); }
+                    if (gCurrentPage == 9 && gBleConnected) { RECT advancedClient; GetClientRect(hwnd,&advancedClient); SetBleAdvancedControlsVisible(TRUE); LayoutBleAdvancedControls(&advancedClient); }
                     RefreshBleModbusResult();
                     RefreshBleOtaStatus();
                     if (gBleConnected && !wasConnected)
@@ -6897,6 +9404,14 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                             SetBleOtaControlsVisible(TRUE);
                             LayoutBleOtaControls(&client);
                         }
+                        else if (gCurrentPage == 7)
+                        {
+                            SetBleControlsVisible(FALSE);
+                            SetBleSettingsControlsVisible(TRUE);
+                            LayoutBleSettingsControls(&client);
+                        }
+                        else if (gCurrentPage == 9) { SetBleControlsVisible(FALSE); SetBleSettingsControlsVisible(FALSE); SetBleOtaControlsVisible(FALSE); SetBleAdvancedControlsVisible(TRUE); LayoutBleAdvancedControls(&client); }
+                        else if (gCurrentPage == 8 || gCurrentPage == 10 || gCurrentPage == 11) { SetBleControlsVisible(FALSE); SetBleSettingsControlsVisible(FALSE); SetBleAdvancedControlsVisible(FALSE); SetBleOtaControlsVisible(FALSE); }
                         else
                         {
                             SetBleControlsVisible(TRUE);
@@ -6905,19 +9420,51 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
                             AddLog(L"蓝牙连接成功，已进入 Modbus 产品监控界面");
                         }
                     }
-                    else if (!gBleConnected && wasConnected && gCurrentPage == 1)
+                    else if (!gBleConnected && wasConnected && (gCurrentPage == 1 || gCurrentPage == 7 || gCurrentPage == 8 || gCurrentPage == 9 || gCurrentPage == 10 || gCurrentPage == 11))
                     {
                         RECT client;
-                        /* Explicitly hide dashboard-only EDIT controls after a disconnect.
-                         * This fixes the stray '1 / 03 / 100 / 1800' text and white scrollbars
-                         * previously left over on the scan page. */
                         gUiSelectorOpen = 0;
+                        if (gCurrentPage == 7 || gCurrentPage == 8 || gCurrentPage == 9 || gCurrentPage == 10 || gCurrentPage == 11)
+                        {
+                            SetBleSettingsControlsVisible(FALSE);
+                            SetBleAdvancedControlsVisible(FALSE);
+                            gCurrentPage = 1;
+                        }
                         SetBleControlsVisible(TRUE);
                         GetClientRect(hwnd, &client);
                         LayoutBleControls(&client);
                         RefreshParentAfterChildVisibility();
                     }
-                    if (gCurrentPage == 1 || gCurrentPage == 6) { InvalidateRect(hwnd, NULL, FALSE); }
+                    /*
+                     * V1.0.10: do not repaint the whole BLE dashboard every 400 ms.
+                     * The native Modbus viewport used to appear to flash because the parent was
+                     * continuously repainted behind it. Repaint dashboard only when new realtime
+                     * data / manual Modbus data arrives or the connection state changes.
+                     */
+                    if (gCurrentPage == 1)
+                    {
+                        if ((dataSequenceBefore != gBleDataSequence) || (modbusSequenceBefore != gBleModbusSequence) || (wasDataValid != gBleDataValid) || (wasConnected != gBleConnected))
+                        {
+                            InvalidateRect(hwnd, NULL, FALSE);
+                        }
+                    }
+                    else if (gCurrentPage == 6 || gCurrentPage == 7)
+                    {
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
+                    else if (gCurrentPage == 8 && (batterySequenceBefore != gBleBatterySequence || dataSequenceBefore != gBleDataSequence))
+                    {
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
+                    else if (gCurrentPage == 9 && advancedSequenceBefore != gBleAdvancedSequence) { InvalidateRect(hwnd,NULL,FALSE); }
+                    else if (gCurrentPage == 10 && dataSequenceBefore != gBleDataSequence)
+                    {
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
+                    else if (gCurrentPage == 11 && packSequenceBefore != gBlePackSequence)
+                    {
+                        InvalidateRect(hwnd, NULL, FALSE);
+                    }
                 }
             }
             return 0;
@@ -6969,6 +9516,11 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             else if (gCurrentPage == 2) { DrawSerialPage(memoryDc, &client); }
             else if (gCurrentPage == 3) { DrawCanModePage(memoryDc, &client); }
             else if (gCurrentPage == 6) { DrawBleOtaPage(memoryDc, &client); }
+            else if (gCurrentPage == 7) { DrawBleSettingsPage(memoryDc, &client); }
+            else if (gCurrentPage == 8) { DrawBleBatteryInfoPage(memoryDc, &client); }
+            else if (gCurrentPage == 9) { DrawBleAdvancedSettingsPage(memoryDc, &client); }
+            else if (gCurrentPage == 10) { DrawBleFaultPage(memoryDc, &client); }
+            else if (gCurrentPage == 11) { DrawBlePackInfoPage(memoryDc, &client); }
             else { DrawCanUpgradePage(memoryDc, &client); }
             DrawFooter(memoryDc, &client);
             if (!gChipDialogOpen) { DrawUiSelectorPopup(memoryDc, &client); }
@@ -6991,7 +9543,7 @@ static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARA
             {
                 SendBleCommand(L"EXIT");
                 if (gBleBackendProcess != NULL) { WaitForSingleObject(gBleBackendProcess, 1500); CloseHandle(gBleBackendProcess); gBleBackendProcess = NULL; }
-                DeleteFileW(gBleCommandPath); DeleteFileW(gBleDevicePath); DeleteFileW(gBleStatusPath); DeleteFileW(gBleDataPath); DeleteFileW(gBleModbusPath); DeleteFileW(gBleTrafficPath); DeleteFileW(gBleOtaStatusPath); DeleteFileW(gBleOtaManifestPath);
+                DeleteFileW(gBleCommandPath); DeleteFileW(gBleDevicePath); DeleteFileW(gBleStatusPath); DeleteFileW(gBleDataPath); DeleteFileW(gBleModbusPath); DeleteFileW(gBleTrafficPath); DeleteFileW(gBleOtaStatusPath); DeleteFileW(gBleOtaManifestPath); DeleteFileW(gBleSettingsPath); DeleteFileW(gBleAdvancedPath); DeleteFileW(gBleBatteryPath); DeleteFileW(gBlePackPath);
                 gBleBackendStarted = FALSE;
             }
             if (gCancelEvent != NULL) { SetEvent(gCancelEvent); }
@@ -7044,14 +9596,16 @@ void WINAPI WinMainCRTStartup(void)
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = gInstance;
     windowClass.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    windowClass.hbrBackground = (HBRUSH)(UINT_PTR)(COLOR_WINDOW + 1);
+    /* Parent paint owns the full client area; avoid the default white erase flash. */
+    windowClass.hbrBackground = NULL;
     windowClass.lpszClassName = APP_CLASS;
 
     if (RegisterClassExW(&windowClass) == 0) { ExitProcess(1); }
 
-    gWindow = CreateWindowExW(0, APP_CLASS, APP_TITLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT, 1480, 940, NULL, NULL, gInstance, NULL);
+    gWindow = CreateWindowExW(0, APP_CLASS, APP_TITLE, WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN, CW_USEDEFAULT, CW_USEDEFAULT, 1480, 940, NULL, NULL, gInstance, NULL);
     if (gWindow == NULL) { ExitProcess(2); }
 
+    ApplyNativeWindowTheme(gWindow);
     ShowWindow(gWindow, SW_SHOW);
     UpdateWindow(gWindow);
     while (GetMessageW(&message, NULL, 0, 0) > 0)

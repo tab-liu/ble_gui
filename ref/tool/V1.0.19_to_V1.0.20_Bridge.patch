@@ -1,0 +1,94 @@
+--- /mnt/data/v1020_work/bridge_old.cs	2026-09-03 03:20:25.809294540 +0000
++++ /mnt/data/v1020_work/BLUETTI_Device_Studio_V1.0.20_Advanced_Current_Fix_Test_Package/BLUETTI_BLE_Bridge.cs	2026-09-03 03:20:26.266774283 +0000
+@@ -1,4 +1,4 @@
+-﻿using System;
++using System;
+ using System.Collections.Generic;
+ using System.Diagnostics;
+ using System.IO;
+@@ -187,11 +187,11 @@
+     private int _pendingSettingMask = 0xFFFF;
+     private string _pendingSettingName = string.Empty;
+ 
+-    /* V1.0.19: Advanced Settings + stable current slider drafts on native UI. */
++    /* V1.0.20: Advanced Settings + stable current slider drafts on native UI. */
+     private bool _advancedPollingEnabled;
+     private DateTime _nextAdvancedPollUtc = DateTime.MaxValue;
+     private int _advancedPollStep;
+-    /* index: 0=2209 InvV,1=2210 Freq,2=2212 ChgMaxI,3=2218 Area,4=2225 GridPlus,5=2226 Memory,6=2272 GridMaxI */
++    /* index: 0=2209 InvV,1=2210 Freq,2=2214 GridMaxCurrent(used as ChgMaxI),3=2218 Area,4=2225 GridPlus,5=2226 Memory,6=2272 GridMaxI */
+     private readonly ushort[] _advancedValues = new ushort[7];
+     private int _advancedValidMask;
+     private long _advancedSequence;
+@@ -214,7 +214,7 @@
+     private readonly ushort[] _packValues = new ushort[77]; /* 6100..6176: includes SoftwareType1 + Version1 */
+     private int _packSelectedIndex;
+     private int _packResolvedSlaveId = -1;
+-    /* V1.0.19: cache the Modbus route that actually returned each 6100 PackID. */
++    /* V1.0.20: cache the Modbus route that actually returned each 6100 PackID. */
+     private readonly int[] _packRouteCache = new int[16];
+ 
+     private int _pendingManualSlave = -1;
+@@ -257,7 +257,7 @@
+         Application.ThreadException += OnThreadException;
+         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
+         WriteLog("----------------------------------------");
+-        WriteLog("启动 V1.0.19 Advanced/Pack Route Fix Direct WinRT BLE + BLE OTA bridge（V1.0正式版增量开发）");
++        WriteLog("启动 V1.0.20 Advanced Charge Current Register Fix Direct WinRT BLE + BLE OTA bridge（V1.0正式版增量开发）");
+         WriteAtomicLines(_trafficPath, new string[] { "FLOWSEQ\t0", "Direct BLE ready" });
+         WriteAtomicLines(_settingsPath, new string[] { "SETTINGSWAIT\t0\t等待进入设备设置页面" });
+         WriteAtomicLines(_advancedPath, new string[] { "ADVANCEDWAIT\t0\t等待进入高级设置页面" });
+@@ -1674,7 +1674,7 @@
+             case 2206: return "恢复出厂设置";
+             case 2209: return "逆变电压";
+             case 2210: return "逆变频率";
+-            case 2212: return "最大充电电流";
++            case 2214: return "最大充电电流";
+             case 2225: return "电网增强模式";
+             case 2226: return "系统记忆开关";
+             case 2272: return "最大电网输入电流";
+@@ -1690,7 +1690,7 @@
+             case 2206: return value >= 1 && value <= 15;
+             case 2209: return value >= 0 && value <= 2;
+             case 2210: return value == 0 || value == 1;
+-            case 2212: return true;
++            case 2214: return true;
+             case 2225: return value == 0 || value == 1;
+             case 2226: return value == 0 || value == 1;
+             case 2272: return true;
+@@ -1704,7 +1704,7 @@
+         {
+             case 2209: return 0;
+             case 2210: return 1;
+-            case 2212: return 2;
++            case 2214: return 2;
+             case 2218: return 3;
+             case 2225: return 4;
+             case 2226: return 5;
+@@ -1725,7 +1725,7 @@
+             WriteStatus("INFO\t高级设置值超出协议允许范围：寄存器" + registerAddress.ToString());
+             return;
+         }
+-        if (registerAddress == 2212)
++        if (registerAddress == 2214)
+         {
+             if ((_advancedValidMask & 0x040) == 0)
+             {
+@@ -2001,7 +2001,7 @@
+             switch (step)
+             {
+                 case 0: startAddress = 2209; count = 2; validBits = 0x003; break;
+-                case 1: startAddress = 2212; count = 1; validBits = 0x004; break;
++                case 1: startAddress = 2214; count = 1; validBits = 0x004; break;
+                 case 2: startAddress = 2218; count = 1; validBits = 0x008; break;
+                 case 3: startAddress = 2225; count = 2; validBits = 0x030; break;
+                 default: startAddress = 2272; count = 1; validBits = 0x040; break;
+@@ -2175,7 +2175,7 @@
+         reason = string.Empty;
+         try
+         {
+-            /* V1.0.19: probe only 6100..6115 first. This makes route discovery cheap and lets us
++            /* V1.0.20: probe only 6100..6115 first. This makes route discovery cheap and lets us
+              * reject a duplicate PackID before spending a second long BLE transaction. */
+             byte[] probeRequest = BuildReadHoldingRegistersRequest(slaveId, 6100, 16);
+             byte[] probeResponse = SendAndReceiveModbus(probeRequest, 900);
