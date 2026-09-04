@@ -1,4 +1,3 @@
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { ModbusQueryItem, ModbusQueryLayoutRow } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ModbusQueryCard } from "modbus_query_card.slint";
@@ -10,19 +9,32 @@ export component ModbusQueryGrid inherits Rectangle {
     in property <[bool]> query-selection-states;
     callback remove-item(int);
     callback select-item(int, bool);
+    callback edit-item(int);
     callback layout-width-changed(length);
 
     property <length> hover-x: 0;
     property <length> hover-y: 0;
+    // 与 src/pages/modbus_query.rs 的 CARD_HEIGHT / CARD_SPACING 对齐；底部多留一行空隙，避免最后一行被 ScrollView 裁半。
+    property <int> row-count: root.layout-rows.length;
+    property <length> content-height: root.items.length == 0 ? 120px
+        : root.row-count * 110px + max(0, root.row-count - 1) * 12px + 56px;
 
     horizontal-stretch: 1;
+    vertical-stretch: 0;
+    min-width: 0px;
+    height: root.content-height;
+    clip: true;
 
     changed width => {
         root.layout-width-changed(self.width);
     }
+    init => {
+        root.layout-width-changed(self.width);
+    }
 
     drop-area := DropArea {
-        vertical-stretch: 1;
+        width: 100%;
+        height: 100%;
 
         can-drop(event) => {
             root.hover-x = event.position.x;
@@ -46,12 +58,17 @@ export component ModbusQueryGrid inherits Rectangle {
             }
         }
 
-        if root.items.length > 0: VerticalBox {
+        if root.items.length > 0: VerticalLayout {
             spacing: 12px;
+            alignment: start;
+            padding-bottom: 56px;
+            padding-right: 8px;
+            min-width: 0px;
 
-            for row in root.layout-rows: HorizontalBox {
+            for row in root.layout-rows: HorizontalLayout {
                 spacing: 12px;
                 alignment: start;
+                min-width: 0px;
 
                 for idx in row.indices: ModbusQueryCard {
                     name: root.items[idx].name;
@@ -66,6 +83,9 @@ export component ModbusQueryGrid inherits Rectangle {
                     }
                     select-clicked(ctrl) => {
                         root.select-item(idx, ctrl);
+                    }
+                    edit-clicked => {
+                        root.edit-item(idx);
                     }
                 }
             }

@@ -18,6 +18,7 @@ export component DeviceConfigRow inherits Rectangle {
     callback write-value-edited(string);
     callback write-clicked();
     callback remove-clicked();
+    callback edit-clicked();
 
     border-radius: 8px;
     background: Theme.bg-panel-alt;
@@ -55,28 +56,44 @@ export component DeviceConfigRow inherits Rectangle {
             background: Theme.border;
         }
 
-        VerticalLayout {
-            spacing: 2px;
+        name-area := TouchArea {
             horizontal-stretch: 1;
-            alignment: start;
-            min-width: 100px;
+            mouse-cursor: default;
 
-            Text {
-                text: root.name;
-                color: Theme.text-primary;
-                font-size: 13px;
-                font-weight: 600;
-                overflow: elide;
+            double-clicked => {
+                root.edit-clicked();
             }
 
-            Text {
-                text: "寄存器 " + root.register
-                    + " · " + root.value-type
-                    + (root.register-count > 1 ? (" ×" + root.register-count) : "")
-                    + (root.dirty ? " · 未写入" : "");
-                color: Theme.text-dim;
-                font-size: 11px;
-                overflow: elide;
+            Tooltip {
+                Text {
+                    text: "双击编辑";
+                    font-size: 11px;
+                }
+            }
+
+            VerticalLayout {
+                spacing: 2px;
+                horizontal-stretch: 1;
+                alignment: start;
+                min-width: 100px;
+
+                Text {
+                    text: root.name;
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                    font-weight: 600;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: "寄存器 " + root.register
+                        + " · " + root.value-type
+                        + (root.register-count > 1 ? (" ×" + root.register-count) : "")
+                        + (root.dirty ? " · 未写入" : "");
+                    color: Theme.text-dim;
+                    font-size: 11px;
+                    overflow: elide;
+                }
             }
         }
 

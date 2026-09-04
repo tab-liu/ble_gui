@@ -16,7 +16,9 @@ use slint::language::{DragAction, DropEvent};
 use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecModel};
 
 use crate::app::{close_dialog, open_dialog};
-use crate::services::ble::modbus::{parse_register_count, parse_scale, value_type_from_index};
+use crate::services::ble::modbus::{
+    parse_register_count, parse_scale, parse_value_type, value_type_from_index, QueryValueType,
+};
 use crate::services::modbus_query_store;
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
@@ -25,6 +27,10 @@ use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow,
 const CARD_WIDTH: f32 = 180.0;
 const CARD_HEIGHT: f32 = 110.0;
 const CARD_SPACING: f32 = 12.0;
+/// 窗口客户区 → 查询网格：侧栏 160 + 内容区 padding 16 + 面板 padding 16。
+const GRID_WINDOW_CHROME: f32 = 192.0;
+/// 窗口客户区 → 标签条：侧栏 160 + 内容区 padding 16。
+const TAB_WINDOW_CHROME: f32 = 176.0;
 
 #[derive(Clone)]
 struct QueryDragPayload {
@@ -34,6 +40,7 @@ struct QueryDragPayload {
 
 pub(crate) struct GridLayoutState {
     pub(crate) width: f32,
+    pub(crate) tab_strip_width: f32,
 }
 
 pub struct ModbusQueryState {
@@ -51,7 +58,11 @@ impl ModbusQueryState {
         Self {
             tabs,
             pending_query_tab: -1,
-            grid_layout: GridLayoutState { width: 720.0 },
+            grid_layout: GridLayoutState {
+                // 与默认窗口 980 对齐，先按 4 列排；真正宽度由网格 init/changed 再校正。
+                width: 788.0,
+                tab_strip_width: 804.0,
+            },
             pending_copy_src_tab: -1,
             pending_copy_src_items: Vec::new(),
             copy_target_tabs: Vec::new(),
@@ -85,11 +96,20 @@ impl ModbusQueryState {
 
 fn clear_query_form(ui: &MainWindow) {
     ui.set_show_add_query_form(false);
+    ui.set_editing_query_index(-1);
     ui.set_query_form_name(SharedString::default());
     ui.set_query_form_register(SharedString::default());
     ui.set_query_form_value_type_index(0);
     ui.set_query_form_register_count(SharedString::default());
     ui.set_query_form_scale(SharedString::default());
+}
+
+fn value_type_to_index(text: &str) -> i32 {
+    match parse_value_type(text) {
+        QueryValueType::Float => 1,
+        QueryValueType::String => 2,
+        QueryValueType::Integer => 0,
+    }
 }
 
 fn new_pending_query_item(
@@ -217,6 +237,23 @@ fn sync_active_query_items_from_tabs(ui: &MainWindow, tabs: &Rc<VecModel<ModbusT
             items.len(),
         );
     }
+}
+
+/// 按当前窗口宽度重算卡片列数与标签换行（刚进页时 `changed width` 不会触发）。
+pub fn sync_layout_from_window(ui: &MainWindow, ctx: &AppContext) {
+    let window = ui.window();
+    let scale = window.scale_factor().max(0.01);
+    let win_w = window.size().width as f32 / scale;
+    if win_w < CARD_WIDTH + GRID_WINDOW_CHROME {
+        return;
+    }
+    {
+        let mut st = ctx.state.borrow_mut();
+        st.modbus_query.grid_layout.width = (win_w - GRID_WINDOW_CHROME).max(CARD_WIDTH);
+        st.modbus_query.grid_layout.tab_strip_width = (win_w - TAB_WINDOW_CHROME).max(80.0);
+    }
+    sync_query_layout(ui, ctx);
+    sync_tab_strip_layout(ui, ctx);
 }
 
 /// 将 worker 轮询结果合并到当前激活标签的查询卡片（仅在有新数据时更新 UI）。
@@ -373,6 +410,49 @@ fn drop_index_from_position(x: f32, y: f32, width: f32, count: usize) -> usize {
     let insert_after = cell_x > CARD_WIDTH / 2.0;
     let index = row * cols + col + if insert_after { 1 } else { 0 };
     index.min(count)
+}
+
+fn tab_item_width(title: &str) -> f32 {
+    (title.chars().count() as f32 * 7.5 + 24.0).max(72.0)
+}
+
+fn compute_tab_rows(tabs: &Rc<VecModel<ModbusTab>>, width: f32) -> Vec<ModbusQueryLayoutRow> {
+    let width = width.max(80.0);
+    let mut rows: Vec<Vec<i32>> = Vec::new();
+    let mut current: Vec<i32> = Vec::new();
+    let mut used = 0.0;
+    for i in 0..tabs.row_count() {
+        let title = tabs
+            .row_data(i)
+            .map(|t| t.title.to_string())
+            .unwrap_or_default();
+        let w = tab_item_width(&title);
+        let extra = if current.is_empty() { w } else { 6.0 + w };
+        if !current.is_empty() && used + extra > width {
+            rows.push(std::mem::take(&mut current));
+            current.push(i as i32);
+            used = w;
+        } else {
+            current.push(i as i32);
+            used += extra;
+        }
+    }
+    if !current.is_empty() {
+        rows.push(current);
+    }
+    rows.into_iter()
+        .map(|indices| ModbusQueryLayoutRow {
+            indices: ModelRc::new(VecModel::from(indices)),
+        })
+        .collect()
+}
+
+fn sync_tab_strip_layout(ui: &MainWindow, ctx: &AppContext) {
+    let st = ctx.state.borrow();
+    let width = st.modbus_query.grid_layout.tab_strip_width;
+    let rows = compute_tab_rows(&st.modbus_query.tabs, width);
+    drop(st);
+    ui.set_modbus_tab_layout_rows(ModelRc::new(VecModel::from(rows)));
 }
 
 fn sync_query_layout(ui: &MainWindow, ctx: &AppContext) {
@@ -577,12 +657,26 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ui_weak = ui.as_weak();
     let ctx_layout = ctx.clone();
     ui.on_modbus_query_layout_width_changed(move |width| {
+        if width < CARD_WIDTH {
+            return;
+        }
         let ui = ui_weak.unwrap();
         ctx_layout.state.borrow_mut().modbus_query.grid_layout.width = width;
         sync_query_layout(&ui, &ctx_layout);
     });
 
-    sync_query_layout(ui, ctx);
+    let ui_weak = ui.as_weak();
+    let ctx_tabs = ctx.clone();
+    ui.on_modbus_tab_strip_width_changed(move |width| {
+        if width < 80.0 {
+            return;
+        }
+        let ui = ui_weak.unwrap();
+        ctx_tabs.state.borrow_mut().modbus_query.grid_layout.tab_strip_width = width;
+        sync_tab_strip_layout(&ui, &ctx_tabs);
+    });
+
+    sync_layout_from_window(ui, ctx);
     sync_active_tab_slave_id(ui, ctx);
     sync_selection_ui(ctx, ui);
     sync_active_query_items_to_ui(ui, ctx);
@@ -619,6 +713,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         drop(st);
         ui.set_active_modbus_tab(new_active as i32);
         sync_query_layout(&ui, &ctx_rm);
+        sync_tab_strip_layout(&ui, &ctx_rm);
         sync_active_tab_slave_id(&ui, &ctx_rm);
         touch_poll_policy(&ui, &ctx_rm);
         persist_modbus_query(&ctx_rm, &ui);
@@ -681,6 +776,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             },
         );
         persist_modbus_query(&ctx_commit, &ui);
+        sync_tab_strip_layout(&ui, &ctx_commit);
     });
 
     let ui_weak = ui.as_weak();
@@ -725,6 +821,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         cancel_rename(&ui);
         clear_selection(&ctx_panel, &ui);
         ctx_panel.state.borrow_mut().modbus_query.pending_query_tab = tab_index;
+        ui.set_editing_query_index(-1);
         ui.set_query_form_name(SharedString::default());
         ui.set_query_form_register(SharedString::default());
         ui.set_query_form_value_type_index(0);
@@ -748,26 +845,36 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let value_type_index = ui.get_query_form_value_type_index();
         let register_count = ui.get_query_form_register_count().to_string();
         let scale = ui.get_query_form_scale().to_string();
-        let idx = ctx_add.state.borrow().modbus_query.pending_query_tab as usize;
+        let tab_idx = ctx_add.state.borrow().modbus_query.pending_query_tab as usize;
+        let edit_idx = ui.get_editing_query_index();
         clear_query_form(&ui);
         let st = ctx_add.state.borrow();
-        if idx >= st.modbus_query.tabs.row_count() {
+        if tab_idx >= st.modbus_query.tabs.row_count() {
             return;
         }
-        let tab = st.modbus_query.tabs.row_data(idx).unwrap();
+        let tab = st.modbus_query.tabs.row_data(tab_idx).unwrap();
         let items = tab.items.clone();
         let mut items_vec: Vec<ModbusQueryItem> = (0..items.row_count())
             .filter_map(|i| items.row_data(i))
             .collect();
-        items_vec.push(new_pending_query_item(
+        let item = new_pending_query_item(
             &name,
             &register,
             value_type_index,
             &register_count,
             &scale,
-        ));
+        );
+        if edit_idx >= 0 {
+            let i = edit_idx as usize;
+            if i >= items_vec.len() {
+                return;
+            }
+            items_vec[i] = item;
+        } else {
+            items_vec.push(item);
+        }
         drop(st);
-        update_tab_items(&ctx_add, &ui, idx, items_vec);
+        update_tab_items(&ctx_add, &ui, tab_idx, items_vec);
     });
 
     let ui_weak = ui.as_weak();
@@ -792,6 +899,30 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         drop(st);
         adjust_selection_after_remove(&ctx_rm_query, &ui, i_idx);
         update_tab_items(&ctx_rm_query, &ui, t_idx, items_vec);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_edit = ctx.clone();
+    ui.on_edit_modbus_query(move |item_index| {
+        let ui = ui_weak.unwrap();
+        cancel_rename(&ui);
+        let tab_index = ui.get_active_modbus_tab();
+        let st = ctx_edit.state.borrow();
+        let Some(tab) = st.modbus_query.tabs.row_data(tab_index as usize) else {
+            return;
+        };
+        let Some(item) = tab.items.row_data(item_index as usize) else {
+            return;
+        };
+        drop(st);
+        ctx_edit.state.borrow_mut().modbus_query.pending_query_tab = tab_index;
+        ui.set_editing_query_index(item_index);
+        ui.set_query_form_name(item.name);
+        ui.set_query_form_register(item.register);
+        ui.set_query_form_value_type_index(value_type_to_index(&item.value_type));
+        ui.set_query_form_register_count(item.register_count.to_string().into());
+        ui.set_query_form_scale(item.scale.to_string().into());
+        ui.set_show_add_query_form(true);
     });
 
     let ui_weak = ui.as_weak();
@@ -863,6 +994,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ));
         ui.set_active_modbus_tab(st.modbus_query.tabs.row_count() as i32 - 1);
         sync_query_layout(&ui, &ctx_confirm);
+        sync_tab_strip_layout(&ui, &ctx_confirm);
         sync_active_tab_slave_id(&ui, &ctx_confirm);
         touch_poll_policy(&ui, &ctx_confirm);
         persist_modbus_query(&ctx_confirm, &ui);

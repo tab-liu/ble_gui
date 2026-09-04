@@ -22,6 +22,10 @@ pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
     sync_poll_policy(ui, ctx);
     if page == PAGE_MODBUS {
         modbus_query::sync_active_query_items_to_ui(ui, ctx);
+        modbus_query::sync_layout_from_window(ui, ctx);
+    }
+    if page == PAGE_DEVICE_CONFIG {
+        crate::pages::device_config::sync_layout_from_window(ui, ctx);
     }
 }
 

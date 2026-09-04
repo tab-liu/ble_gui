@@ -13,6 +13,7 @@ export component ModbusQueryCard inherits Rectangle {
     in property <bool> selected;
     callback remove-clicked();
     callback select-clicked(bool);
+    callback edit-clicked();
 
     width: 180px;
     height: 110px;
@@ -47,6 +48,11 @@ export component ModbusQueryCard inherits Rectangle {
                     font-size: 11px;
                     wrap: word-wrap;
                 }
+
+                Text {
+                    text: "双击编辑";
+                    font-size: 11px;
+                }
             }
         }
 
@@ -69,6 +75,10 @@ export component ModbusQueryCard inherits Rectangle {
 
                 clicked => {
                     root.select-clicked(select-touch.ctrl-held);
+                }
+
+                double-clicked => {
+                    root.edit-clicked();
                 }
 
                 VerticalBox {

@@ -16,6 +16,7 @@ export component ModbusPage inherits VerticalLayout {
     in property <int> active-modbus-tab;
     in property <[ModbusQueryItem]> active-query-items;
     in property <[ModbusQueryLayoutRow]> query-layout-rows;
+    in property <[ModbusQueryLayoutRow]> tab-layout-rows;
     in property <bool> has-selected-queries;
     in property <[bool]> query-selection-states;
     in property <bool> show-add-query-form;
@@ -24,6 +25,7 @@ export component ModbusPage inherits VerticalLayout {
     in-out property <int> query-form-value-type-index;
     in-out property <string> query-form-register-count;
     in-out property <string> query-form-scale;
+    in property <int> editing-query-index;
     in-out property <string> active-tab-slave-id;
     in property <int> renaming-tab-index;
     in-out property <string> editing-tab-title;
@@ -41,8 +43,10 @@ export component ModbusPage inherits VerticalLayout {
     callback cancel-add-query();
     callback remove-query(int, int);
     callback select-query(int, bool);
+    callback edit-query(int);
     callback copy-selected-query();
     callback layout-width-changed(length);
+    callback tab-strip-width-changed(length);
 
     changed active-modbus-tab => {
         root.editing-slave-id = false;
@@ -50,6 +54,7 @@ export component ModbusPage inherits VerticalLayout {
 
     spacing: 8px;
     vertical-stretch: 1;
+    min-width: 0px;
 
     if !root.device-connected: Text {
         text: "未连接设备：可编辑标签与寄存器；连接后自动轮询";
@@ -60,6 +65,7 @@ export component ModbusPage inherits VerticalLayout {
     toolbar-row := HorizontalLayout {
             spacing: 12px;
             cross-axis-alignment: center;
+            min-width: 0px;
 
             Text {
                 text: "Modbus 查询";
@@ -157,30 +163,46 @@ export component ModbusPage inherits VerticalLayout {
             }
         }
 
-        tab-strip := Flickable {
+        tab-host := Rectangle {
             horizontal-stretch: 1;
-            height: 34px;
-            viewport-height: 34px;
+            vertical-stretch: 0;
+            min-width: 0px;
+            height: tab-wrap.preferred-height;
 
-            HorizontalLayout {
+            changed width => {
+                root.tab-strip-width-changed(self.width);
+            }
+            init => {
+                root.tab-strip-width-changed(self.width);
+            }
+
+            tab-wrap := VerticalLayout {
                 spacing: 6px;
                 alignment: start;
-                cross-axis-alignment: center;
+                min-width: 0px;
 
-                for tab[i] in root.modbus-tabs: ModbusTabItem {
-                    title: tab.title;
-                    selected: root.active-modbus-tab == i;
-                    renaming: root.renaming-tab-index == i;
-                    edit-title <=> root.editing-tab-title;
-                    switch-tab => { root.switch-tab(i); }
-                    request-rename => { root.start-rename-tab(i); }
-                    commit-rename => { root.commit-rename-tab(); }
+                for row in root.tab-layout-rows: HorizontalLayout {
+                    spacing: 6px;
+                    alignment: start;
+                    cross-axis-alignment: center;
+                    min-width: 0px;
+
+                    for idx in row.indices: ModbusTabItem {
+                        title: root.modbus-tabs[idx].title;
+                        selected: root.active-modbus-tab == idx;
+                        renaming: root.renaming-tab-index == idx;
+                        edit-title <=> root.editing-tab-title;
+                        switch-tab => { root.switch-tab(idx); }
+                        request-rename => { root.start-rename-tab(idx); }
+                        commit-rename => { root.commit-rename-tab(); }
+                    }
                 }
             }
         }
 
         Rectangle {
             vertical-stretch: 1;
+            min-width: 0px;
             border-radius: 10px;
             background: Theme.bg-panel;
             border-width: 1px;
@@ -189,6 +211,7 @@ export component ModbusPage inherits VerticalLayout {
             if root.modbus-tabs.length > 0: VerticalLayout {
                 padding: 8px;
                 spacing: 8px;
+                min-width: 0px;
 
                 if root.show-add-query-form: add-query-panel := Rectangle {
                     vertical-stretch: 0;
@@ -201,6 +224,13 @@ export component ModbusPage inherits VerticalLayout {
                     add-query-layout := VerticalLayout {
                         padding: 8px;
                         spacing: 6px;
+
+                        Text {
+                            text: root.editing-query-index >= 0 ? "编辑查询" : "添加查询";
+                            color: Theme.text-primary;
+                            font-size: 12px;
+                            font-weight: 700;
+                        }
 
                         HorizontalLayout {
                             spacing: 6px;
@@ -283,7 +313,7 @@ export component ModbusPage inherits VerticalLayout {
                             }
 
                             Button {
-                                text: "添加";
+                                text: root.editing-query-index >= 0 ? "保存" : "添加";
                                 primary: true;
                                 clicked => { root.confirm-add-query(); }
                             }
@@ -294,19 +324,29 @@ export component ModbusPage inherits VerticalLayout {
                 ScrollView {
                     vertical-stretch: 1;
                     horizontal-stretch: 1;
+                    min-width: 0px;
 
-                    ModbusQueryGrid {
-                        items: root.active-query-items;
-                        layout-rows: root.query-layout-rows;
-                        query-selection-states: root.query-selection-states;
-                        remove-item(index) => {
-                            root.remove-query(root.active-modbus-tab, index);
-                        }
-                        select-item(index, ctrl) => {
-                            root.select-query(index, ctrl);
-                        }
-                        layout-width-changed(width) => {
-                            root.layout-width-changed(width);
+                    // 用布局把网格按内容高度撑开，否则 Rectangle 会填满视口导致无法滚动
+                    VerticalLayout {
+                        alignment: start;
+                        min-width: 0px;
+
+                        ModbusQueryGrid {
+                            items: root.active-query-items;
+                            layout-rows: root.query-layout-rows;
+                            query-selection-states: root.query-selection-states;
+                            remove-item(index) => {
+                                root.remove-query(root.active-modbus-tab, index);
+                            }
+                            select-item(index, ctrl) => {
+                                root.select-query(index, ctrl);
+                            }
+                            edit-item(index) => {
+                                root.edit-query(index);
+                            }
+                            layout-width-changed(width) => {
+                                root.layout-width-changed(width);
+                            }
                         }
                     }
                 }

@@ -25,11 +25,14 @@ use crate::services::device_config_store;
 use crate::services::modbus::QueryPollTarget;
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, PAGE_DEVICE_CONFIG};
-use crate::ui::{BuiltinConfigItem, DeviceConfigGroup, DeviceConfigItem, MainWindow};
+use crate::ui::{
+    BuiltinConfigItem, DeviceConfigGroup, DeviceConfigItem, MainWindow, ModbusQueryLayoutRow,
+};
 
 pub struct DeviceConfigState {
     pub groups: Rc<VecModel<DeviceConfigGroup>>,
     pub builtin_items: Rc<VecModel<BuiltinConfigItem>>,
+    pub tab_strip_width: f32,
 }
 
 fn empty_read() -> (SharedString, SharedString, i32) {
@@ -161,6 +164,7 @@ impl DeviceConfigState {
         Self {
             groups,
             builtin_items,
+            tab_strip_width: 804.0,
         }
     }
 
@@ -196,12 +200,97 @@ fn widget_kind_from_index(index: i32) -> i32 {
     }
 }
 
+fn widget_kind_to_form_index(kind: i32) -> i32 {
+    if kind == 2 {
+        1
+    } else {
+        0
+    }
+}
+
 fn value_type_from_index(index: i32) -> SharedString {
     match index {
         1 => "float".into(),
         2 => "string".into(),
         _ => "integer".into(),
     }
+}
+
+fn value_type_to_form_index(text: &str) -> i32 {
+    match text {
+        "float" => 1,
+        "string" => 2,
+        _ => 0,
+    }
+}
+
+fn clear_config_form(ui: &MainWindow) {
+    ui.set_show_add_config_form(false);
+    ui.set_editing_config_index(-1);
+    ui.set_config_form_name("".into());
+    ui.set_config_form_register("".into());
+    ui.set_config_form_widget_index(1);
+    ui.set_config_form_value_type_index(0);
+    ui.set_config_form_register_count("1".into());
+}
+
+fn tab_item_width(title: &str) -> f32 {
+    (title.chars().count() as f32 * 7.5 + 24.0).max(72.0)
+}
+
+fn compute_group_tab_rows(
+    groups: &Rc<VecModel<DeviceConfigGroup>>,
+    width: f32,
+) -> Vec<ModbusQueryLayoutRow> {
+    let width = width.max(80.0);
+    let mut rows: Vec<Vec<i32>> = Vec::new();
+    let mut current: Vec<i32> = Vec::new();
+    let mut used = 0.0;
+    for i in 0..groups.row_count() {
+        let title = groups
+            .row_data(i)
+            .map(|g| g.title.to_string())
+            .unwrap_or_default();
+        let w = tab_item_width(&title);
+        let extra = if current.is_empty() { w } else { 6.0 + w };
+        if !current.is_empty() && used + extra > width {
+            rows.push(std::mem::take(&mut current));
+            current.push(i as i32);
+            used = w;
+        } else {
+            current.push(i as i32);
+            used += extra;
+        }
+    }
+    if !current.is_empty() {
+        rows.push(current);
+    }
+    rows.into_iter()
+        .map(|indices| ModbusQueryLayoutRow {
+            indices: ModelRc::new(VecModel::from(indices)),
+        })
+        .collect()
+}
+
+fn sync_tab_strip_layout(ui: &MainWindow, ctx: &AppContext) {
+    let st = ctx.state.borrow();
+    let width = st.device_config.tab_strip_width;
+    let rows = compute_group_tab_rows(&st.device_config.groups, width);
+    drop(st);
+    ui.set_config_tab_layout_rows(ModelRc::new(VecModel::from(rows)));
+}
+
+/// 按当前窗口宽度重算分组标签换行（刚进页时 `changed width` 不会触发）。
+pub fn sync_layout_from_window(ui: &MainWindow, ctx: &AppContext) {
+    const TAB_WINDOW_CHROME: f32 = 176.0;
+    let window = ui.window();
+    let scale = window.scale_factor().max(0.01);
+    let win_w = window.size().width as f32 / scale;
+    if win_w >= 72.0 + TAB_WINDOW_CHROME {
+        ctx.state.borrow_mut().device_config.tab_strip_width =
+            (win_w - TAB_WINDOW_CHROME).max(80.0);
+    }
+    sync_tab_strip_layout(ui, ctx);
 }
 
 fn items_vec(group: &DeviceConfigGroup) -> Vec<DeviceConfigItem> {
@@ -393,6 +482,19 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.set_config_form_value_type_index(0);
     ui.set_config_form_register_count("1".into());
     ui.set_renaming_config_group_index(-1);
+    ui.set_editing_config_index(-1);
+    sync_layout_from_window(ui, ctx);
+
+    let ui_weak = ui.as_weak();
+    let ctx_tabs = ctx.clone();
+    ui.on_config_tab_strip_width_changed(move |width| {
+        if width < 80.0 {
+            return;
+        }
+        let ui = ui_weak.unwrap();
+        ctx_tabs.state.borrow_mut().device_config.tab_strip_width = width;
+        sync_tab_strip_layout(&ui, &ctx_tabs);
+    });
 
     let ui_weak = ui.as_weak();
     let ctx_add_group = ctx.clone();
@@ -413,8 +515,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let idx = st.device_config.groups.row_count() as i32 - 1;
         drop(st);
         ui.set_active_config_group(idx);
-        ui.set_show_add_config_form(false);
+        clear_config_form(&ui);
         sync_active_to_ui(&ui, &ctx_add_group);
+        sync_tab_strip_layout(&ui, &ctx_add_group);
         touch_poll_policy(&ui, &ctx_add_group);
         persist_device_config(&ctx_add_group, &ui);
     });
@@ -441,8 +544,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let new_active = (ui.get_active_config_group() as usize).min(max);
         ui.set_active_config_group(new_active as i32);
         ui.set_renaming_config_group_index(-1);
-        ui.set_show_add_config_form(false);
+        clear_config_form(&ui);
         sync_active_to_ui(&ui, &ctx_rm);
+        sync_tab_strip_layout(&ui, &ctx_rm);
         touch_poll_policy(&ui, &ctx_rm);
         persist_device_config(&ctx_rm, &ui);
     });
@@ -453,7 +557,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         ui.set_active_config_group(index);
         ui.set_renaming_config_group_index(-1);
-        ui.set_show_add_config_form(false);
+        clear_config_form(&ui);
         sync_active_to_ui(&ui, &ctx_sw);
         touch_poll_policy(&ui, &ctx_sw);
         persist_device_config(&ctx_sw, &ui);
@@ -497,6 +601,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         }
         drop(st);
         ui.set_renaming_config_group_index(-1);
+        sync_tab_strip_layout(&ui, &ctx_rename);
         persist_device_config(&ctx_rename, &ui);
     });
 
@@ -526,15 +631,18 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if is_builtin_group(&ctx_show_add, ui.get_active_config_group() as usize) {
             return;
         }
+        ui.set_editing_config_index(-1);
         ui.set_show_add_config_form(true);
         ui.set_config_form_name("".into());
         ui.set_config_form_register("".into());
+        ui.set_config_form_widget_index(1);
+        ui.set_config_form_value_type_index(0);
         ui.set_config_form_register_count("1".into());
     });
 
     let ui_weak = ui.as_weak();
     ui.on_cancel_add_device_config(move || {
-        ui_weak.unwrap().set_show_add_config_form(false);
+        clear_config_form(&ui_weak.unwrap());
     });
 
     let ui_weak = ui.as_weak();
@@ -581,12 +689,59 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let slave_id = group.slave_id.clone();
         let builtin = group.builtin;
         drop(st);
-        items.push(item);
+        let edit_idx = ui.get_editing_config_index();
+        if edit_idx >= 0 {
+            let i = edit_idx as usize;
+            if i >= items.len() {
+                return;
+            }
+            let register_changed = items[i].register != item.register
+                || items[i].value_type != item.value_type
+                || items[i].register_count != item.register_count;
+            items[i].name = item.name;
+            items[i].register = item.register;
+            items[i].value_type = item.value_type;
+            items[i].register_count = item.register_count;
+            items[i].widget_kind = item.widget_kind;
+            if register_changed {
+                items[i].result = item.result;
+                items[i].result_display = item.result_display;
+                items[i].result_font_size = item.result_font_size;
+                items[i].status = item.status;
+            }
+        } else {
+            items.push(item);
+        }
         write_group_items(&ctx_add, group_index, slave_id, title, builtin, items);
-        ui.set_show_add_config_form(false);
+        clear_config_form(&ui);
         sync_active_to_ui(&ui, &ctx_add);
         touch_poll_policy(&ui, &ctx_add);
         persist_device_config(&ctx_add, &ui);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_edit_item = ctx.clone();
+    ui.on_edit_device_config_item(move |item_index| {
+        let ui = ui_weak.unwrap();
+        let group_index = ui.get_active_config_group() as usize;
+        if is_builtin_group(&ctx_edit_item, group_index) {
+            return;
+        }
+        let st = ctx_edit_item.state.borrow();
+        let Some(group) = st.device_config.groups.row_data(group_index) else {
+            return;
+        };
+        let Some(item) = group.items.row_data(item_index as usize) else {
+            return;
+        };
+        drop(st);
+        ui.set_editing_config_index(item_index);
+        ui.set_config_form_name(item.name);
+        ui.set_config_form_register(item.register);
+        ui.set_config_form_widget_index(widget_kind_to_form_index(item.widget_kind));
+        ui.set_config_form_value_type_index(value_type_to_form_index(item.value_type.as_str()));
+        ui.set_config_form_register_count(item.register_count.to_string().into());
+        ui.set_show_add_config_form(true);
     });
 
     let ui_weak = ui.as_weak();
@@ -706,6 +861,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let builtin = group.builtin;
         drop(st);
         if idx < items.len() {
+            if ui.get_editing_config_index() == index {
+                clear_config_form(&ui);
+            }
             items.remove(idx);
             write_group_items(&ctx_rm_item, group_index, slave_id, title, builtin, items);
             sync_active_to_ui(&ui, &ctx_rm_item);

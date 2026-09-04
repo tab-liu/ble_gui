@@ -68,6 +68,7 @@ export component MainWindow inherits Window {
     in-out property <int> active-modbus-tab: 0;
     in-out property <[ModbusQueryItem]> active-query-items;
     in-out property <[ModbusQueryLayoutRow]> modbus-query-layout-rows;
+    in-out property <[ModbusQueryLayoutRow]> modbus-tab-layout-rows;
 
     in-out property <string> firmware-current-version;
     in-out property <string> firmware-device-type;
@@ -102,6 +103,7 @@ export component MainWindow inherits Window {
     in-out property <int> query-form-value-type-index: 0;
     in-out property <string> query-form-register-count: "";
     in-out property <string> query-form-scale: "";
+    in-out property <int> editing-query-index: -1;
 
     in-out property <string> active-tab-slave-id: "0";
     in-out property <bool> has-selected-queries;
@@ -119,6 +121,8 @@ export component MainWindow inherits Window {
     in-out property <int> renaming-config-group-index: -1;
     in-out property <string> editing-group-title: "";
     in-out property <bool> show-add-config-form: false;
+    in-out property <int> editing-config-index: -1;
+    in-out property <[ModbusQueryLayoutRow]> config-tab-layout-rows;
     in-out property <string> config-form-name: "";
     in-out property <string> config-form-register: "";
     in-out property <int> config-form-widget-index: 1;
@@ -145,9 +149,11 @@ export component MainWindow inherits Window {
     callback cancel-add-query();
     callback remove-modbus-query(int, int);
     callback select-modbus-query(int, bool);
+    callback edit-modbus-query(int);
     callback copy-selected-modbus-query();
     callback dialog-pick-copy-tab(int);
     callback modbus-query-layout-width-changed(length);
+    callback modbus-tab-strip-width-changed(length);
     callback firmware-pick-file();
     callback firmware-clear-file();
     callback firmware-start();
@@ -172,10 +178,15 @@ export component MainWindow inherits Window {
     callback remove-device-config-item(int);
     callback builtin-config-value-edited(int, string);
     callback write-builtin-config-item(int);
+    callback edit-device-config-item(int);
+    callback config-tab-strip-width-changed(length);
 
     title: "BLE Modbus 工具";
-    preferred-width: 960px;
+    icon: @image-url("../assets/app-icon.png");
+    // 4 列：卡片 756 + 侧栏 160 + 内容/面板内边距 32。1080 会多出约半张卡的空白。
+    preferred-width: 980px;
     preferred-height: 640px;
+    min-width: 640px;
     background: Theme.bg-window;
 
     init => {
@@ -219,11 +230,13 @@ export component MainWindow inherits Window {
 
                 Rectangle {
                     horizontal-stretch: 1;
+                    min-width: 0px;
                     background: Theme.bg-window;
 
                     VerticalBox {
                         padding: 8px;
                         spacing: 8px;
+                        min-width: 0px;
 
                         if root.current-page == 0: DashboardPage {
                             device-connected: root.device-connected;
@@ -272,12 +285,14 @@ export component MainWindow inherits Window {
                             active-modbus-tab: root.active-modbus-tab;
                             active-query-items: root.active-query-items;
                             query-layout-rows: root.modbus-query-layout-rows;
+                            tab-layout-rows: root.modbus-tab-layout-rows;
                             show-add-query-form: root.show-add-query-form;
                             query-form-name <=> root.query-form-name;
                             query-form-register <=> root.query-form-register;
                             query-form-value-type-index <=> root.query-form-value-type-index;
                             query-form-register-count <=> root.query-form-register-count;
                             query-form-scale <=> root.query-form-scale;
+                            editing-query-index: root.editing-query-index;
                             active-tab-slave-id <=> root.active-tab-slave-id;
                             has-selected-queries: root.has-selected-queries;
                             query-selection-states: root.query-selection-states;
@@ -316,11 +331,17 @@ export component MainWindow inherits Window {
                             select-query(index, ctrl) => {
                                 root.select-modbus-query(index, ctrl);
                             }
+                            edit-query(index) => {
+                                root.edit-modbus-query(index);
+                            }
                             copy-selected-query => {
                                 root.copy-selected-modbus-query();
                             }
                             layout-width-changed(width) => {
                                 root.modbus-query-layout-width-changed(width);
+                            }
+                            tab-strip-width-changed(width) => {
+                                root.modbus-tab-strip-width-changed(width);
                             }
                         }
 
@@ -370,6 +391,8 @@ export component MainWindow inherits Window {
                             renaming-group-index: root.renaming-config-group-index;
                             editing-group-title <=> root.editing-group-title;
                             show-add-config-form: root.show-add-config-form;
+                            editing-config-index: root.editing-config-index;
+                            tab-layout-rows: root.config-tab-layout-rows;
                             config-form-name <=> root.config-form-name;
                             config-form-register <=> root.config-form-register;
                             config-form-widget-index <=> root.config-form-widget-index;
@@ -389,6 +412,8 @@ export component MainWindow inherits Window {
                             remove-config-item(index) => { root.remove-device-config-item(index); }
                             builtin-value-edited(index, value) => { root.builtin-config-value-edited(index, value); }
                             write-builtin-item(index) => { root.write-builtin-config-item(index); }
+                            edit-config-item(index) => { root.edit-device-config-item(index); }
+                            tab-strip-width-changed(width) => { root.config-tab-strip-width-changed(width); }
                         }
                     }
                 }
