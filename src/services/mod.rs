@@ -2,7 +2,7 @@
 //!
 //! | 子模块 | 说明 |
 //! |--------|------|
-//! | [`ble`] | 蓝牙扫描/连接/加密/Modbus 轮询 worker |
+//! | [`ble`] | 蓝牙扫描/连接/加密/Modbus 轮询 / OTA worker |
 //! | [`modbus`] | UI 可读的仪表板与查询轮询共享快照 |
 //! | [`poll_sync`] | 根据当前页面把轮询策略推给 worker |
 //! | [`modbus_query_store`] | Modbus 查询页 TOML 持久化 |

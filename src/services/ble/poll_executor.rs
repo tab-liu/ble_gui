@@ -1,4 +1,10 @@
 //! 按前台策略分发 Modbus 轮询。
+//!
+//! | [`super::poll_policy::PollForeground`] | 行为 |
+//! |----------------------------------------|------|
+//! | `Dashboard` | [`super::poll::poll_dashboard`] + 连接后一次设备信息 |
+//! | `ModbusQuery` / `DeviceConfig` | 按项读保持寄存器，写入 `QueryPollSnapshot` |
+//! | `None` 或 OTA 忙 | 不发 Modbus |
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};

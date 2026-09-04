@@ -1,4 +1,7 @@
 //! 主页：蓝牙扫描/连接 + Modbus 数据概览。
+//!
+//! 连接入口只发 Connect，不先 StopScan。Worker 内停扫描并对 GATT
+//! `Not connected` 自动重试，避免 Windows 上刚停扫描立刻连接失败。
 
 use slint::ComponentHandle;
 

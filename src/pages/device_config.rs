@@ -2,11 +2,13 @@
 //!
 //! # 设计要点
 //!
-//! - **常用**（`builtin=true`）：schema 在 `device_config_builtin`（[`BUILTIN_SETTINGS`]），不可删改名；
-//!   可含 bit 域，写入时 RMW。  
-//! - **自定义分组**：整寄存器表单（开关/文本/数值），TOML 持久化见
+//! - **常用**（`builtin=true`）：schema 在 [`crate::services::ble::modbus::BUILTIN_SETTINGS`]，
+//!   不可删改名。含服务器地址枚举，以及 12170 绑定触发（位域 RMW，默认设备绑定 enable）。
+//!   广播名 HA1 开头时不可写「设备绑定」，并机排序仍可写。  
+//! - **自定义分组**：整寄存器表单（文本/数值），TOML 持久化见
 //!   [`crate::services::device_config_store`]。  
 //! - **读写分离**：轮询只改「读回」字段，不覆盖「设置」输入框。  
+//! - 常用项与 UI 共用同一 model，只 `set_row_data`，避免 ComboBox 被整表重建冲掉。  
 //! - 与查询页共用 `QueryPollSnapshot`，目标为 [`QueryPollTarget::DeviceConfig`]。
 
 use std::rc::Rc;

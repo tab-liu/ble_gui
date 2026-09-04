@@ -12,7 +12,8 @@
 //!     ├── transport            —— GATT 写队列、粘包拆帧
 //!     ├── poll_policy          —— 「当前该轮询什么」
 //!     ├── poll_executor        —— 按策略读寄存器，写 query_live
-//!     └── modbus::*            —— RTU / TLV / 仪表解析 / 查询格式化
+//!     ├── ota                  —— OTA Start + XMODEM-1K
+//!     └── modbus::*            —— RTU / TLV / 仪表解析 / 常用配置映射
 //! ```
 //!
 //! # 使用注意
@@ -21,6 +22,7 @@
 //! - 连接态与扫描列表通过 [`shared_state`](BleService::shared_state) 快照读取。
 //! - 切换页面后务必 [`set_poll_foreground`](BleService::set_poll_foreground)
 //!   （通常由 [`crate::services::poll_sync`] 完成）。
+//! - Windows：Connect 不要先 StopScan；GATT 失败会重试。`win_conn` 尽量把间隔压到 ~15ms。
 
 mod crypto;
 pub mod modbus;

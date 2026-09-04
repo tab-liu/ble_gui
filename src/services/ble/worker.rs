@@ -1,4 +1,8 @@
 //! BLE 异步 worker：扫描、连接、GATT 与协议通知处理。
+//!
+//! Windows 上 `connect()` 实为 Uncached GetGattServices；刚停扫描时常
+//! `Unreachable`→`Not connected`。[`connect_gatt_with_retry`] 先等待再重试，
+//! UI 侧不要在 Connect 之前单独发 StopScan。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

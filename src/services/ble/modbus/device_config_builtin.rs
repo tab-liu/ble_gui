@@ -1,4 +1,9 @@
-//! 设备配置「常用」页：固定寄存器/位域映射（对齐主页 dashboard 风格）。
+//! 设备配置「常用」页：固定寄存器/位域映射（schema 不落盘）。
+//!
+//! - [`IOT_CLOUD_DNS_REGISTER`]：云服务器 URL（研发/生产）。
+//! - [`IOT_ENABLE_MIX1_REGISTER`]：`IOT_Enable_mix1` 各 2bit 触发位，
+//!   `1=enable` / `2=disable`；默认写 bit7/6 设备绑定使能。
+//!   仅设备绑定在 HA1 并机上禁用。
 
 use super::query::QueryValueType;
 

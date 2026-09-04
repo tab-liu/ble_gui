@@ -1,4 +1,9 @@
-//! Modbus 轮询：读 100～149 实时数据、2011～2012 输出状态。
+//! Modbus 传输原语：仪表板轮询、能力探测、保持寄存器读写。
+//!
+//! - 主页：100～149 实时数据 + 2011/2012 输出状态（标准读或 TLV）
+//! - 写：FC06/FC10；[`write_holding_registers`] 支持单 bit 或
+//!   [`super::modbus::RegisterFieldPatch`] 多位域 RMW
+//! - 前台「该轮询什么」由 [`super::poll_executor`] 按策略调用本模块
 
 use std::io;
 use std::sync::{Arc, Mutex};
