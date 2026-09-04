@@ -53,8 +53,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 } else {
                     None
                 };
-                let favs = favorites.lock().map(|g| g.clone()).unwrap_or_default();
-                refresh_ble(&ui, &favs, &snap, read_mode);
+                refresh_ble(&ui, &favorites, &snap, read_mode);
                 if snap.connected {
                     ensure_dashboard_poll_if_idle(&poll_policy);
                     if ui.get_current_page() == PAGE_DASHBOARD {

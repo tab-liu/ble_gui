@@ -18,7 +18,7 @@ fn start_connect(ui: &MainWindow, ctx: &AppContext, address: &str) {
     // Connect 命令会在 worker 内停止扫描。不要先发 StopScan，
     // 否则 Windows 上刚停扫描立刻做 GATT 会 Unreachable（Not connected）。
     ctx.ble.connect(address);
-    refresh_ble(ui, &ctx.favorites_snapshot(), &ctx.ble.snapshot(), None);
+    refresh_ble(ui, &ctx.favorites, &ctx.ble.snapshot(), None);
 }
 
 pub fn wire(ui: &MainWindow, ctx: &AppContext) {
@@ -39,17 +39,17 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             refresh(&ui, &ctx_ble);
         } else if ctx_ble.ble.is_connecting() {
             ctx_ble.ble.cancel_connect();
-            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
+            refresh_ble(&ui, &ctx_ble.favorites, &ctx_ble.ble.snapshot(), None);
         } else if ctx_ble.ble.is_scanning() {
             ctx_ble.ble.stop_scan();
-            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
+            refresh_ble(&ui, &ctx_ble.favorites, &ctx_ble.ble.snapshot(), None);
         } else {
             ctx_ble.ble.start_scan();
             ui.set_selected_scan_address("".into());
             if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
                 set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
             }
-            refresh_ble(&ui, &ctx_ble.favorites_snapshot(), &ctx_ble.ble.snapshot(), None);
+            refresh_ble(&ui, &ctx_ble.favorites, &ctx_ble.ble.snapshot(), None);
         }
     });
 
@@ -91,7 +91,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         // 收藏后从右侧移到左侧（或相反），强制刷新列表缓存。
         refresh_ble_scan_filter(
             &ui,
-            &ctx_toggle.favorites_snapshot(),
+            &ctx_toggle.favorites,
             &ctx_toggle.ble.snapshot(),
             None,
         );
@@ -103,7 +103,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         refresh_ble_scan_filter(
             &ui,
-            &ctx_filter.favorites_snapshot(),
+            &ctx_filter.favorites,
             &ctx_filter.ble.snapshot(),
             if ctx_filter.ble.is_connected() {
                 Some(ctx_filter.modbus.read_mode())

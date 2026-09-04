@@ -1,4 +1,7 @@
 //! 蓝牙收藏设备持久化（TOML）。
+//!
+//! 身份以 **MAC 地址** 为准（连接必须用地址）。广播名会随单机/并机切换变化，
+//! 因此名称只作展示：扫到同一地址时用当前广播名覆盖并写回文件。
 
 use std::fs;
 use std::path::PathBuf;
@@ -122,4 +125,65 @@ pub fn contains(devices: &[FavoriteDevice], address: &str) -> bool {
     devices
         .iter()
         .any(|d| normalize_address(&d.address) == norm)
+}
+
+pub(crate) fn is_usable_advertised_name(name: &str) -> bool {
+    let name = name.trim();
+    !name.is_empty() && !(name.starts_with("蓝牙设备 (") && name.ends_with(')'))
+}
+
+/// 用扫描到的当前广播名更新收藏展示名。返回是否有写入文件的必要变更。
+pub fn apply_advertised_names<'a, I>(devices: &mut Vec<FavoriteDevice>, advertised: I) -> bool
+where
+    I: IntoIterator<Item = (&'a str, &'a str)>,
+{
+    let mut changed = false;
+    for (address, name) in advertised {
+        if !is_usable_advertised_name(name) {
+            continue;
+        }
+        let name = name.trim();
+        let Some(existing) = devices
+            .iter_mut()
+            .find(|d| addresses_equal(&d.address, address))
+        else {
+            continue;
+        };
+        if existing.name != name {
+            info!(
+                target: "ble_gui::favorites",
+                "收藏设备改名 {} → {} ({})",
+                existing.name,
+                name,
+                existing.address,
+            );
+            existing.name = name.to_string();
+            changed = true;
+        }
+    }
+    changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_is_mac_name_follows_advertisement() {
+        let mut devices = vec![FavoriteDevice {
+            address: "AA:BB:CC:DD:EE:FF".into(),
+            name: "AP300-StandAlone".into(),
+        }];
+        assert!(!apply_advertised_names(
+            &mut devices,
+            [("AA-BB-CC-DD-EE-FF", "蓝牙设备 (AA:BB:CC:DD:EE:FF)")],
+        ));
+        assert_eq!(devices[0].name, "AP300-StandAlone");
+        assert!(apply_advertised_names(
+            &mut devices,
+            [("aa:bb:cc:dd:ee:ff", "AP300-Parallel")],
+        ));
+        assert_eq!(devices[0].name, "AP300-Parallel");
+        assert!(contains(&devices, "AA-BB-CC-DD-EE-FF"));
+    }
 }

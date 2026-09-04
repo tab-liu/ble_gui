@@ -5,6 +5,9 @@
 use slint::{Model, ModelRc, VecModel};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Mutex;
+
+use log::warn;
 
 use crate::services::ble::{BleScanEntry, BleSnapshot, ScanLinkHint};
 use crate::services::ble_favorites::{self, FavoriteDevice};
@@ -150,7 +153,12 @@ fn build_favorite_rows(favorites: &[FavoriteDevice], snap: &BleSnapshot) -> Vec<
                 ),
                 None => (false, false, String::new()),
             };
-            let name = if !fav.name.is_empty() {
+            let live_name = seen_entry
+                .map(|d| d.name.as_str())
+                .filter(|n| ble_favorites::is_usable_advertised_name(n));
+            let name = if let Some(n) = live_name {
+                n.to_string()
+            } else if !fav.name.is_empty() {
                 fav.name.clone()
             } else if let Some(d) = seen_entry {
                 d.name.clone()
@@ -325,7 +333,7 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     } else {
         None
     };
-    refresh_ble(ui, &ctx.favorites_snapshot(), &ctx.ble.snapshot(), read_mode);
+    refresh_ble(ui, &ctx.favorites, &ctx.ble.snapshot(), read_mode);
     if connected {
         ctx.modbus.on_connected();
     } else {
@@ -380,28 +388,52 @@ pub fn refresh_modbus_dashboard_from_live(
     refresh_dashboard(ui, &dash, busy);
 }
 
+fn synced_favorite_snapshot(
+    store: &Mutex<Vec<FavoriteDevice>>,
+    snap: &BleSnapshot,
+) -> Vec<FavoriteDevice> {
+    let Ok(mut favorites) = store.lock() else {
+        return Vec::new();
+    };
+    let changed = ble_favorites::apply_advertised_names(
+        &mut favorites,
+        snap.scan_devices
+            .iter()
+            .filter(|d| d.is_target)
+            .map(|d| (d.address.as_str(), d.name.as_str())),
+    );
+    if changed {
+        if let Err(e) = ble_favorites::save(&favorites) {
+            warn!(target: "ble_gui::favorites", "保存收藏名称失败: {e}");
+        }
+    }
+    favorites.clone()
+}
+
 pub fn refresh_ble(
     ui: &MainWindow,
-    favorites: &[FavoriteDevice],
+    favorites: &Mutex<Vec<FavoriteDevice>>,
     snap: &BleSnapshot,
     read_mode: Option<ModbusReadMode>,
 ) {
-    let fav_fp = favorites_fingerprint(favorites, snap);
+    let favorites = synced_favorite_snapshot(favorites, snap);
+    let fav_fp = favorites_fingerprint(&favorites, snap);
     if should_refresh_scan_list(ui, snap, &fav_fp) {
-        refresh_ble_scan_list(ui, snap, favorites);
+        refresh_ble_scan_list(ui, snap, &favorites);
     } else {
-        sync_favorite_devices(ui, favorites, snap);
+        sync_favorite_devices(ui, &favorites, snap);
     }
     refresh_ble_status(ui, snap, read_mode);
 }
 
 pub fn refresh_ble_scan_filter(
     ui: &MainWindow,
-    favorites: &[FavoriteDevice],
+    favorites: &Mutex<Vec<FavoriteDevice>>,
     snap: &BleSnapshot,
     read_mode: Option<ModbusReadMode>,
 ) {
-    refresh_ble_scan_list(ui, snap, favorites);
+    let favorites = synced_favorite_snapshot(favorites, snap);
+    refresh_ble_scan_list(ui, snap, &favorites);
     refresh_ble_status(ui, snap, read_mode);
 }
 

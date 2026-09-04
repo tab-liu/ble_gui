@@ -117,13 +117,6 @@ impl AppContext {
         ui.set_modbus_tabs(ModelRc::new(tabs));
     }
 
-    pub fn favorites_snapshot(&self) -> Vec<FavoriteDevice> {
-        self.favorites
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default()
-    }
-
     pub fn toggle_favorite(&self, address: &str, name: &str) -> bool {
         let Ok(mut favorites) = self.favorites.lock() else {
             return false;
