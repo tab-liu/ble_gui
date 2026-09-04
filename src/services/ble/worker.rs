@@ -1355,9 +1355,16 @@ async fn connect_device(
                     .lock()
                     .map(|p| p.ota_busy)
                     .unwrap_or(false);
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)), if !ota_busy => {}
-                    _ = wake.notified() => {}
+                let probed = modbus_live_poll
+                    .lock()
+                    .map(|l| l.capabilities_probed)
+                    .unwrap_or(false);
+                // 探测尚未成功时不要空等 2s，立刻再发 POST-KEX。
+                if probed || ota_busy {
+                    tokio::select! {
+                        _ = tokio::time::sleep(Duration::from_millis(POLL_INTERVAL_MS)), if !ota_busy => {}
+                        _ = wake.notified() => {}
+                    }
                 }
                 let ready = protocol_for_poll_task
                     .lock()

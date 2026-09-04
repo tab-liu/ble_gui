@@ -72,7 +72,36 @@ use super::protocol::ProtocolSession;
 /// Modbus 请求串行锁（对齐 C# `_sendLock`）。
 pub type ModbusGate = Arc<tokio::sync::Mutex<()>>;
 
-/// 连接后读寄存器 3 bit3（仅执行一次），确定常规读或 TLV 批量读。
+/// Studio POST-KEX-PROBE：读 1～16，其中寄存器 3 bit3 表示是否支持 TLV。
+const POST_KEX_PROBE_START: u16 = 1;
+const POST_KEX_PROBE_COUNT: u16 = 16;
+
+async fn read_post_kex_probe(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    slave_id: u8,
+) -> io::Result<Vec<u16>> {
+    modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, POST_KEX_PROBE_START, POST_KEX_PROBE_COUNT),
+        slave_id,
+        POST_KEX_PROBE_COUNT,
+    )
+    .await
+}
+
+fn tlv_mode_from_iot_status(status_word: u16) -> ModbusReadMode {
+    if iot_status_supports_tlv(status_word) {
+        debug!(target: "ble_gui::poll", "设备支持 Modbus TLV 读（寄存器 3 bit3=1）");
+        ModbusReadMode::Tlv
+    } else {
+        debug!(target: "ble_gui::poll", "设备不支持 Modbus TLV，使用常规读");
+        ModbusReadMode::Standard
+    }
+}
+
+/// 连接后读寄存器 1～16（仅一次），用寄存器 3 bit3 确定常规读或 TLV 批量读。
 pub async fn probe_modbus_capabilities(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -86,38 +115,42 @@ pub async fn probe_modbus_capabilities(
     }
 
     let slave_id = live.lock().expect("modbus live lock").slave_id;
+    let status_index = (REG_IOT_STATUS - POST_KEX_PROBE_START) as usize;
 
-    let mode = match modbus_read(
-        protocol,
-        write_tx,
-        build_read_holding(slave_id, REG_IOT_STATUS, 1),
-        slave_id,
-        1,
-    )
-    .await
-    {
-        Ok(regs) => {
-            if iot_status_supports_tlv(regs[0]) {
-                debug!(target: "ble_gui::poll", "设备支持 Modbus TLV 读（寄存器 3 bit3=1）");
-                ModbusReadMode::Tlv
-            } else {
-                debug!(target: "ble_gui::poll", "设备不支持 Modbus TLV，使用常规读");
-                ModbusReadMode::Standard
-            }
-        }
+    let regs = match read_post_kex_probe(protocol, write_tx, slave_id).await {
+        Ok(regs) => regs,
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
         Err(err) => {
-            warn!(
+            debug!(
                 target: "ble_gui::poll",
-                "探测 Modbus TLV 能力失败（寄存器 3）: {err}，本轮不读后续寄存器，下一轮再试",
+                "POST-KEX 探测首包异常（{err}），立即重读 1～16",
             );
-            return false;
+            match read_post_kex_probe(protocol, write_tx, slave_id).await {
+                Ok(regs) => regs,
+                Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+                Err(err) => {
+                    warn!(
+                        target: "ble_gui::poll",
+                        "探测 Modbus TLV 能力失败（寄存器 1～16 / 3）: {err}，本轮不读后续寄存器，下一轮再试",
+                    );
+                    return false;
+                }
+            }
         }
+    };
+
+    let Some(&status_word) = regs.get(status_index) else {
+        warn!(
+            target: "ble_gui::poll",
+            "POST-KEX 探测回复过短 len={}，期望寄存器 3",
+            regs.len(),
+        );
+        return false;
     };
 
     {
         let mut inner = live.lock().expect("modbus live lock");
-        inner.read_mode = mode;
+        inner.read_mode = tlv_mode_from_iot_status(status_word);
         inner.capabilities_probed = true;
     }
     true

@@ -374,8 +374,8 @@ async fn poll_register_items_tlv(
     any_ok || !items.is_empty()
 }
 
-/// Modbus 链路就绪后：先探测 TLV（寄存器 3），再读 1100 版本，再拉当前页数据。
-/// 三次请求收到回复后立刻发下一笔，中间不加周期间隔。
+/// Modbus 链路就绪后：先 POST-KEX 探测（读 1～16，看寄存器 3 bit3），
+/// 再读 1100 版本，再拉当前页数据。三次请求收到回复后立刻发下一笔，中间不加周期间隔。
 pub async fn poll_foreground_once(
     policy: &SharedPollPolicy,
     protocol: &Arc<Mutex<ProtocolSession>>,

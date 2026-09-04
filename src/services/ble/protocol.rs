@@ -16,7 +16,6 @@ use super::crypto::{
     aes_cbc, encrypt_business_packet, trim_zero, zero_pad, PRIVATE_KEY_L1, PUBLIC_KEY_K2,
     ROOT_AES_KEY,
 };
-use super::modbus::{build_read_holding, DEFAULT_SLAVE_ID};
 use super::transport::ModbusRxAssembler;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -358,9 +357,9 @@ impl ProtocolSession {
         self.encryption_ready = true;
         self.phase = HandshakePhase::Encrypted;
         self.rx.set_encrypted(shared_key);
-
-        let probe = build_read_holding(DEFAULT_SLAVE_ID, 1, 16);
-        Ok(Some(encrypt_business_packet(&shared_key, &probe)?))
+        // 第一笔 Modbus 由 poll 的 POST-KEX 探测发出（读 1～16，含寄存器 3）。
+        // 这里再发一笔会和探测抢响应，导致空等一整轮 POLL_INTERVAL。
+        Ok(None)
     }
 
     pub fn mark_plaintext_mode(&mut self) {
