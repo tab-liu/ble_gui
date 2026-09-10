@@ -45,6 +45,7 @@ pub struct BleSnapshot {
     pub connecting: bool,
     pub status_text: String,
     pub device_name: String,
+    pub device_address: String,
     pub rssi_text: String,
     pub action_text: String,
     pub scan_devices: Vec<BleScanEntry>,
@@ -161,6 +162,7 @@ impl BleInner {
             connecting,
             status_text,
             device_name: self.device_name.clone(),
+            device_address: self.device_address.clone(),
             rssi_text: if connected {
                 format!("{} dBm", self.rssi)
             } else {

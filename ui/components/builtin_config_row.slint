@@ -13,6 +13,7 @@ export component BuiltinConfigRow inherits Rectangle {
     in property <[string]> enum-values;
     in property <int> enum-index;
     in property <string> result-display;
+    in property <string> result-hex;
     in-out property <string> write-value;
     in property <string> status;
     in property <bool> dirty;
@@ -69,9 +70,9 @@ export component BuiltinConfigRow inherits Rectangle {
         }
 
         VerticalLayout {
-            spacing: 1px;
+            spacing: 2px;
             alignment: center;
-            min-width: 72px;
+            min-width: 120px;
 
             Text {
                 text: "读回";
@@ -80,13 +81,41 @@ export component BuiltinConfigRow inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            Text {
-                text: root.result-display == "" ? "—" : root.result-display;
-                color: Theme.text-primary;
-                font-size: 14px;
-                font-weight: 600;
-                horizontal-alignment: center;
-                overflow: elide;
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+                cross-axis-alignment: center;
+
+                Text {
+                    text: root.result-display == "" ? "—" : root.result-display;
+                    color: Theme.text-primary;
+                    font-size: 14px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+
+                if root.result-hex != "": Rectangle {
+                    border-radius: 5px;
+                    background: Theme.bg-hex-chip;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 1px;
+                        padding-bottom: 1px;
+                        alignment: center;
+
+                        Text {
+                            text: root.result-hex;
+                            color: Theme.text-hex;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
             }
         }
 

@@ -14,11 +14,17 @@ use crate::ui::MainWindow;
 use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
 
 fn start_connect(ui: &MainWindow, ctx: &AppContext, address: &str) {
-    if address.is_empty() || ctx.ble.is_connecting() || ctx.ble.is_connected() {
+    if address.is_empty() || ctx.ble.is_connecting() {
         return;
     }
+    if ctx.ble.is_connected() {
+        let current = ctx.ble.snapshot().device_address;
+        if ble_favorites::addresses_equal(&current, address) {
+            return;
+        }
+    }
     ui.set_selected_scan_address(address.into());
-    // Connect 命令会在 worker 内停止扫描。不要先发 StopScan，
+    // Connect 命令会在 worker 内停止扫描，并先断开当前会话。不要先发 StopScan，
     // 否则 Windows 上刚停扫描立刻做 GATT 会 Unreachable（Not connected）。
     ctx.ble.connect(address);
     refresh_ble(ui, &ctx.favorites, &ctx.ble.snapshot(), None);
@@ -60,7 +66,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_select = ctx.clone();
     ui.on_select_scan_device(move |address| {
         let ui = ui_weak.unwrap();
-        if ctx_select.ble.is_connecting() || ctx_select.ble.is_connected() {
+        if ctx_select.ble.is_connecting() {
             return;
         }
         ui.set_selected_scan_address(address);

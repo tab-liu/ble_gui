@@ -8,6 +8,7 @@
 //! | [`dashboard`] | 主页 100～149 / 2011～2012 映射 |
 //! | [`device_info`] | 1100～1130 机型 / SN / 软件版本 |
 //! | [`device_config_builtin`] | 设备配置「常用」静态寄存器表 |
+//! | [`wifi_provision`] | WiFi 配网寄存器与链路状态 |
 
 mod dashboard;
 mod device_config_builtin;
@@ -15,6 +16,7 @@ mod device_info;
 mod query;
 mod rtu;
 mod tlv;
+mod wifi_provision;
 
 pub use device_config_builtin::{
     bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, enum_index_for_value,
@@ -31,8 +33,17 @@ pub use device_info::{
     REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START, REG_IOT_INFO_COUNT, REG_IOT_INFO_START,
 };
 pub use query::{
-    encode_write_value, format_query_value, parse_register_address, parse_register_count,
-    parse_scale, parse_value_type, value_type_from_index, QueryValueType,
+    encode_write_value, format_query_value, integer_debug_hex, parse_register_address,
+    parse_register_count, parse_scale, parse_value_type, value_type_from_index, QueryValueType,
+};
+pub use wifi_provision::{
+    disconnect_reason_text, is_wifi_poll_index, parse_disconnect_reason, parse_link_status,
+    parse_sta_ipv4, sta_enable_word, wifi_auth_for_password, REG_LINK_STATUS,
+    REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_WIFI_DISCONNECT, REG_WIFI_ON_OFF,
+    REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_AUTH, REG_WIFI_STA_ENABLE,
+    REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID, REG_WIFI_STA_SSID_COUNT,
+    WIFI_PASSWORD_MAX_BYTES, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK, WIFI_POLL_SSID_NOW,
+    WIFI_POLL_STA_IP, WIFI_SSID_MAX_BYTES,
 };
 pub use rtu::{
     build_read_holding, build_write_single, parse_read_holding, plain_modbus_frame_length,

@@ -17,7 +17,7 @@ export component ModbusQueryGrid inherits Rectangle {
     // 与 src/pages/modbus_query.rs 的 CARD_HEIGHT / CARD_SPACING 对齐；底部多留一行空隙，避免最后一行被 ScrollView 裁半。
     property <int> row-count: root.layout-rows.length;
     property <length> content-height: root.items.length == 0 ? 120px
-        : root.row-count * 110px + max(0, root.row-count - 1) * 12px + 56px;
+        : root.row-count * 124px + max(0, root.row-count - 1) * 12px + 56px;
 
     horizontal-stretch: 1;
     vertical-stretch: 0;
@@ -75,6 +75,8 @@ export component ModbusQueryGrid inherits Rectangle {
                     register: root.items[idx].register;
                     result: root.items[idx].result;
                     result-display: root.items[idx].result-display;
+                    result-hex: root.items[idx].result-hex;
+                    result-hex-below: root.items[idx].result-hex-below;
                     result-font-size: root.items[idx].result-font-size;
                     source-index: idx;
                     selected: idx < root.query-selection-states.length && root.query-selection-states[idx];

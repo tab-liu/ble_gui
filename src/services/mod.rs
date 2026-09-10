@@ -7,6 +7,8 @@
 //! | [`poll_sync`] | 根据当前页面把轮询策略推给 worker |
 //! | [`modbus_query_store`] | Modbus 查询页 TOML 持久化 |
 //! | [`device_config_store`] | 设备配置自定义分组 TOML 持久化 |
+//! | [`wifi_cred_store`] | 配网用过的 WiFi SSID/密码 |
+//! | [`wifi_scan`] | 本机附近 WiFi 扫描（Windows） |
 //! | [`ble_favorites`] | 收藏设备列表 |
 //! | [`theme`] | 明暗主题 |
 //! | [`firmware`] | 固件升级：选文件、识别头、BLE XMODEM 与设备分发进度 |
@@ -19,3 +21,5 @@ pub mod modbus;
 pub mod modbus_query_store;
 pub mod poll_sync;
 pub mod theme;
+pub mod wifi_cred_store;
+pub mod wifi_scan;

@@ -319,7 +319,7 @@ export component FirmwarePage inherits VerticalBox {
                     }
                 }
 
-                Rectangle {
+                progress-track := Rectangle {
                     vertical-stretch: 1;
                     min-height: 72px;
                     border-radius: 10px;
@@ -336,15 +336,37 @@ export component FirmwarePage inherits VerticalBox {
                         background: root.bar-color;
                     }
 
+                    // 未覆盖段：进度色字；覆盖段再叠一层白字，按填充宽度裁切。
                     Text {
                         width: 100%;
                         height: 100%;
                         text: root.firmware-progress + "%";
-                        color: root.firmware-progress >= 50 ? #ffffff : root.bar-color;
+                        color: root.bar-color;
                         font-size: 32px;
                         font-weight: 700;
                         horizontal-alignment: center;
                         vertical-alignment: center;
+                    }
+
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        height: 100%;
+                        width: parent.width * root.firmware-progress / 100;
+                        clip: true;
+
+                        Text {
+                            x: 0px;
+                            y: 0px;
+                            width: progress-track.width;
+                            height: 100%;
+                            text: root.firmware-progress + "%";
+                            color: #ffffff;
+                            font-size: 32px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 

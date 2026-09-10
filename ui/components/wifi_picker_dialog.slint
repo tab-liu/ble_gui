@@ -1,0 +1,228 @@
+import { Button, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { ToolbarButton } from "toolbar_button.slint";
+import { WifiSavedNetwork, WifiScanAp } from "../types.slint";
+
+component WifiScanRow inherits Rectangle {
+    in property <string> ssid;
+    in property <string> signal;
+    in property <string> band;
+    callback clicked();
+
+    height: 44px;
+    border-radius: 6px;
+    background: area.has-hover ? Theme.bg-nav-selected : Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: Theme.border;
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        spacing: 10px;
+        cross-axis-alignment: center;
+
+        Text {
+            text: root.ssid;
+            color: Theme.text-primary;
+            font-size: 13px;
+            font-weight: 600;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        if root.band != "": Rectangle {
+            border-radius: 4px;
+            background: Theme.bg-hex-chip;
+            HorizontalLayout {
+                padding-left: 6px;
+                padding-right: 6px;
+                padding-top: 2px;
+                padding-bottom: 2px;
+                Text {
+                    text: root.band;
+                    color: Theme.text-hex;
+                    font-size: 11px;
+                }
+            }
+        }
+
+        Text {
+            text: root.signal;
+            color: Theme.success;
+            font-size: 13px;
+            font-weight: 600;
+            min-width: 40px;
+            horizontal-alignment: right;
+        }
+    }
+
+    area := TouchArea {
+        width: 100%;
+        height: 100%;
+        clicked => { root.clicked(); }
+    }
+}
+
+/// 配网选择弹窗：1=扫描附近 WiFi，2=已保存历史。
+export component WifiPickerDialog inherits Rectangle {
+    in property <int> kind;
+    in property <bool> scan-busy;
+    in property <string> scan-message;
+    in property <[WifiScanAp]> scan-aps;
+    in property <[WifiSavedNetwork]> saved-networks;
+
+    callback close();
+    callback rescan();
+    callback select-scan-ap(int);
+    callback select-saved(int);
+    callback remove-saved(int);
+
+    width: 100%;
+    height: 100%;
+    background: transparent;
+
+    property <bool> is-scan: root.kind == 1;
+    property <bool> is-history: root.kind == 2;
+
+    if root.kind != 0: TouchArea {
+        width: 100%;
+        height: 100%;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.overlay;
+        }
+
+        Rectangle {
+            width: 460px;
+            height: 460px;
+            border-radius: 10px;
+            background: Theme.bg-panel;
+            border-width: 1px;
+            border-color: Theme.border;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+
+            VerticalBox {
+                padding: 16px;
+                spacing: 10px;
+
+                Text {
+                    text: root.is-scan ? "选择 WiFi" : "已保存的网络";
+                    color: Theme.text-primary;
+                    font-size: 16px;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: root.is-scan
+                        ? (root.scan-busy ? "正在扫描附近的 2.4GHz WiFi…"
+                            : (root.scan-message != "" ? root.scan-message
+                                : "仅显示 2.4GHz，按信号排序。点击一项填入名称"))
+                        : (root.saved-networks.length == 0
+                            ? "暂无历史。成功下发配网后会自动保存，下次可在此选择。"
+                            : "点击一项填入名称和密码，右侧可删除");
+                    color: Theme.text-muted;
+                    font-size: 12px;
+                    wrap: word-wrap;
+                }
+
+                if root.is-scan: ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalBox {
+                        padding: 0;
+                        spacing: 4px;
+                        alignment: start;
+
+                        if !root.scan-busy && root.scan-aps.length == 0 && root.scan-message == "": Rectangle {
+                            height: 80px;
+                            Text {
+                                text: "暂无结果";
+                                color: Theme.text-dim;
+                                font-size: 13px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+
+                        for ap[index] in root.scan-aps: WifiScanRow {
+                            ssid: ap.ssid;
+                            signal: ap.signal;
+                            band: ap.band;
+                            clicked => { root.select-scan-ap(index); }
+                        }
+                    }
+                }
+
+                if root.is-history: ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        spacing: 4px;
+
+                        for net[index] in root.saved-networks: HorizontalLayout {
+                            spacing: 6px;
+                            cross-axis-alignment: center;
+
+                            TouchArea {
+                                horizontal-stretch: 1;
+                                clicked => { root.select-saved(index); }
+                                Rectangle {
+                                    height: 40px;
+                                    border-radius: 6px;
+                                    background: parent.has-hover ? Theme.bg-nav-selected : Theme.bg-panel-alt;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 10px;
+                                        spacing: 8px;
+                                        cross-axis-alignment: center;
+
+                                        Text {
+                                            text: net.ssid;
+                                            color: Theme.text-primary;
+                                            font-size: 13px;
+                                            font-weight: 600;
+                                            horizontal-stretch: 1;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: net.password == "" ? "开放网络" : "已保存密码";
+                                            color: Theme.text-dim;
+                                            font-size: 11px;
+                                        }
+                                    }
+                                }
+                            }
+
+                            ToolbarButton {
+                                text: "删除";
+                                clicked => { root.remove-saved(index); }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    spacing: 8px;
+                    alignment: end;
+
+                    if root.is-scan: Button {
+                        text: root.scan-busy ? "扫描中" : "重新扫描";
+                        clicked => { root.rescan(); }
+                    }
+
+                    Button {
+                        text: "关闭";
+                        clicked => { root.close(); }
+                    }
+                }
+            }
+        }
+    }
+}

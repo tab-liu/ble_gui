@@ -17,7 +17,8 @@ use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecMode
 
 use crate::app::{close_dialog, open_dialog};
 use crate::services::ble::modbus::{
-    parse_register_count, parse_scale, parse_value_type, value_type_from_index, QueryValueType,
+    integer_debug_hex, parse_register_count, parse_scale, parse_value_type, value_type_from_index,
+    QueryValueType,
 };
 use crate::services::modbus_query_store;
 use crate::services::poll_sync::sync_poll_policy;
@@ -25,7 +26,7 @@ use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
 use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
 
 const CARD_WIDTH: f32 = 180.0;
-const CARD_HEIGHT: f32 = 110.0;
+const CARD_HEIGHT: f32 = 124.0;
 const CARD_SPACING: f32 = 12.0;
 /// 窗口客户区 → 查询网格：侧栏 160 + 内容区 padding 16 + 面板 padding 16。
 const GRID_WINDOW_CHROME: f32 = 192.0;
@@ -81,6 +82,8 @@ impl ModbusQueryState {
                 status: "正常".into(),
                 result: "24.6 °C".into(),
                 result_display: SharedString::default(),
+                result_hex: SharedString::default(),
+                result_hex_below: false,
                 result_font_size: 20,
             })]
         } else {
@@ -129,6 +132,8 @@ fn new_pending_query_item(
         status: "等待查询".into(),
         result: "（Modbus 轮询后将自动填充）".into(),
         result_display: SharedString::default(),
+        result_hex: SharedString::default(),
+        result_hex_below: false,
         result_font_size: 20,
     })
 }
@@ -190,11 +195,44 @@ fn result_font_size(char_count: usize) -> i32 {
     }
 }
 
+/// 卡片内容区约 148px；估算十进制与 hex 胶囊能否同一行完整显示。
+fn hex_should_stack(display: &str, hex: &str, font_px: i32) -> bool {
+    if hex.is_empty() {
+        return false;
+    }
+    const INNER_PX: i32 = 148;
+    const HEX_FONT_PX: i32 = 11;
+    const CHIP_PAD_PX: i32 = 12;
+    const GAP_PX: i32 = 8;
+    let approx_w = |n: usize, px: i32| n as i32 * px * 62 / 100;
+    let row = approx_w(display.chars().count(), font_px)
+        + approx_w(hex.chars().count(), HEX_FONT_PX)
+        + CHIP_PAD_PX
+        + GAP_PX;
+    row > INNER_PX
+}
+
 fn enrich_query_item(mut item: ModbusQueryItem) -> ModbusQueryItem {
-    let display = item.result.to_string();
-    item.result_font_size = result_font_size(display.chars().count());
-    item.result_display = display.into();
+    apply_query_result_fields(&mut item);
     item
+}
+
+fn apply_query_result_fields(item: &mut ModbusQueryItem) {
+    let display = item.result.to_string();
+    let hex = integer_debug_hex(
+        &display,
+        parse_value_type(&item.value_type.to_string()),
+        if item.scale > 0 {
+            item.scale as u32
+        } else {
+            1
+        },
+    );
+    let font = result_font_size(display.chars().count());
+    item.result_font_size = font;
+    item.result_hex_below = hex_should_stack(&display, &hex, font);
+    item.result_hex = hex.into();
+    item.result_display = display.into();
 }
 
 fn enrich_query_items(items: Vec<ModbusQueryItem>) -> Vec<ModbusQueryItem> {
@@ -318,9 +356,7 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
         if item.status != new_status || item.result != new_result {
             item.status = new_status;
             item.result = new_result;
-            let display = item.result.to_string();
-            item.result_font_size = result_font_size(display.chars().count());
-            item.result_display = display.into();
+            apply_query_result_fields(item);
             changed = true;
         }
     }
@@ -367,6 +403,8 @@ fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
         status: "等待查询".into(),
         result: "（Modbus 轮询后将自动填充）".into(),
         result_display: SharedString::default(),
+        result_hex: SharedString::default(),
+        result_hex_below: false,
         result_font_size: 20,
     })
 }

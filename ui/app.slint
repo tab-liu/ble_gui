@@ -9,12 +9,15 @@ import {
     DeviceConfigItem,
     DeviceConfigGroup,
     BuiltinConfigItem,
+    WifiSavedNetwork,
+    WifiScanAp,
 } from "types.slint";
 
 import { Theme } from "theme.slint";
 import { BleStatusBar } from "components/ble_status_bar.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { NewTabDialog } from "components/new_tab_dialog.slint";
+import { WifiPickerDialog } from "components/wifi_picker_dialog.slint";
 import { DashboardPage } from "pages/dashboard.slint";
 import { ModbusPage } from "pages/modbus.slint";
 import { DeviceConfigPage } from "pages/device_config.slint";
@@ -31,6 +34,8 @@ export {
     DeviceConfigItem,
     DeviceConfigGroup,
     BuiltinConfigItem,
+    WifiSavedNetwork,
+    WifiScanAp,
     Theme,
     Palette,
     ModbusDndApi,
@@ -129,6 +134,23 @@ export component MainWindow inherits Window {
     in-out property <int> config-form-value-type-index: 0;
     in-out property <string> config-form-register-count: "1";
 
+    in-out property <string> wifi-ssid: "";
+    in-out property <string> wifi-password: "";
+    in-out property <bool> wifi-apply-busy: false;
+    in-out property <bool> wifi-scan-busy: false;
+    in-out property <bool> wifi-ok: false;
+    in-out property <bool> wifi-pending: false;
+    in-out property <bool> wifi-cloud-ok: false;
+    in-out property <bool> wifi-cloud-pending: false;
+    in-out property <string> wifi-status-label: "WiFi 未连接";
+    in-out property <string> wifi-cloud-status-label: "服务器未连接";
+    in-out property <string> wifi-current-ssid: "";
+    in-out property <string> wifi-hint: "";
+    in-out property <[WifiScanAp]> wifi-scan-aps;
+    in-out property <[WifiSavedNetwork]> wifi-saved-networks;
+    in-out property <int> wifi-picker-kind: 0;
+    in-out property <string> wifi-scan-message: "";
+
     callback navigate(int);
     callback ble-action-clicked();
     callback select-scan-device(string);
@@ -180,6 +202,11 @@ export component MainWindow inherits Window {
     callback write-builtin-config-item(int);
     callback edit-device-config-item(int);
     callback config-tab-strip-width-changed(length);
+    callback wifi-apply();
+    callback wifi-scan();
+    callback wifi-select-scan-ap(int);
+    callback wifi-select-saved(int);
+    callback wifi-remove-saved(int);
 
     title: "BLE Modbus 工具";
     icon: @image-url("../assets/app-icon.png");
@@ -193,11 +220,14 @@ export component MainWindow inherits Window {
         Theme.sync-palette();
     }
 
-    VerticalBox {
-        padding: 0px;
-        spacing: 0px;
+    Rectangle {
+        VerticalBox {
+            width: 100%;
+            height: 100%;
+            padding: 0px;
+            spacing: 0px;
 
-        BleStatusBar {
+            BleStatusBar {
             connected: root.device-connected;
             scanning: root.scanning;
             connecting: root.ble-connecting;
@@ -398,6 +428,19 @@ export component MainWindow inherits Window {
                             config-form-widget-index <=> root.config-form-widget-index;
                             config-form-value-type-index <=> root.config-form-value-type-index;
                             config-form-register-count <=> root.config-form-register-count;
+                            wifi-ssid <=> root.wifi-ssid;
+                            wifi-password <=> root.wifi-password;
+                            wifi-apply-busy: root.wifi-apply-busy;
+                            wifi-scan-busy: root.wifi-scan-busy;
+                            wifi-ok: root.wifi-ok;
+                            wifi-pending: root.wifi-pending;
+                            wifi-cloud-ok: root.wifi-cloud-ok;
+                            wifi-cloud-pending: root.wifi-cloud-pending;
+                            wifi-status-label: root.wifi-status-label;
+                            wifi-cloud-status-label: root.wifi-cloud-status-label;
+                            wifi-current-ssid: root.wifi-current-ssid;
+                            wifi-hint: root.wifi-hint;
+                            wifi-picker-kind <=> root.wifi-picker-kind;
                             add-group-request => { root.add-device-config-group-request(); }
                             remove-group(index) => { root.remove-device-config-group(index); }
                             switch-group(index) => { root.switch-device-config-group(index); }
@@ -414,25 +457,45 @@ export component MainWindow inherits Window {
                             write-builtin-item(index) => { root.write-builtin-config-item(index); }
                             edit-config-item(index) => { root.edit-device-config-item(index); }
                             tab-strip-width-changed(width) => { root.config-tab-strip-width-changed(width); }
+                            wifi-apply => { root.wifi-apply(); }
+                            wifi-scan => { root.wifi-scan(); }
                         }
                     }
                 }
             }
+        }
+        }
 
-            NewTabDialog {
-                dialog-kind: root.dialog-kind;
-                dialog-name <=> root.dialog-name;
-                dialog-tab-options: root.dialog-tab-options;
-                confirm => {
-                    root.dialog-confirm();
-                }
-                cancel => {
-                    root.dialog-cancel();
-                }
-                pick-tab(index) => {
-                    root.dialog-pick-copy-tab(index);
-                }
+        NewTabDialog {
+            width: 100%;
+            height: 100%;
+            dialog-kind: root.dialog-kind;
+            dialog-name <=> root.dialog-name;
+            dialog-tab-options: root.dialog-tab-options;
+            confirm => {
+                root.dialog-confirm();
             }
+            cancel => {
+                root.dialog-cancel();
+            }
+            pick-tab(index) => {
+                root.dialog-pick-copy-tab(index);
+            }
+        }
+
+        WifiPickerDialog {
+            width: 100%;
+            height: 100%;
+            kind: root.wifi-picker-kind;
+            scan-busy: root.wifi-scan-busy;
+            scan-message: root.wifi-scan-message;
+            scan-aps: root.wifi-scan-aps;
+            saved-networks: root.wifi-saved-networks;
+            close => { root.wifi-picker-kind = 0; }
+            rescan => { root.wifi-scan(); }
+            select-scan-ap(index) => { root.wifi-select-scan-ap(index); }
+            select-saved(index) => { root.wifi-select-saved(index); }
+            remove-saved(index) => { root.wifi-remove-saved(index); }
         }
     }
 }

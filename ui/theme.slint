@@ -34,6 +34,9 @@ export global Theme {
     out property <color> text-secondary: root.dark ? #a0a6bc : #4a5068;
     out property <color> text-muted: root.dark ? #8b90a5 : #6b7190;
     out property <color> text-dim: root.dark ? #6b7190 : #8b90a5;
+    // 整数 hex 调试色：iOS secondaryLabel 偏蓝，和主数字区分但不抢眼
+    out property <color> text-hex: root.dark ? #8cb4f0 : #3d6bb3;
+    out property <color> bg-hex-chip: root.dark ? #8cb4f024 : #3d6bb314;
     out property <color> accent: root.dark ? #4a7cff : #2563eb;
     out property <color> success: root.dark ? #7ec8a4 : #059669;
     out property <color> warning: root.dark ? #e6b35a : #d97706;

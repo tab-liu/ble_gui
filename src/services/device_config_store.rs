@@ -69,12 +69,12 @@ fn config_path() -> Option<PathBuf> {
     }
 }
 
-fn empty_read() -> (SharedString, SharedString, i32) {
-    ("—".into(), "—".into(), 14)
+fn empty_read() -> (SharedString, SharedString, SharedString, i32) {
+    ("—".into(), "—".into(), "".into(), 14)
 }
 
 fn saved_item_to_config_item(item: SavedConfigItem) -> DeviceConfigItem {
-    let (result, result_display, result_font_size) = empty_read();
+    let (result, result_display, result_hex, result_font_size) = empty_read();
     let widget_kind = item.widget_kind.clamp(0, 2);
     DeviceConfigItem {
         name: item.name.into(),
@@ -84,6 +84,7 @@ fn saved_item_to_config_item(item: SavedConfigItem) -> DeviceConfigItem {
         widget_kind,
         result,
         result_display,
+        result_hex,
         result_font_size,
         write_value: if widget_kind == 0 {
             "0".into()

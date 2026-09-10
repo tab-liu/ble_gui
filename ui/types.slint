@@ -10,6 +10,10 @@ export struct ModbusQueryItem {
     status: string,
     result: string,
     result-display: string,
+    /// 整数调试 hex（如 `0x10`）；非整数或无效读回为空
+    result-hex: string,
+    /// 一行放不下时 hex 改到数字下方（如 SN）
+    result-hex-below: bool,
     result-font-size: int,
 }
 
@@ -63,6 +67,8 @@ export struct DeviceConfigItem {
     /// 轮询读回原始/解析结果（与查询页 result 同角色）
     result: string,
     result-display: string,
+    /// 整数调试 hex（如 `0x10`）；非整数或无效读回为空
+    result-hex: string,
     result-font-size: int,
     /// 待写入值（开关用 "0"/"1"）；编辑只改这里
     write-value: string,
@@ -92,9 +98,24 @@ export struct BuiltinConfigItem {
     enum-values: [string],
     enum-index: int,
     result-display: string,
+    /// 整数调试 hex（如 `0x10`）；非整数或无效读回为空
+    result-hex: string,
     write-value: string,
     status: string,
     dirty: bool,
     write-enabled: bool,
     disabled-hint: string,
+}
+
+/// 本机保存过的 WiFi（密码仅用于回填，列表里不展示）。
+export struct WifiSavedNetwork {
+    ssid: string,
+    password: string,
+}
+
+/// 本机扫描到的附近 AP。
+export struct WifiScanAp {
+    ssid: string,
+    signal: string,
+    band: string,
 }

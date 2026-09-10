@@ -272,7 +272,7 @@ export component DashboardPage inherits VerticalBox {
                 padding: 16px;
                 spacing: 12px;
 
-                HorizontalBox {
+                HorizontalLayout {
                     spacing: 16px;
                     alignment: start;
 
@@ -281,12 +281,15 @@ export component DashboardPage inherits VerticalBox {
                         data-valid: root.dashboard-data-valid;
                     }
 
-                    VerticalBox {
+                    VerticalLayout {
                         spacing: 12px;
+                        height: 200px;
+                        padding: 0px;
 
-                        HorizontalBox {
+                        HorizontalLayout {
                             spacing: 12px;
                             alignment: start;
+                            vertical-stretch: 1;
 
                             PowerMetricCard {
                                 label: "AC 输出功率";
@@ -303,9 +306,10 @@ export component DashboardPage inherits VerticalBox {
                             }
                         }
 
-                        HorizontalBox {
+                        HorizontalLayout {
                             spacing: 12px;
                             alignment: start;
+                            vertical-stretch: 1;
 
                             PowerMetricCard {
                                 label: "PV 输入功率";

@@ -92,6 +92,37 @@ pub fn format_query_value(
     }
 }
 
+/// 整数读回的调试 hex（如 `0x10`）。非整数类型、占位/错误文案返回空串。
+///
+/// 带倍数的小数按「显示值 × scale」还原原始寄存器后再转 hex，便于对照报文。
+pub fn integer_debug_hex(result: &str, value_type: QueryValueType, scale: u32) -> String {
+    if value_type != QueryValueType::Integer {
+        return String::new();
+    }
+    let s = result.trim();
+    if s.is_empty() || s == "—" || s.starts_with('（') {
+        return String::new();
+    }
+    if let Ok(n) = s.parse::<u64>() {
+        return format_hex_u64(n);
+    }
+    if scale > 1 {
+        if let Ok(v) = s.parse::<f64>() {
+            if v.is_finite() && v >= 0.0 {
+                let raw = (v * f64::from(scale)).round();
+                if raw >= 0.0 && raw <= u64::MAX as f64 {
+                    return format_hex_u64(raw as u64);
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+fn format_hex_u64(n: u64) -> String {
+    format!("0x{n:X}")
+}
+
 /// 连续寄存器按「低字在前」拼成 u32/u64（对齐 ref/tool CombineUInt32 / SN 解析）。
 fn combine_registers_u64(values: &[u16]) -> u64 {
     let mut out = 0u64;
@@ -240,6 +271,24 @@ mod tests {
         assert_eq!(
             format_query_value(&[4, 1], QueryValueType::Integer, 1).unwrap(),
             "65540"
+        );
+    }
+
+    #[test]
+    fn integer_debug_hex_plain_and_scaled() {
+        assert_eq!(
+            integer_debug_hex("16", QueryValueType::Integer, 1),
+            "0x10"
+        );
+        assert_eq!(
+            integer_debug_hex("12.3", QueryValueType::Integer, 10),
+            "0x7B"
+        );
+        assert_eq!(integer_debug_hex("—", QueryValueType::Integer, 1), "");
+        assert_eq!(integer_debug_hex("1.5", QueryValueType::Float, 1), "");
+        assert_eq!(
+            integer_debug_hex("（Modbus 轮询后将自动填充）", QueryValueType::Integer, 1),
+            ""
         );
     }
 

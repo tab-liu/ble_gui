@@ -5,6 +5,7 @@
 //! - **常用**（`builtin=true`）：schema 在 [`crate::services::ble::modbus::BUILTIN_SETTINGS`]，
 //!   不可删改名。含服务器地址枚举，以及 12170 绑定触发（位域 RMW，默认设备绑定 enable）。
 //!   广播名 HA1 开头时不可写「设备绑定」，并机排序仍可写。  
+//!   常用页含 WiFi 配网：写 12001/12002/12018，轮询 11018 链路与 11108 当前 SSID。  
 //! - **自定义分组**：整寄存器表单（文本/数值），TOML 持久化见
 //!   [`crate::services::device_config_store`]。  
 //! - **读写分离**：轮询只改「读回」字段，不覆盖「设置」输入框。  
@@ -12,31 +13,95 @@
 //! - 与查询页共用 `QueryPollSnapshot`，目标为 [`QueryPollTarget::DeviceConfig`]。
 
 use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 use log::{debug, warn};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::services::ble::modbus::{
-    bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, encode_write_value,
-    is_parallel_ha1_device, parse_register_address, parse_value_type, BuiltinSettingDef,
-    BuiltinWidget, BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS, enum_index_for_value,
+    bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, disconnect_reason_text,
+    encode_write_value, enum_index_for_value, integer_debug_hex, is_parallel_ha1_device,
+    is_wifi_poll_index, parse_disconnect_reason, parse_link_status, parse_register_address,
+    parse_sta_ipv4, parse_value_type, sta_enable_word, wifi_auth_for_password, BuiltinSettingDef,
+    BuiltinWidget, QueryValueType, RegisterFieldPatch, BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS,
+    REG_WIFI_ON_OFF, REG_WIFI_STA_AUTH, REG_WIFI_STA_ENABLE, REG_WIFI_STA_PASSWORD,
+    REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID, REG_WIFI_STA_SSID_COUNT, WIFI_PASSWORD_MAX_BYTES,
+    WIFI_POLL_DISCONNECT, WIFI_POLL_LINK, WIFI_POLL_SSID_NOW, WIFI_POLL_STA_IP, WIFI_SSID_MAX_BYTES,
 };
 use crate::services::device_config_store;
-use crate::services::modbus::QueryPollTarget;
+use crate::services::modbus::{QueryItemPollResult, QueryPollTarget};
 use crate::services::poll_sync::sync_poll_policy;
+use crate::services::{wifi_cred_store, wifi_scan};
 use crate::state::{AppContext, PAGE_DEVICE_CONFIG};
 use crate::ui::{
     BuiltinConfigItem, DeviceConfigGroup, DeviceConfigItem, MainWindow, ModbusQueryLayoutRow,
+    WifiSavedNetwork, WifiScanAp,
 };
+
+const WIFI_CONNECT_TIMEOUT: Duration = Duration::from_secs(45);
+const CLOUD_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WifiProvisionPhase {
+    Idle,
+    ConnectingWifi,
+    ConnectingCloud,
+    Success,
+    Failed,
+}
+
+pub struct WifiProvisionUiState {
+    pub saved: Rc<VecModel<WifiSavedNetwork>>,
+    pub scan: Rc<VecModel<WifiScanAp>>,
+    phase: WifiProvisionPhase,
+    phase_since: Option<Instant>,
+    pending_ssid: String,
+    wifi_sta: bool,
+    mqtt: bool,
+    ssid_now: String,
+    sta_ip: String,
+    disconnect_reason: u16,
+    hint: String,
+}
+
+impl WifiProvisionUiState {
+    fn load() -> Self {
+        let saved: Vec<WifiSavedNetwork> = wifi_cred_store::load()
+            .into_iter()
+            .map(|n| WifiSavedNetwork {
+                ssid: n.ssid.into(),
+                password: n.password.into(),
+            })
+            .collect();
+        Self {
+            saved: Rc::new(VecModel::from(saved)),
+            scan: Rc::new(VecModel::from(Vec::<WifiScanAp>::new())),
+            phase: WifiProvisionPhase::Idle,
+            phase_since: None,
+            pending_ssid: String::new(),
+            wifi_sta: false,
+            mqtt: false,
+            ssid_now: String::new(),
+            sta_ip: String::new(),
+            disconnect_reason: 0,
+            hint: String::new(),
+        }
+    }
+}
 
 pub struct DeviceConfigState {
     pub groups: Rc<VecModel<DeviceConfigGroup>>,
     pub builtin_items: Rc<VecModel<BuiltinConfigItem>>,
     pub tab_strip_width: f32,
+    pub wifi: WifiProvisionUiState,
 }
 
-fn empty_read() -> (SharedString, SharedString, i32) {
-    ("—".into(), "—".into(), 14)
+fn empty_read() -> (SharedString, SharedString, SharedString, i32) {
+    ("—".into(), "—".into(), "".into(), 14)
+}
+
+fn result_hex_for(result: &str, value_type: &SharedString) -> SharedString {
+    integer_debug_hex(result, parse_value_type(&value_type.to_string()), 1).into()
 }
 
 fn result_font_size(char_count: usize) -> i32 {
@@ -136,6 +201,7 @@ fn builtin_item_from_def(def: &BuiltinSettingDef) -> BuiltinConfigItem {
         enum_values: ModelRc::new(VecModel::from(enum_values)),
         enum_index,
         result_display: "—".into(),
+        result_hex: "".into(),
         write_value: default_write.into(),
         status: "等待读取".into(),
         dirty: false,
@@ -165,6 +231,7 @@ impl DeviceConfigState {
             groups,
             builtin_items,
             tab_strip_width: 804.0,
+            wifi: WifiProvisionUiState::load(),
         }
     }
 
@@ -343,8 +410,348 @@ fn write_group_items(
 
 /// BLE 连接态或设备名变化时刷新常用项可用性（如 HA1 并机禁用绑定）。
 /// 只就地改 `write_enabled`，不重建 model，避免 ComboBox 无法点选。
-pub fn refresh_builtin_availability(_ui: &MainWindow, ctx: &AppContext) {
+pub fn refresh_builtin_availability(ui: &MainWindow, ctx: &AppContext) {
     apply_builtin_availability_in_place(ctx);
+    if !ctx.ble.is_connected() {
+        let wifi = &mut ctx.state.borrow_mut().device_config.wifi;
+        wifi.phase = WifiProvisionPhase::Idle;
+        wifi.phase_since = None;
+        wifi.pending_ssid.clear();
+        wifi.wifi_sta = false;
+        wifi.mqtt = false;
+        wifi.ssid_now.clear();
+        wifi.sta_ip.clear();
+        wifi.hint.clear();
+    }
+    refresh_wifi_status(ui, ctx);
+}
+
+/// 配网超时与状态文案（50ms 定时器调用，不依赖新的轮询结果）。
+pub fn tick_wifi_provision(ui: &MainWindow, ctx: &AppContext) {
+    if ui.get_current_page() != PAGE_DEVICE_CONFIG {
+        return;
+    }
+    advance_wifi_phase(ctx);
+    refresh_wifi_status(ui, ctx);
+}
+
+fn apply_wifi_poll_item(ctx: &AppContext, r: &QueryItemPollResult) {
+    let wifi = &mut ctx.state.borrow_mut().device_config.wifi;
+    if !r.ok {
+        return;
+    }
+    match r.item_index {
+        WIFI_POLL_LINK => {
+            let (sta, mqtt) = parse_link_status(&r.result);
+            wifi.wifi_sta = sta;
+            wifi.mqtt = mqtt;
+        }
+        WIFI_POLL_SSID_NOW => {
+            wifi.ssid_now = r.result.trim().to_string();
+        }
+        WIFI_POLL_STA_IP => {
+            wifi.sta_ip = parse_sta_ipv4(&r.result);
+        }
+        WIFI_POLL_DISCONNECT => {
+            wifi.disconnect_reason = parse_disconnect_reason(&r.result);
+        }
+        _ => {}
+    }
+}
+
+fn ssid_matches(expected: &str, actual: &str) -> bool {
+    let expected = expected.trim();
+    !expected.is_empty() && expected == actual.trim()
+}
+
+fn advance_wifi_phase(ctx: &AppContext) {
+    if !ctx.ble.is_connected() {
+        return;
+    }
+    let wifi = &mut ctx.state.borrow_mut().device_config.wifi;
+    let elapsed = wifi.phase_since.map(|t| t.elapsed());
+    match wifi.phase {
+        WifiProvisionPhase::ConnectingWifi => {
+            if wifi.wifi_sta && ssid_matches(&wifi.pending_ssid, &wifi.ssid_now) {
+                wifi.phase = WifiProvisionPhase::ConnectingCloud;
+                wifi.phase_since = Some(Instant::now());
+                wifi.hint.clear();
+            } else if wifi.wifi_sta && wifi.pending_ssid.is_empty() {
+                wifi.phase = WifiProvisionPhase::ConnectingCloud;
+                wifi.phase_since = Some(Instant::now());
+            } else if elapsed.is_some_and(|d| d >= WIFI_CONNECT_TIMEOUT) {
+                wifi.phase = WifiProvisionPhase::Failed;
+                wifi.hint = disconnect_reason_text(wifi.disconnect_reason)
+                    .unwrap_or("WiFi 连接超时")
+                    .to_string();
+            }
+        }
+        WifiProvisionPhase::ConnectingCloud => {
+            if wifi.mqtt {
+                wifi.phase = WifiProvisionPhase::Success;
+                wifi.phase_since = None;
+                wifi.pending_ssid.clear();
+                wifi.hint.clear();
+            } else if !wifi.wifi_sta {
+                wifi.phase = WifiProvisionPhase::ConnectingWifi;
+                wifi.phase_since = Some(Instant::now());
+            } else if elapsed.is_some_and(|d| d >= CLOUD_CONNECT_TIMEOUT) {
+                wifi.phase = WifiProvisionPhase::Failed;
+                wifi.hint = "云端连接超时（WiFi 已连接）".into();
+            }
+        }
+        WifiProvisionPhase::Failed => {
+            if wifi.wifi_sta && wifi.mqtt {
+                wifi.phase = WifiProvisionPhase::Success;
+                wifi.hint.clear();
+            }
+        }
+        WifiProvisionPhase::Idle | WifiProvisionPhase::Success => {
+            if wifi.wifi_sta && wifi.mqtt {
+                wifi.phase = WifiProvisionPhase::Success;
+            }
+        }
+    }
+}
+
+fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
+    let connected = ctx.ble.is_connected();
+    let st = ctx.state.borrow();
+    let wifi = &st.device_config.wifi;
+    let phase = wifi.phase;
+    let (wifi_ok, wifi_pending, cloud_ok, cloud_pending, wifi_label, cloud_label, apply_busy, hint) =
+        if !connected {
+            (
+                false,
+                false,
+                false,
+                false,
+                "WiFi 未连接".into(),
+                "服务器未连接".into(),
+                false,
+                String::new(),
+            )
+        } else {
+            match phase {
+                WifiProvisionPhase::ConnectingWifi => (
+                    false,
+                    true,
+                    false,
+                    false,
+                    "正在连接 WiFi…".into(),
+                    "服务器未连接".into(),
+                    true,
+                    wifi.hint.clone(),
+                ),
+                WifiProvisionPhase::ConnectingCloud => (
+                    true,
+                    false,
+                    false,
+                    true,
+                    "WiFi 已连接".into(),
+                    "正在连接云端…".into(),
+                    true,
+                    wifi.hint.clone(),
+                ),
+                WifiProvisionPhase::Idle | WifiProvisionPhase::Success | WifiProvisionPhase::Failed => {
+                    let cloud_pending = wifi.wifi_sta && !wifi.mqtt;
+                    (
+                        wifi.wifi_sta,
+                        false,
+                        wifi.mqtt,
+                        cloud_pending,
+                        if wifi.wifi_sta {
+                            "WiFi 已连接".into()
+                        } else {
+                            "WiFi 未连接".into()
+                        },
+                        if wifi.mqtt {
+                            "服务器已连接".into()
+                        } else if cloud_pending {
+                            "正在连接云端…".into()
+                        } else {
+                            "服务器未连接".into()
+                        },
+                        false,
+                        wifi.hint.clone(),
+                    )
+                }
+            }
+        };
+    let current_ssid = if connected && wifi.wifi_sta {
+        let mut extra = String::new();
+        if !wifi.ssid_now.is_empty() {
+            extra.push_str(&wifi.ssid_now);
+        }
+        if !wifi.sta_ip.is_empty() {
+            if !extra.is_empty() {
+                extra.push_str("  ");
+            }
+            extra.push_str(&wifi.sta_ip);
+        }
+        extra
+    } else {
+        String::new()
+    };
+    drop(st);
+
+    ui.set_wifi_ok(wifi_ok);
+    ui.set_wifi_pending(wifi_pending);
+    ui.set_wifi_cloud_ok(cloud_ok);
+    ui.set_wifi_cloud_pending(cloud_pending);
+    ui.set_wifi_status_label(wifi_label);
+    ui.set_wifi_cloud_status_label(cloud_label);
+    ui.set_wifi_current_ssid(current_ssid.into());
+    ui.set_wifi_apply_busy(apply_busy);
+    if ui.get_wifi_scan_busy() {
+        return;
+    }
+    if !connected
+        || matches!(
+            phase,
+            WifiProvisionPhase::ConnectingWifi
+                | WifiProvisionPhase::ConnectingCloud
+                | WifiProvisionPhase::Failed
+        )
+    {
+        ui.set_wifi_hint(hint.into());
+    }
+}
+
+fn persist_wifi_networks(ctx: &AppContext) {
+    let saved = ctx.state.borrow().device_config.wifi.saved.clone();
+    let networks: Vec<wifi_cred_store::WifiNetwork> = (0..saved.row_count())
+        .filter_map(|i| saved.row_data(i))
+        .map(|n| wifi_cred_store::WifiNetwork {
+            ssid: n.ssid.to_string(),
+            password: n.password.to_string(),
+        })
+        .collect();
+    if let Err(e) = wifi_cred_store::save(&networks) {
+        warn!(target: "ble_gui::wifi_store", "保存 WiFi 记录失败: {e}");
+    }
+}
+
+fn upsert_saved_wifi(ctx: &AppContext, ssid: &str, password: &str) {
+    let saved = ctx.state.borrow().device_config.wifi.saved.clone();
+    for i in (0..saved.row_count()).rev() {
+        if saved
+            .row_data(i)
+            .is_some_and(|n| n.ssid.as_str() == ssid)
+        {
+            saved.remove(i);
+        }
+    }
+    saved.insert(
+        0,
+        WifiSavedNetwork {
+            ssid: ssid.into(),
+            password: password.into(),
+        },
+    );
+    while saved.row_count() > wifi_cred_store::MAX_NETWORKS {
+        saved.remove(saved.row_count() - 1);
+    }
+    persist_wifi_networks(ctx);
+}
+
+fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
+    if !ctx.ble.is_connected() {
+        ui.set_wifi_hint("请先连接设备".into());
+        return;
+    }
+    let ssid = ui.get_wifi_ssid().to_string().trim().to_string();
+    let password = ui.get_wifi_password().to_string();
+    if ssid.is_empty() {
+        ui.set_wifi_hint("请填写 WiFi 名称".into());
+        return;
+    }
+    if ssid.as_bytes().len() > WIFI_SSID_MAX_BYTES {
+        ui.set_wifi_hint("WiFi 名称过长（最多 32 字节）".into());
+        return;
+    }
+    if password.as_bytes().len() > WIFI_PASSWORD_MAX_BYTES {
+        ui.set_wifi_hint("密码过长（最多 64 字节）".into());
+        return;
+    }
+    if !password.is_empty() && password.len() < 8 {
+        ui.set_wifi_hint("密码至少 8 位；开放网络请留空".into());
+        return;
+    }
+
+    let auth = wifi_auth_for_password(&password);
+    let ssid_regs = match encode_write_value(
+        &ssid,
+        QueryValueType::String,
+        REG_WIFI_STA_SSID_COUNT,
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            ui.set_wifi_hint(err.into());
+            return;
+        }
+    };
+    let password_regs = match encode_write_value(
+        &password,
+        QueryValueType::String,
+        REG_WIFI_STA_PASSWORD_COUNT,
+    ) {
+        Ok(v) => v,
+        Err(err) => {
+            ui.set_wifi_hint(err.into());
+            return;
+        }
+    };
+
+    ctx.ble.write_holding(
+        BUILTIN_CONFIG_SLAVE_ID,
+        REG_WIFI_STA_AUTH,
+        vec![auth],
+        None,
+        None,
+    );
+    ctx.ble.write_holding(
+        BUILTIN_CONFIG_SLAVE_ID,
+        REG_WIFI_STA_PASSWORD,
+        password_regs,
+        None,
+        None,
+    );
+    ctx.ble.write_holding(
+        BUILTIN_CONFIG_SLAVE_ID,
+        REG_WIFI_STA_ENABLE,
+        vec![sta_enable_word(&password)],
+        None,
+        None,
+    );
+    ctx.ble.write_holding(
+        BUILTIN_CONFIG_SLAVE_ID,
+        REG_WIFI_STA_SSID,
+        ssid_regs,
+        None,
+        None,
+    );
+    ctx.ble.write_holding(
+        BUILTIN_CONFIG_SLAVE_ID,
+        REG_WIFI_ON_OFF,
+        vec![1],
+        None,
+        Some(RegisterFieldPatch {
+            start_bit: 0,
+            width: 2,
+            value: 1,
+        }),
+    );
+
+    upsert_saved_wifi(ctx, &ssid, &password);
+    {
+        let wifi = &mut ctx.state.borrow_mut().device_config.wifi;
+        wifi.phase = WifiProvisionPhase::ConnectingWifi;
+        wifi.phase_since = Some(Instant::now());
+        wifi.pending_ssid = ssid;
+        wifi.hint.clear();
+    }
+    refresh_wifi_status(ui, ctx);
 }
 
 fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
@@ -395,8 +802,12 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
     }
 
     if builtin {
-        let st = ctx.state.borrow();
         for r in &snapshot.items {
+            if is_wifi_poll_index(r.item_index) {
+                apply_wifi_poll_item(ctx, r);
+                continue;
+            }
+            let st = ctx.state.borrow();
             let Some(mut item) = st.device_config.builtin_items.row_data(r.item_index) else {
                 continue;
             };
@@ -405,9 +816,17 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
                 .get(r.item_index)
                 .map(|def| display_for_builtin_result(&r.result, def))
                 .unwrap_or_else(|| display_for_config(&r.result, item.widget_kind));
-            if item.status != new_status || item.result_display != new_display {
+            let new_hex = BUILTIN_SETTINGS
+                .get(r.item_index)
+                .map(|def| integer_debug_hex(&r.result, def.value_type, 1).into())
+                .unwrap_or_else(|| result_hex_for(&r.result, &item.value_type));
+            if item.status != new_status
+                || item.result_display != new_display
+                || item.result_hex != new_hex
+            {
                 item.status = new_status;
                 item.result_display = new_display;
+                item.result_hex = new_hex;
                 if !item.dirty {
                     if let Some(def) = BUILTIN_SETTINGS.get(r.item_index) {
                         if def.widget == BuiltinWidget::Enum
@@ -428,6 +847,8 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
                     .set_row_data(r.item_index, item);
             }
         }
+        advance_wifi_phase(ctx);
+        refresh_wifi_status(ui, ctx);
         return;
     }
 
@@ -448,11 +869,12 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
         };
         let new_status: SharedString = r.status.clone().into();
         let new_result: SharedString = r.result.clone().into();
-        if item.status != new_status || item.result != new_result {
+        let new_hex = result_hex_for(&new_result, &item.value_type);
+        if item.status != new_status || item.result != new_result || item.result_hex != new_hex {
             item.status = new_status;
             item.result = new_result.clone();
-            let display = display_for_config(&new_result, item.widget_kind);
-            item.result_display = display;
+            item.result_display = display_for_config(&new_result, item.widget_kind);
+            item.result_hex = new_hex;
             item.result_font_size = result_font_size(new_result.chars().count());
             changed = true;
         }
@@ -483,6 +905,12 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.set_config_form_register_count("1".into());
     ui.set_renaming_config_group_index(-1);
     ui.set_editing_config_index(-1);
+    {
+        let wifi = &ctx.state.borrow().device_config.wifi;
+        ui.set_wifi_saved_networks(ModelRc::new(wifi.saved.clone()));
+        ui.set_wifi_scan_aps(ModelRc::new(wifi.scan.clone()));
+    }
+    refresh_wifi_status(ui, ctx);
     sync_layout_from_window(ui, ctx);
 
     let ui_weak = ui.as_weak();
@@ -665,7 +1093,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             .parse::<i32>()
             .unwrap_or(1)
             .max(1);
-        let (result, result_display, result_font_size) = empty_read();
+        let (result, result_display, result_hex, result_font_size) = empty_read();
         let item = DeviceConfigItem {
             name: name.trim().into(),
             register: register.trim().into(),
@@ -674,6 +1102,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             widget_kind: widget_kind_from_index(ui.get_config_form_widget_index()),
             result,
             result_display,
+            result_hex,
             result_font_size,
             write_value: "".into(),
             status: "等待读取".into(),
@@ -706,6 +1135,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             if register_changed {
                 items[i].result = item.result;
                 items[i].result_display = item.result_display;
+                items[i].result_hex = item.result_hex;
                 items[i].result_font_size = item.result_font_size;
                 items[i].status = item.status;
             }
@@ -958,5 +1388,113 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             def.bit,
             def.field,
         );
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_wifi = ctx.clone();
+    ui.on_wifi_apply(move || {
+        let ui = ui_weak.unwrap();
+        apply_wifi_credentials(&ui, &ctx_wifi);
+    });
+
+    let ui_weak = ui.as_weak();
+    ui.on_wifi_scan(move || {
+        let ui = ui_weak.unwrap();
+        if ui.get_wifi_scan_busy() {
+            return;
+        }
+        ui.set_wifi_picker_kind(1);
+        ui.set_wifi_scan_busy(true);
+        ui.set_wifi_scan_message("正在扫描附近 WiFi…".into());
+        let ui_weak_done = ui.as_weak();
+        std::thread::spawn(move || {
+            let result = wifi_scan::scan_nearby();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = ui_weak_done.upgrade() else {
+                    return;
+                };
+                ui.set_wifi_scan_busy(false);
+                match result {
+                    Ok(aps) => {
+                        let rows: Vec<WifiScanAp> = aps
+                            .into_iter()
+                            .map(|ap| WifiScanAp {
+                                ssid: ap.ssid.into(),
+                                signal: ap.signal.into(),
+                                band: ap.band.into(),
+                            })
+                            .collect();
+                        let empty = rows.is_empty();
+                        let model = ui.get_wifi_scan_aps();
+                        if let Some(vec) = model.as_any().downcast_ref::<VecModel<WifiScanAp>>() {
+                            vec.set_vec(rows);
+                        } else {
+                            ui.set_wifi_scan_aps(ModelRc::new(VecModel::from(rows)));
+                        }
+                        ui.set_wifi_scan_message(
+                            if empty {
+                                "未发现附近 2.4GHz WiFi，请确认本机 WLAN 已打开".into()
+                            } else {
+                                "".into()
+                            },
+                        );
+                    }
+                    Err(err) => {
+                        ui.set_wifi_scan_message(err.into());
+                    }
+                }
+            });
+        });
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_pick_scan = ctx.clone();
+    ui.on_wifi_select_scan_ap(move |index| {
+        let ui = ui_weak.unwrap();
+        let idx = index as usize;
+        let Some(ap) = ui.get_wifi_scan_aps().row_data(idx) else {
+            return;
+        };
+        let ssid = ap.ssid.clone();
+        let saved = ctx_pick_scan.state.borrow().device_config.wifi.saved.clone();
+        let saved_pwd = (0..saved.row_count())
+            .filter_map(|i| saved.row_data(i))
+            .find(|n| n.ssid == ssid)
+            .map(|n| n.password);
+        ui.set_wifi_ssid(ssid);
+        if let Some(pwd) = saved_pwd {
+            ui.set_wifi_password(pwd);
+        }
+        ui.set_wifi_picker_kind(0);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_pick_saved = ctx.clone();
+    ui.on_wifi_select_saved(move |index| {
+        let ui = ui_weak.unwrap();
+        let idx = index as usize;
+        let Some(net) = ctx_pick_saved
+            .state
+            .borrow()
+            .device_config
+            .wifi
+            .saved
+            .row_data(idx)
+        else {
+            return;
+        };
+        ui.set_wifi_ssid(net.ssid);
+        ui.set_wifi_password(net.password);
+        ui.set_wifi_picker_kind(0);
+    });
+
+    let ctx_rm_wifi = ctx.clone();
+    ui.on_wifi_remove_saved(move |index| {
+        let idx = index as usize;
+        let saved = ctx_rm_wifi.state.borrow().device_config.wifi.saved.clone();
+        if idx < saved.row_count() {
+            saved.remove(idx);
+            persist_wifi_networks(&ctx_rm_wifi);
+        }
     });
 }

@@ -1,0 +1,144 @@
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { ToolbarButton } from "toolbar_button.slint";
+
+component WifiStatusChip inherits HorizontalLayout {
+    in property <color> dot-color;
+    in property <string> label;
+    in property <string> extra: "";
+    spacing: 5px;
+    cross-axis-alignment: center;
+
+    Rectangle {
+        width: 7px;
+        height: 7px;
+        border-radius: 4px;
+        background: root.dot-color;
+    }
+
+    Text {
+        text: root.label;
+        color: Theme.text-primary;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+
+    if root.extra != "": Text {
+        text: root.extra;
+        color: Theme.text-muted;
+        font-size: 11px;
+        overflow: elide;
+        max-width: 280px;
+        vertical-alignment: center;
+    }
+}
+
+/// 「常用」页 WiFi 配网：紧凑输入区；扫描/历史走弹窗。
+export component WifiProvisionCard inherits Rectangle {
+    in-out property <string> wifi-ssid;
+    in-out property <string> wifi-password;
+    in property <bool> device-connected;
+    in property <bool> apply-busy;
+    in property <bool> scan-busy;
+    in property <bool> wifi-ok;
+    in property <bool> wifi-pending;
+    in property <bool> cloud-ok;
+    in property <bool> cloud-pending;
+    in property <string> wifi-status-label;
+    in property <string> cloud-status-label;
+    in property <string> current-ssid;
+    in property <string> hint;
+
+    callback apply-clicked();
+    callback scan-clicked();
+    callback history-clicked();
+
+    border-radius: 8px;
+    background: Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: Theme.border;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        spacing: 6px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            cross-axis-alignment: center;
+
+            Text {
+                text: "WiFi 配网";
+                color: Theme.text-primary;
+                font-size: 13px;
+                font-weight: 700;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            WifiStatusChip {
+                dot-color: !root.device-connected ? Theme.text-dim
+                    : (root.wifi-ok ? Theme.success
+                        : (root.wifi-pending ? Theme.warning : Theme.text-dim));
+                label: root.wifi-status-label;
+                extra: root.current-ssid;
+            }
+
+            WifiStatusChip {
+                dot-color: !root.device-connected ? Theme.text-dim
+                    : (root.cloud-ok ? Theme.success
+                        : (root.cloud-pending ? Theme.warning : Theme.text-dim));
+                label: root.cloud-status-label;
+            }
+        }
+
+        if root.hint != "": Text {
+            text: root.hint;
+            color: Theme.warning;
+            font-size: 11px;
+            overflow: elide;
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            cross-axis-alignment: center;
+
+            LineEdit {
+                horizontal-stretch: 1;
+                text <=> root.wifi-ssid;
+                placeholder-text: "WiFi 名称";
+            }
+
+            LineEdit {
+                horizontal-stretch: 1;
+                text <=> root.wifi-password;
+                placeholder-text: "密码（开放网络可留空）";
+                input-type: password;
+            }
+
+            ToolbarButton {
+                text: root.scan-busy ? "扫描中" : "扫描";
+                width: 52px;
+                clicked => { root.scan-clicked(); }
+            }
+
+            ToolbarButton {
+                text: "历史";
+                width: 44px;
+                clicked => { root.history-clicked(); }
+            }
+
+            ToolbarButton {
+                text: root.apply-busy ? "下发中…" : "下发配网";
+                primary: true;
+                enabled: root.device-connected && !root.apply-busy;
+                width: 80px;
+                clicked => { root.apply-clicked(); }
+            }
+        }
+    }
+}

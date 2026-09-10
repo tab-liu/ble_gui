@@ -10,6 +10,7 @@ export component DeviceConfigRow inherits Rectangle {
     in property <int> register-count;
     in property <int> widget-kind;
     in property <string> result-display;
+    in property <string> result-hex;
     in property <int> result-font-size: 14;
     in-out property <string> write-value;
     in property <string> status;
@@ -64,13 +65,6 @@ export component DeviceConfigRow inherits Rectangle {
                 root.edit-clicked();
             }
 
-            Tooltip {
-                Text {
-                    text: "双击编辑";
-                    font-size: 11px;
-                }
-            }
-
             VerticalLayout {
                 spacing: 2px;
                 horizontal-stretch: 1;
@@ -97,11 +91,11 @@ export component DeviceConfigRow inherits Rectangle {
             }
         }
 
-        // 读回：只显示，轮询更新这里
+        // 读回：只显示，轮询更新这里；整数 hex 与十进制左右并排
         VerticalLayout {
-            spacing: 1px;
+            spacing: 2px;
             alignment: center;
-            min-width: 88px;
+            min-width: 120px;
 
             Text {
                 text: "读回";
@@ -110,13 +104,41 @@ export component DeviceConfigRow inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            Text {
-                text: root.result-display == "" ? "—" : root.result-display;
-                color: Theme.text-primary;
-                font-size: root.result-font-size * 1px;
-                font-weight: 600;
-                horizontal-alignment: center;
-                overflow: elide;
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+                cross-axis-alignment: center;
+
+                Text {
+                    text: root.result-display == "" ? "—" : root.result-display;
+                    color: Theme.text-primary;
+                    font-size: root.result-font-size * 1px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                    overflow: elide;
+                }
+
+                if root.result-hex != "": Rectangle {
+                    border-radius: 5px;
+                    background: Theme.bg-hex-chip;
+                    horizontal-stretch: 0;
+                    vertical-stretch: 0;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        padding-top: 1px;
+                        padding-bottom: 1px;
+                        alignment: center;
+
+                        Text {
+                            text: root.result-hex;
+                            color: Theme.text-hex;
+                            font-size: 11px;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
             }
         }
 

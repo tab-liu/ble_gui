@@ -7,7 +7,10 @@ use slint::Model;
 
 use crate::pages::modbus_query;
 use crate::services::ble::modbus::{
-    parse_register_address, parse_scale, parse_value_type, BUILTIN_SETTINGS,
+    parse_register_address, parse_scale, parse_value_type, BUILTIN_SETTINGS, QueryValueType,
+    REG_LINK_STATUS, REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_WIFI_DISCONNECT,
+    REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK,
+    WIFI_POLL_SSID_NOW, WIFI_POLL_STA_IP,
 };
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
 use crate::state::{
@@ -105,7 +108,7 @@ fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollFore
     let builtin = group.builtin;
 
     if builtin {
-        let items = BUILTIN_SETTINGS
+        let mut items: Vec<QueryPollItemSpec> = BUILTIN_SETTINGS
             .iter()
             .enumerate()
             .map(|(i, def)| QueryPollItemSpec {
@@ -118,6 +121,7 @@ fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollFore
                 bit: def.bit,
             })
             .collect();
+        items.extend(wifi_status_poll_items());
         return PollForeground::DeviceConfig {
             group_index,
             builtin: true,
@@ -152,4 +156,45 @@ fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollFore
         slave_id,
         items,
     }
+}
+
+fn wifi_status_poll_items() -> Vec<QueryPollItemSpec> {
+    vec![
+        QueryPollItemSpec {
+            item_index: WIFI_POLL_LINK,
+            register_text: REG_LINK_STATUS.to_string(),
+            protocol_address: Some(REG_LINK_STATUS),
+            register_count: REG_LINK_STATUS_COUNT,
+            value_type: QueryValueType::Integer,
+            scale: 1,
+            bit: None,
+        },
+        QueryPollItemSpec {
+            item_index: WIFI_POLL_SSID_NOW,
+            register_text: REG_WIFI_SSID_NOW.to_string(),
+            protocol_address: Some(REG_WIFI_SSID_NOW),
+            register_count: REG_WIFI_SSID_NOW_COUNT,
+            value_type: QueryValueType::String,
+            scale: 1,
+            bit: None,
+        },
+        QueryPollItemSpec {
+            item_index: WIFI_POLL_DISCONNECT,
+            register_text: REG_WIFI_DISCONNECT.to_string(),
+            protocol_address: Some(REG_WIFI_DISCONNECT),
+            register_count: 1,
+            value_type: QueryValueType::Integer,
+            scale: 1,
+            bit: None,
+        },
+        QueryPollItemSpec {
+            item_index: WIFI_POLL_STA_IP,
+            register_text: REG_STA_IPV4.to_string(),
+            protocol_address: Some(REG_STA_IPV4),
+            register_count: REG_STA_IPV4_COUNT,
+            value_type: QueryValueType::Integer,
+            scale: 1,
+            bit: None,
+        },
+    ]
 }

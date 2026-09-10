@@ -15,6 +15,7 @@ import { ModbusTabItem } from "../components/modbus_tab_item.slint";
 import { ToolbarButton } from "../components/toolbar_button.slint";
 import { DeviceConfigRow } from "../components/device_config_row.slint";
 import { BuiltinConfigRow } from "../components/builtin_config_row.slint";
+import { WifiProvisionCard } from "../components/wifi_provision_card.slint";
 
 /// 设备配置：固定「常用」+ 可增删灵活分组。
 export component DeviceConfigPage inherits VerticalLayout {
@@ -34,6 +35,20 @@ export component DeviceConfigPage inherits VerticalLayout {
     in-out property <int> config-form-widget-index;
     in-out property <int> config-form-value-type-index;
     in-out property <string> config-form-register-count;
+
+    in-out property <string> wifi-ssid;
+    in-out property <string> wifi-password;
+    in property <bool> wifi-apply-busy;
+    in property <bool> wifi-scan-busy;
+    in property <bool> wifi-ok;
+    in property <bool> wifi-pending;
+    in property <bool> wifi-cloud-ok;
+    in property <bool> wifi-cloud-pending;
+    in property <string> wifi-status-label;
+    in property <string> wifi-cloud-status-label;
+    in property <string> wifi-current-ssid;
+    in property <string> wifi-hint;
+    in-out property <int> wifi-picker-kind;
 
     property <bool> editing-slave-id: false;
     property <bool> on-builtin: root.config-groups.length > 0
@@ -57,6 +72,8 @@ export component DeviceConfigPage inherits VerticalLayout {
     callback write-builtin-item(int);
     callback tab-strip-width-changed(length);
     callback edit-config-item(int);
+    callback wifi-apply();
+    callback wifi-scan();
 
     changed active-config-group => {
         root.editing-slave-id = false;
@@ -94,8 +111,8 @@ export component DeviceConfigPage inherits VerticalLayout {
             if root.on-builtin || !root.editing-slave-id: slave-view := TouchArea {
                 enabled: !root.on-builtin;
                 Rectangle {
-                    min-width: 36px;
-                    height: 22px;
+                    min-width: 72px;
+                    height: 26px;
                     border-radius: 4px;
                     background: Theme.bg-panel-alt;
                     border-width: 1px;
@@ -104,7 +121,7 @@ export component DeviceConfigPage inherits VerticalLayout {
                     Text {
                         text: root.active-group-slave-id == "" ? "0" : root.active-group-slave-id;
                         color: Theme.text-primary;
-                        font-size: 12px;
+                        font-size: 13px;
                         horizontal-alignment: center;
                         vertical-alignment: center;
                     }
@@ -117,7 +134,7 @@ export component DeviceConfigPage inherits VerticalLayout {
             }
 
             if !root.on-builtin && root.editing-slave-id: LineEdit {
-                width: 48px;
+                width: 80px;
                 text <=> root.active-group-slave-id;
                 accepted => {
                     root.commit-group-slave-id();
@@ -301,6 +318,28 @@ export component DeviceConfigPage inherits VerticalLayout {
             if root.on-builtin: VerticalLayout {
                 spacing: 8px;
 
+                WifiProvisionCard {
+                    wifi-ssid <=> root.wifi-ssid;
+                    wifi-password <=> root.wifi-password;
+                    device-connected: root.device-connected;
+                    apply-busy: root.wifi-apply-busy;
+                    scan-busy: root.wifi-scan-busy;
+                    wifi-ok: root.wifi-ok;
+                    wifi-pending: root.wifi-pending;
+                    cloud-ok: root.wifi-cloud-ok;
+                    cloud-pending: root.wifi-cloud-pending;
+                    wifi-status-label: root.wifi-status-label;
+                    cloud-status-label: root.wifi-cloud-status-label;
+                    current-ssid: root.wifi-current-ssid;
+                    hint: root.wifi-hint;
+                    apply-clicked => { root.wifi-apply(); }
+                    scan-clicked => {
+                        root.wifi-picker-kind = 1;
+                        root.wifi-scan();
+                    }
+                    history-clicked => { root.wifi-picker-kind = 2; }
+                }
+
                 for item[index] in root.builtin-config-items: BuiltinConfigRow {
                     name: item.name;
                     register: item.register;
@@ -311,6 +350,7 @@ export component DeviceConfigPage inherits VerticalLayout {
                                 enum-values: item.enum-values;
                                 enum-index: item.enum-index;
                                 result-display: item.result-display;
+                    result-hex: item.result-hex;
                     write-value: item.write-value;
                     status: item.status;
                     dirty: item.dirty;
@@ -342,6 +382,7 @@ export component DeviceConfigPage inherits VerticalLayout {
                     register-count: item.register-count;
                     widget-kind: item.widget-kind;
                     result-display: item.result-display;
+                    result-hex: item.result-hex;
                     result-font-size: item.result-font-size;
                     write-value: item.write-value;
                     status: item.status;

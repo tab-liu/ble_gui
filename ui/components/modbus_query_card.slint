@@ -7,6 +7,8 @@ export component ModbusQueryCard inherits Rectangle {
     in property <string> register;
     in property <string> result;
     in property <string> result-display;
+    in property <string> result-hex;
+    in property <bool> result-hex-below;
     in property <int> result-font-size;
     in property <color> accent: Theme.success;
     in property <int> source-index;
@@ -16,7 +18,7 @@ export component ModbusQueryCard inherits Rectangle {
     callback edit-clicked();
 
     width: 180px;
-    height: 110px;
+    height: 124px;
     border-radius: 10px;
     background: Theme.bg-card;
     border-width: root.selected ? 2px : 1px;
@@ -39,7 +41,7 @@ export component ModbusQueryCard inherits Rectangle {
                 }
 
                 Text {
-                    text: root.result;
+                    text: root.result-hex != "" ? (root.result + "  " + root.result-hex) : root.result;
                     wrap: word-wrap;
                 }
 
@@ -47,11 +49,6 @@ export component ModbusQueryCard inherits Rectangle {
                     text: "寄存器 " + root.register;
                     font-size: 11px;
                     wrap: word-wrap;
-                }
-
-                Text {
-                    text: "双击编辑";
-                    font-size: 11px;
                 }
             }
         }
@@ -93,12 +90,78 @@ export component ModbusQueryCard inherits Rectangle {
                         overflow: elide;
                     }
 
-                    Text {
-                        text: root.result-display;
-                        color: Theme.text-primary;
-                        font-size: root.result-font-size * 1px;
-                        font-weight: 700;
-                        overflow: elide;
+                    if root.result-hex == "" || root.result-hex-below: VerticalLayout {
+                        spacing: 3px;
+                        alignment: start;
+                        min-width: 0px;
+
+                        Text {
+                            text: root.result-display;
+                            color: Theme.text-primary;
+                            font-size: root.result-font-size * 1px;
+                            font-weight: 700;
+                            overflow: elide;
+                        }
+
+                        if root.result-hex != "": HorizontalLayout {
+                            alignment: start;
+                            vertical-stretch: 0;
+
+                            Rectangle {
+                                border-radius: 5px;
+                                background: Theme.bg-hex-chip;
+                                horizontal-stretch: 0;
+                                vertical-stretch: 0;
+                                HorizontalLayout {
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    padding-top: 1px;
+                                    padding-bottom: 1px;
+
+                                    Text {
+                                        text: root.result-hex;
+                                        color: Theme.text-hex;
+                                        font-size: 11px;
+                                        font-weight: 600;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.result-hex != "" && !root.result-hex-below: HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        cross-axis-alignment: center;
+                        min-width: 0px;
+
+                        Text {
+                            text: root.result-display;
+                            color: Theme.text-primary;
+                            font-size: root.result-font-size * 1px;
+                            font-weight: 700;
+                            overflow: elide;
+                        }
+
+                        Rectangle {
+                            border-radius: 5px;
+                            background: Theme.bg-hex-chip;
+                            horizontal-stretch: 0;
+                            vertical-stretch: 0;
+                            HorizontalLayout {
+                                padding-left: 6px;
+                                padding-right: 6px;
+                                padding-top: 1px;
+                                padding-bottom: 1px;
+
+                                Text {
+                                    text: root.result-hex;
+                                    color: Theme.text-hex;
+                                    font-size: 11px;
+                                    font-weight: 600;
+                                }
+                            }
+                        }
                     }
 
                     Text {

@@ -86,6 +86,8 @@ fn saved_item_to_query_item(item: SavedQueryItem) -> ModbusQueryItem {
         status: "等待查询".into(),
         result: result.clone(),
         result_display: display.clone().into(),
+        result_hex: SharedString::default(),
+        result_hex_below: false,
         result_font_size: result_font_size(display.chars().count()),
     }
 }

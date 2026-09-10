@@ -14,10 +14,15 @@ export component NewTabDialog inherits Rectangle {
     height: 100%;
     background: transparent;
 
-    if root.dialog-kind != 0: Rectangle {
+    if root.dialog-kind != 0: TouchArea {
         width: 100%;
         height: 100%;
-        background: Theme.overlay;
+
+        Rectangle {
+            width: 100%;
+            height: 100%;
+            background: Theme.overlay;
+        }
 
         if root.dialog-kind == 1: Rectangle {
             width: 420px;

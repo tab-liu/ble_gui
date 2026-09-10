@@ -102,6 +102,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 device_config::apply_config_poll_results(&ui, &ctx_poll);
                 query_gen_applied.set(poll_gen);
             }
+            device_config::tick_wifi_provision(&ui, &ctx_poll);
         }
     });
 
