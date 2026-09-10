@@ -497,7 +497,7 @@ fn advance_wifi_phase(ctx: &AppContext) {
                 wifi.phase_since = Some(Instant::now());
             } else if elapsed.is_some_and(|d| d >= CLOUD_CONNECT_TIMEOUT) {
                 wifi.phase = WifiProvisionPhase::Failed;
-                wifi.hint = "云端连接超时（WiFi 已连接）".into();
+                wifi.hint = "云端连接超时".into();
             }
         }
         WifiProvisionPhase::Failed => {
@@ -551,9 +551,39 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
                     "WiFi 已连接".into(),
                     "正在连接云端…".into(),
                     true,
-                    wifi.hint.clone(),
+                    String::new(),
                 ),
-                WifiProvisionPhase::Idle | WifiProvisionPhase::Success | WifiProvisionPhase::Failed => {
+                WifiProvisionPhase::Failed => {
+                    let wifi_failed = !wifi.wifi_sta && !wifi.hint.is_empty();
+                    let cloud_failed = wifi.wifi_sta && !wifi.mqtt;
+                    (
+                        wifi.wifi_sta,
+                        false,
+                        wifi.mqtt,
+                        false,
+                        if wifi_failed {
+                            wifi.hint.clone().into()
+                        } else if wifi.wifi_sta {
+                            "WiFi 已连接".into()
+                        } else {
+                            "WiFi 未连接".into()
+                        },
+                        if wifi.mqtt {
+                            "服务器已连接".into()
+                        } else if cloud_failed {
+                            if wifi.hint.is_empty() {
+                                "云端连接超时".into()
+                            } else {
+                                wifi.hint.clone().into()
+                            }
+                        } else {
+                            "服务器未连接".into()
+                        },
+                        false,
+                        String::new(),
+                    )
+                }
+                WifiProvisionPhase::Idle | WifiProvisionPhase::Success => {
                     let cloud_pending = wifi.wifi_sta && !wifi.mqtt;
                     (
                         wifi.wifi_sta,
@@ -573,7 +603,7 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
                             "服务器未连接".into()
                         },
                         false,
-                        wifi.hint.clone(),
+                        String::new(),
                     )
                 }
             }

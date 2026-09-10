@@ -59,31 +59,46 @@ export component WifiProvisionCard inherits Rectangle {
     border-width: 1px;
     border-color: Theme.border;
     vertical-stretch: 0;
+    height: content-layout.preferred-height;
 
-    VerticalLayout {
+    content-layout := VerticalLayout {
         padding-left: 10px;
         padding-right: 10px;
         padding-top: 8px;
         padding-bottom: 8px;
         spacing: 6px;
+        alignment: start;
 
         HorizontalLayout {
             spacing: 10px;
             cross-axis-alignment: center;
+            vertical-stretch: 0;
 
             Text {
                 text: "WiFi 配网";
                 color: Theme.text-primary;
                 font-size: 13px;
                 font-weight: 700;
+                vertical-alignment: center;
             }
 
-            Rectangle { horizontal-stretch: 1; }
+            if root.hint != "": Text {
+                text: root.hint;
+                color: Theme.warning;
+                font-size: 11px;
+                overflow: elide;
+                vertical-alignment: center;
+                vertical-stretch: 0;
+            }
+
+            Rectangle { horizontal-stretch: 1; vertical-stretch: 0; }
 
             WifiStatusChip {
                 dot-color: !root.device-connected ? Theme.text-dim
                     : (root.wifi-ok ? Theme.success
-                        : (root.wifi-pending ? Theme.warning : Theme.text-dim));
+                        : (root.wifi-pending ? Theme.warning
+                            : (root.device-connected && root.wifi-status-label != "WiFi 未连接"
+                                ? Theme.error : Theme.text-dim)));
                 label: root.wifi-status-label;
                 extra: root.current-ssid;
             }
@@ -91,21 +106,17 @@ export component WifiProvisionCard inherits Rectangle {
             WifiStatusChip {
                 dot-color: !root.device-connected ? Theme.text-dim
                     : (root.cloud-ok ? Theme.success
-                        : (root.cloud-pending ? Theme.warning : Theme.text-dim));
+                        : (root.cloud-pending ? Theme.warning
+                            : (root.cloud-status-label == "云端连接超时"
+                                ? Theme.error : Theme.text-dim)));
                 label: root.cloud-status-label;
             }
-        }
-
-        if root.hint != "": Text {
-            text: root.hint;
-            color: Theme.warning;
-            font-size: 11px;
-            overflow: elide;
         }
 
         HorizontalLayout {
             spacing: 6px;
             cross-axis-alignment: center;
+            vertical-stretch: 0;
 
             LineEdit {
                 horizontal-stretch: 1;
