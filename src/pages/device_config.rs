@@ -426,13 +426,12 @@ pub fn refresh_builtin_availability(ui: &MainWindow, ctx: &AppContext) {
     refresh_wifi_status(ui, ctx);
 }
 
-/// 配网超时与状态文案（50ms 定时器调用，不依赖新的轮询结果）。
+/// 配网超时在后台计时，不占用页面；文案只在配置页刷新。
 pub fn tick_wifi_provision(ui: &MainWindow, ctx: &AppContext) {
-    if ui.get_current_page() != PAGE_DEVICE_CONFIG {
-        return;
-    }
     advance_wifi_phase(ctx);
-    refresh_wifi_status(ui, ctx);
+    if ui.get_current_page() == PAGE_DEVICE_CONFIG {
+        refresh_wifi_status(ui, ctx);
+    }
 }
 
 fn apply_wifi_poll_item(ctx: &AppContext, r: &QueryItemPollResult) {
@@ -519,7 +518,7 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
     let st = ctx.state.borrow();
     let wifi = &st.device_config.wifi;
     let phase = wifi.phase;
-    let (wifi_ok, wifi_pending, cloud_ok, cloud_pending, wifi_label, cloud_label, apply_busy, hint) =
+    let (wifi_ok, wifi_pending, cloud_ok, cloud_pending, wifi_label, cloud_label, hint) =
         if !connected {
             (
                 false,
@@ -528,31 +527,10 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
                 false,
                 "WiFi 未连接".into(),
                 "服务器未连接".into(),
-                false,
                 String::new(),
             )
         } else {
             match phase {
-                WifiProvisionPhase::ConnectingWifi => (
-                    false,
-                    true,
-                    false,
-                    false,
-                    "正在连接 WiFi…".into(),
-                    "服务器未连接".into(),
-                    true,
-                    wifi.hint.clone(),
-                ),
-                WifiProvisionPhase::ConnectingCloud => (
-                    true,
-                    false,
-                    false,
-                    true,
-                    "WiFi 已连接".into(),
-                    "正在连接云端…".into(),
-                    true,
-                    String::new(),
-                ),
                 WifiProvisionPhase::Failed => {
                     let wifi_failed = !wifi.wifi_sta && !wifi.hint.is_empty();
                     let cloud_failed = wifi.wifi_sta && !wifi.mqtt;
@@ -579,30 +557,36 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
                         } else {
                             "服务器未连接".into()
                         },
-                        false,
                         String::new(),
                     )
                 }
-                WifiProvisionPhase::Idle | WifiProvisionPhase::Success => {
-                    let cloud_pending = wifi.wifi_sta && !wifi.mqtt;
+                WifiProvisionPhase::ConnectingWifi
+                | WifiProvisionPhase::ConnectingCloud
+                | WifiProvisionPhase::Idle
+                | WifiProvisionPhase::Success => {
+                    let wifi_ok = wifi.wifi_sta;
+                    let cloud_ok = wifi.mqtt;
+                    let wifi_pending = matches!(phase, WifiProvisionPhase::ConnectingWifi) && !wifi_ok;
+                    let cloud_pending = wifi_ok && !cloud_ok;
                     (
-                        wifi.wifi_sta,
-                        false,
-                        wifi.mqtt,
+                        wifi_ok,
+                        wifi_pending,
+                        cloud_ok,
                         cloud_pending,
-                        if wifi.wifi_sta {
+                        if wifi_pending {
+                            "正在连接 WiFi…".into()
+                        } else if wifi_ok {
                             "WiFi 已连接".into()
                         } else {
                             "WiFi 未连接".into()
                         },
-                        if wifi.mqtt {
+                        if cloud_ok {
                             "服务器已连接".into()
                         } else if cloud_pending {
                             "正在连接云端…".into()
                         } else {
                             "服务器未连接".into()
                         },
-                        false,
                         String::new(),
                     )
                 }
@@ -632,7 +616,7 @@ fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
     ui.set_wifi_status_label(wifi_label);
     ui.set_wifi_cloud_status_label(cloud_label);
     ui.set_wifi_current_ssid(current_ssid.into());
-    ui.set_wifi_apply_busy(apply_busy);
+    ui.set_wifi_apply_busy(false);
     if ui.get_wifi_scan_busy() {
         return;
     }

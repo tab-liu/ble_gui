@@ -76,11 +76,32 @@ struct ActiveSession {
     write_task: tokio::task::JoinHandle<()>,
     peripheral: Peripheral,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
+    in_flight_writes: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
     /// 必须持有，丢掉后 Windows 可能把连接间隔改回省电档。
     _win_throughput: Option<super::win_conn::WinThroughputHold>,
 }
 
+fn abort_in_flight_writes(jobs: &Arc<Mutex<Vec<tokio::task::AbortHandle>>>) {
+    if let Ok(mut g) = jobs.lock() {
+        for h in g.drain(..) {
+            h.abort();
+        }
+    }
+}
+
+fn spawn_tracked(
+    jobs: &Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
+    fut: impl std::future::Future<Output = ()> + Send + 'static,
+) {
+    let handle = tokio::spawn(fut);
+    if let Ok(mut g) = jobs.lock() {
+        g.retain(|h| !h.is_finished());
+        g.push(handle.abort_handle());
+    }
+}
+
 fn abort_session(active: &ActiveSession) {
+    abort_in_flight_writes(&active.in_flight_writes);
     active.poll_task.abort();
     active.notify_task.abort();
     active.write_task.abort();
@@ -335,6 +356,41 @@ fn notify_ui_force(
     schedule_ui_refresh(ui_refresh, force);
 }
 
+async fn disconnect_peripheral(peripheral: &Peripheral) {
+    match tokio::time::timeout(GATT_DISCONNECT_TIMEOUT, peripheral.disconnect()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            warn!(target: "ble_gui::worker", "GATT 断开失败: {err}");
+        }
+        Err(_) => {
+            warn!(
+                target: "ble_gui::worker",
+                "GATT 断开超时（{}s），继续清理会话",
+                GATT_DISCONNECT_TIMEOUT.as_secs()
+            );
+        }
+    }
+}
+
+fn apply_scanning_state(
+    state: &SharedBleState,
+    known: &KnownMap,
+    detail: impl Into<String>,
+) {
+    {
+        let mut inner = state.lock().expect("ble state lock");
+        inner.phase = LinkPhase::Scanning;
+        inner.device_name.clear();
+        inner.device_address.clear();
+        inner.rssi = 0;
+        inner.encryption_ready = false;
+        inner.scan_devices.clear();
+        inner.scan_list_generation += 1;
+        inner.status_detail = detail.into();
+    }
+    known.lock().expect("known lock").clear();
+}
+
 /// 扫描列表 UI 刷新间隔；连接/阶段变化等仍可通过 force 立即刷新。
 const UI_REFRESH_INTERVAL_MS: u64 = 1000;
 /// 轮询 btleplug 已缓存外设的间隔（补充事件流未送达的广播）。
@@ -346,6 +402,8 @@ const CONNECT_SETTLE_MS: u64 = 400;
 const CONNECT_RETRY_ATTEMPTS: u32 = 4;
 const CONNECT_RETRY_BASE_MS: u64 = 400;
 const LINK_WATCH_MS: u64 = 500;
+/// Windows GATT 断开可能挂起；超时后继续清理，避免「断开」按钮无响应。
+const GATT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 const MSG_DEVICE_NOT_NEARBY: &str =
     "附近未发现该设备（可能已关机、距离过远，或已被其它设备连接后停止广播）";
@@ -488,20 +546,14 @@ async fn restart_scan(
     if let Some(task) = scan_task.take() {
         task.abort();
     }
-    let _ = adapter.stop_scan().await;
-    {
-        let mut inner = state.lock().expect("ble state lock");
-        inner.phase = LinkPhase::Scanning;
-        inner.device_name.clear();
-        inner.device_address.clear();
-        inner.rssi = 0;
-        inner.encryption_ready = false;
-        inner.scan_devices.clear();
-        inner.scan_list_generation += 1;
-        inner.status_detail = detail.into();
-    }
-    known.lock().expect("known lock").clear();
+    apply_scanning_state(state, known, detail);
     notify_ui_force(ui_refresh, true);
+    if tokio::time::timeout(GATT_DISCONNECT_TIMEOUT, adapter.stop_scan())
+        .await
+        .is_err()
+    {
+        warn!(target: "ble_gui::worker", "停止扫描超时，继续重新扫描");
+    }
     *scan_task = Some(spawn_scan_loop(
         adapter.clone(),
         state.clone(),
@@ -567,7 +619,7 @@ pub async fn worker_main(
             info!(target: "ble_gui::worker", "会话已结束，刷新连接状态");
             if let Some(active) = session.take() {
                 abort_session(&active);
-                let _ = active.peripheral.disconnect().await;
+                disconnect_peripheral(&active.peripheral).await;
             }
             stop_polling(&poll_policy);
             clear_live_on_disconnect(&modbus_live);
@@ -597,9 +649,9 @@ pub async fn worker_main(
                 }
                 if let Some(active) = session.take() {
                     abort_session(&active);
-                    let _ = active.peripheral.disconnect().await;
                     stop_polling(&poll_policy);
                     clear_live_on_disconnect(&modbus_live);
+                    disconnect_peripheral(&active.peripheral).await;
                 }
                 restart_scan(
                     &adapter,
@@ -653,9 +705,9 @@ pub async fn worker_main(
 
                 let had_session = if let Some(active) = session.take() {
                     abort_session(&active);
-                    let _ = active.peripheral.disconnect().await;
                     stop_polling(&poll_policy);
                     clear_live_on_disconnect(&modbus_live);
+                    disconnect_peripheral(&active.peripheral).await;
                     true
                 } else {
                     false
@@ -879,12 +931,17 @@ pub async fn worker_main(
                 if let Ok(mut p) = poll_policy.lock() {
                     p.ota_busy = false;
                 }
-                if let Some(active) = session.take() {
+                let peripheral = session.take().map(|active| {
                     abort_session(&active);
-                    let _ = active.peripheral.disconnect().await;
-                }
+                    active.peripheral
+                });
                 stop_polling(&poll_policy);
                 clear_live_on_disconnect(&modbus_live);
+                apply_scanning_state(&state, &known, "已断开，正在重新扫描……");
+                notify_ui_force(&ui_refresh, true);
+                if let Some(peripheral) = peripheral.as_ref() {
+                    disconnect_peripheral(peripheral).await;
+                }
                 restart_scan(
                     &adapter,
                     &state,
@@ -1312,7 +1369,7 @@ async fn connect_device(
     .await?;
 
     if connect_cancelled(cancel_connect) {
-        let _ = peripheral.disconnect().await;
+        disconnect_peripheral(&peripheral).await;
         return Err("已取消连接".into());
     }
 
@@ -1322,7 +1379,7 @@ async fn connect_device(
     discover_services_with_retry(&peripheral, 10).await?;
 
     if connect_cancelled(cancel_connect) {
-        let _ = peripheral.disconnect().await;
+        disconnect_peripheral(&peripheral).await;
         return Err("已取消连接".into());
     }
 
@@ -1535,6 +1592,9 @@ async fn connect_device(
         }
     });
     let write_abort_notify = write_task.abort_handle();
+    let in_flight_writes: Arc<Mutex<Vec<tokio::task::AbortHandle>>> =
+        Arc::new(Mutex::new(Vec::new()));
+    let in_flight_for_notify = in_flight_writes.clone();
     let ota_live_notify = ota_live.clone();
     let expect_drop_notify = expect_drop.clone();
     let peripheral_watch = peripheral.clone();
@@ -1635,7 +1695,7 @@ async fn connect_device(
                             let query_gen = query_gen_write.clone();
                             let policy_poll = poll_policy_notify.clone();
                             let gate_poll = gate_for_write.clone();
-                            tokio::spawn(async move {
+                            spawn_tracked(&in_flight_for_notify, async move {
                                 let result = write_control_register(
                                     &protocol,
                                     &write_tx,
@@ -1690,7 +1750,7 @@ async fn connect_device(
                             let query_gen = query_gen_write.clone();
                             let policy_poll = poll_policy_notify.clone();
                             let gate_poll = gate_for_write.clone();
-                            tokio::spawn(async move {
+                            spawn_tracked(&in_flight_for_notify, async move {
                                 let result = write_holding_registers(
                                     &protocol,
                                     &write_tx,
@@ -1738,7 +1798,7 @@ async fn connect_device(
                             let ui = ui_refresh_for_notify.clone();
                             let policy = poll_policy_ota.clone();
                             let expect_drop = expect_drop_notify.clone();
-                            tokio::spawn(async move {
+                            spawn_tracked(&in_flight_for_notify, async move {
                                 run_ble_ota(
                                     &protocol, &write_tx, &gate, &live, &ota, &ui, job,
                                 )
@@ -1851,6 +1911,7 @@ async fn connect_device(
         write_task,
         peripheral: peripheral_for_session,
         cmd_tx: session_cmd_tx,
+        in_flight_writes,
         _win_throughput: win_throughput,
     })
 }
