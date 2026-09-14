@@ -43,12 +43,10 @@ export component DeviceInfoCard inherits Rectangle {
     in property <string> sta-ip;
     callback copy-text(string);
 
-    property <bool> show-wifi-password: false;
     property <string> device-ident: CopyFmt.type-sn(root.device-type, root.device-sn);
     property <string> iot-ident: CopyFmt.type-sn(root.iot-type, root.iot-sn);
     property <string> password-display: !root.identity-ready ? "—"
-        : (root.wifi-password == "" ? "（空）"
-            : (root.show-wifi-password ? root.wifi-password : "••••••••"));
+        : (root.wifi-password == "" ? "（空）" : root.wifi-password);
 
     border-radius: 12px;
     background: Theme.bg-panel;
@@ -82,7 +80,7 @@ export component DeviceInfoCard inherits Rectangle {
             alignment: stretch;
 
             VerticalLayout {
-                spacing: 6px;
+                spacing: 4px;
                 alignment: start;
                 horizontal-stretch: 1;
                 min-width: 0px;
@@ -94,7 +92,7 @@ export component DeviceInfoCard inherits Rectangle {
                     font-weight: 700;
                 }
                 GridLayout {
-                    spacing: 6px;
+                    spacing: 2px;
                     Row {
                         FieldLabel { caption: "整机"; }
                         CopyableValue {
@@ -148,7 +146,7 @@ export component DeviceInfoCard inherits Rectangle {
             }
 
             VerticalLayout {
-                spacing: 6px;
+                spacing: 4px;
                 alignment: start;
                 horizontal-stretch: 1;
                 min-width: 0px;
@@ -171,7 +169,7 @@ export component DeviceInfoCard inherits Rectangle {
                     }
                 }
                 GridLayout {
-                    spacing: 6px;
+                    spacing: 2px;
                     Row {
                         FieldLabel { caption: "当前 WiFi"; }
                         CopyableValue {
@@ -181,44 +179,10 @@ export component DeviceInfoCard inherits Rectangle {
                     }
                     Row {
                         FieldLabel { caption: "密码"; }
-                        HorizontalLayout {
-                            spacing: 6px;
-                            min-width: 0px;
-                            TextInput {
-                                text: root.password-display;
-                                read-only: true;
-                                single-line: true;
-                                color: Theme.text-primary;
-                                font-size: 12px;
-                                horizontal-alignment: left;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                                min-width: 0px;
-                            }
-                            if root.identity-ready && root.wifi-password != "": TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.show-wifi-password = !root.show-wifi-password;
-                                }
-                                Text {
-                                    text: root.show-wifi-password ? "隐藏" : "显示";
-                                    color: Theme.accent;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                            if root.identity-ready && root.wifi-password != "": TouchArea {
-                                mouse-cursor: pointer;
-                                clicked => {
-                                    root.copy-text(root.wifi-password);
-                                }
-                                Text {
-                                    text: "复制";
-                                    color: Theme.accent;
-                                    font-size: 11px;
-                                    vertical-alignment: center;
-                                }
-                            }
+                        CopyableValue {
+                            value: root.password-display;
+                            copy-payload: root.wifi-password;
+                            copy-text(t) => { root.copy-text(t); }
                         }
                     }
                     Row {
