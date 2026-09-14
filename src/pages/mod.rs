@@ -12,10 +12,11 @@ pub mod modbus_query;
 pub mod settings;
 
 use crate::state::AppContext;
-use crate::ui::MainWindow;
+use crate::ui::{clipboard, MainWindow};
 
 /// 为所有页面注册 Slint 回调（启动时调用一次）。
 pub fn wire_all(ui: &MainWindow, ctx: &AppContext) {
+    ui.on_copy_text(|text| clipboard::copy_text(text.as_str()));
     dashboard::wire(ui, ctx);
     modbus_query::wire(ui, ctx);
     device_config::wire(ui, ctx);

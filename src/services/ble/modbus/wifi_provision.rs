@@ -28,6 +28,10 @@ pub const REG_WIFI_DISCONNECT: u16 = 11040;
 /// `sta_ipv4` 4 字节。
 pub const REG_STA_IPV4: u16 = 11020;
 pub const REG_STA_IPV4_COUNT: u16 = 2;
+/// `sta_rssi`（11026）；与 11018 起连续读时在块内偏移 8。
+pub const REG_STA_RSSI: u16 = 11026;
+/// `link_status`～`sta_rssi`：11018～11026，共 9 个寄存器。
+pub const REG_LINK_STATUS_BLOCK_COUNT: u16 = 9;
 
 pub const WIFI_AUTH_OPEN: u16 = 0;
 pub const WIFI_AUTH_WPA_WPA2_PSK: u16 = 4;
@@ -75,6 +79,48 @@ pub fn parse_link_status(result: &str) -> (bool, bool) {
 
 pub fn parse_disconnect_reason(result: &str) -> u16 {
     result.trim().parse().unwrap_or(0)
+}
+
+/// 从 `link_status` 两个寄存器解析 `(wifi_sta, mqtt)`。
+pub fn parse_link_status_regs(values: &[u16]) -> (bool, bool) {
+    if values.len() < 2 {
+        return (false, false);
+    }
+    let raw = u64::from(values[0]) | (u64::from(values[1]) << 16);
+    parse_link_status(&raw.to_string())
+}
+
+/// 从 `sta_ipv4` 两个寄存器解析点分 IPv4。
+pub fn parse_sta_ipv4_regs(values: &[u16]) -> String {
+    if values.len() < 2 {
+        return String::new();
+    }
+    let raw = u64::from(values[0]) | (u64::from(values[1]) << 16);
+    parse_sta_ipv4(&raw.to_string())
+}
+
+/// STA RSSI：整寄存器有符号，或低字节 int8（ESP dBm）。
+pub fn parse_sta_rssi(raw: u16) -> i16 {
+    if raw > 255 {
+        raw as i16
+    } else {
+        raw as i8 as i16
+    }
+}
+
+/// 实验室用信号档位（dBm）。
+pub fn rssi_quality_text(rssi: i16) -> &'static str {
+    if rssi >= -50 {
+        "很强"
+    } else if rssi >= -60 {
+        "强"
+    } else if rssi >= -70 {
+        "中"
+    } else if rssi >= -80 {
+        "弱"
+    } else {
+        "很弱"
+    }
 }
 
 /// 从整数读回解析 STA IPv4（寄存器内低字节在前）。
@@ -134,5 +180,20 @@ mod tests {
         assert_eq!(parse_sta_ipv4("167880896"), "192.168.1.10");
         assert_eq!(parse_sta_ipv4("0"), "");
         assert_eq!(parse_sta_ipv4("失败"), "");
+        assert_eq!(parse_sta_ipv4_regs(&[0xA8C0, 0x0A01]), "192.168.1.10");
+    }
+
+    #[test]
+    fn rssi_signed_byte_or_word() {
+        assert_eq!(parse_sta_rssi(0x00CE), -50);
+        assert_eq!(parse_sta_rssi((-52i16) as u16), -52);
+        assert_eq!(rssi_quality_text(-45), "很强");
+        assert_eq!(rssi_quality_text(-65), "中");
+    }
+
+    #[test]
+    fn link_status_from_regs() {
+        assert_eq!(parse_link_status_regs(&[65, 0]), (true, true));
+        assert_eq!(parse_link_status_regs(&[1, 0]), (true, false));
     }
 }

@@ -21,7 +21,8 @@ mod wifi_provision;
 pub use device_config_builtin::{
     bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, enum_index_for_value,
     is_parallel_ha1_device, BuiltinSettingDef, BuiltinWidget, RegisterFieldPatch, BUILTIN_SETTINGS,
-    DEFAULT_SLAVE_ID as BUILTIN_CONFIG_SLAVE_ID,
+    DEFAULT_SLAVE_ID as BUILTIN_CONFIG_SLAVE_ID, IOT_CLOUD_DNS_REGISTER,
+    IOT_CLOUD_DNS_REGISTER_COUNT,
 };
 
 pub use dashboard::{
@@ -29,8 +30,10 @@ pub use dashboard::{
     POLL_INTERVAL_MS, REG_AC_OUTPUT, REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DC_OUTPUT,
 };
 pub use device_info::{
-    format_regs_hex, parse_device_info, parse_iot_software_ver, parse_iot_type,
-    REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START, REG_IOT_INFO_COUNT, REG_IOT_INFO_START,
+    format_regs_hex, parse_ascii_regs, parse_device_info, parse_iot_identity, parse_iot_software_ver,
+    parse_iot_type, parse_whole_device, REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START,
+    REG_IOT_IDENTITY_COUNT, REG_IOT_INFO_COUNT, REG_IOT_INFO_START, REG_WHOLE_DEVICE_COUNT,
+    REG_WHOLE_DEVICE_START,
 };
 pub use query::{
     encode_write_value, format_query_value, integer_debug_hex, parse_register_address,
@@ -38,12 +41,13 @@ pub use query::{
 };
 pub use wifi_provision::{
     disconnect_reason_text, is_wifi_poll_index, parse_disconnect_reason, parse_link_status,
-    parse_sta_ipv4, sta_enable_word, wifi_auth_for_password, REG_LINK_STATUS,
-    REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_WIFI_DISCONNECT, REG_WIFI_ON_OFF,
-    REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_AUTH, REG_WIFI_STA_ENABLE,
-    REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID, REG_WIFI_STA_SSID_COUNT,
-    WIFI_PASSWORD_MAX_BYTES, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK, WIFI_POLL_SSID_NOW,
-    WIFI_POLL_STA_IP, WIFI_SSID_MAX_BYTES,
+    parse_link_status_regs, parse_sta_ipv4, parse_sta_ipv4_regs, parse_sta_rssi, rssi_quality_text,
+    sta_enable_word, wifi_auth_for_password, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT,
+    REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_STA_RSSI, REG_WIFI_DISCONNECT,
+    REG_WIFI_ON_OFF, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_AUTH,
+    REG_WIFI_STA_ENABLE, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID,
+    REG_WIFI_STA_SSID_COUNT, WIFI_PASSWORD_MAX_BYTES, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK,
+    WIFI_POLL_SSID_NOW, WIFI_POLL_STA_IP, WIFI_SSID_MAX_BYTES,
 };
 pub use rtu::{
     build_read_holding, build_write_single, parse_read_holding, plain_modbus_frame_length,

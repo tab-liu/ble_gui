@@ -1,5 +1,6 @@
 import { VerticalBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { CopyableInfoRow, CopyFmt } from "../components/copyable_info_row.slint";
 
 component FwActionButton inherits Rectangle {
     in property <string> text;
@@ -33,31 +34,6 @@ component FwActionButton inherits Rectangle {
             horizontal-alignment: center;
             vertical-alignment: center;
         }
-    }
-}
-
-component FwInfoRow inherits HorizontalLayout {
-    in property <string> label;
-    in property <string> value;
-    in property <color> value-color: Theme.text-primary;
-
-    spacing: 8px;
-    min-height: 26px;
-
-    Text {
-        text: root.label;
-        color: Theme.text-muted;
-        font-size: 12px;
-        width: 72px;
-        vertical-alignment: top;
-    }
-    Text {
-        text: root.value;
-        color: root.value-color;
-        font-size: 12px;
-        vertical-alignment: top;
-        wrap: word-wrap;
-        horizontal-stretch: 1;
     }
 }
 
@@ -97,6 +73,7 @@ export component FirmwarePage inherits VerticalBox {
     callback start-upgrade();
     callback stop-upgrade();
     callback ota-version-edited(string);
+    callback copy-text(string);
 
     property <color> result-color: root.firmware-phase == 3 ? Theme.success
         : (root.firmware-phase == 4 ? Theme.error
@@ -150,18 +127,18 @@ export component FirmwarePage inherits VerticalBox {
                 }
                 HorizontalLayout {
                     spacing: 16px;
-                    FwInfoRow {
+                    CopyableInfoRow {
                         label: "机型";
-                        value: root.device-connected ? root.firmware-device-type : "未连接";
-                    }
-                    FwInfoRow {
-                        label: "SN";
-                        value: root.device-connected ? root.firmware-device-sn : "—";
+                        value: root.device-connected
+                            ? CopyFmt.type-sn(root.firmware-device-type, root.firmware-device-sn)
+                            : "未连接";
+                        copy-text(t) => { root.copy-text(t); }
                     }
                 }
-                FwInfoRow {
+                CopyableInfoRow {
                     label: "软件版本";
                     value: root.device-connected ? root.firmware-current-version : "—";
+                    copy-text(t) => { root.copy-text(t); }
                 }
             }
         }
@@ -283,10 +260,10 @@ export component FirmwarePage inherits VerticalBox {
                         height: 20px;
                     }
 
-                    FwInfoRow { label: "类型"; value: root.firmware-type-text; }
-                    FwInfoRow { label: "文件版本"; value: root.firmware-image-version; }
-                    FwInfoRow { label: "项目代号"; value: root.firmware-dev-model; }
-                    FwInfoRow { label: "MD5"; value: root.firmware-md5; }
+                    CopyableInfoRow { label: "类型"; value: root.firmware-type-text; copy-text(t) => { root.copy-text(t); } }
+                    CopyableInfoRow { label: "文件版本"; value: root.firmware-image-version; copy-text(t) => { root.copy-text(t); } }
+                    CopyableInfoRow { label: "项目代号"; value: root.firmware-dev-model; copy-text(t) => { root.copy-text(t); } }
+                    CopyableInfoRow { label: "MD5"; value: root.firmware-md5; copy-text(t) => { root.copy-text(t); } }
                 }
             }
         }
@@ -391,15 +368,17 @@ export component FirmwarePage inherits VerticalBox {
 
                 if root.firmware-phase == 3 || root.firmware-phase == 4: HorizontalLayout {
                     spacing: 24px;
-                    FwInfoRow {
+                    CopyableInfoRow {
                         label: "结果";
                         value: root.firmware-result-text;
                         value-color: root.result-color;
+                        copy-text(t) => { root.copy-text(t); }
                     }
-                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": FwInfoRow {
+                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": CopyableInfoRow {
                         label: "失败原因";
                         value: root.firmware-fail-reason;
                         value-color: Theme.error;
+                        copy-text(t) => { root.copy-text(t); }
                     }
                 }
             }

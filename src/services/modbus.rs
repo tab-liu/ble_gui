@@ -58,6 +58,22 @@ pub struct ModbusLive {
     pub iot_software_version: Option<u32>,
     /// 1100 段软件类型与版本（含 IOT 合并后的 11000 料号）。
     pub device_software: Vec<(u16, u32)>,
+    /// 连接后读一次的身份属性（不进功率轮询）。
+    pub identity_loaded: bool,
+    pub iot_type: String,
+    pub iot_sn: String,
+    pub safe_code: String,
+    pub cloud_url: String,
+    pub wifi_mac: String,
+    pub ble_mac: String,
+    pub wifi_password: String,
+    /// 主页状态轮询：链路 / 当前 SSID / IP / RSSI。
+    pub link_status_valid: bool,
+    pub wifi_sta: bool,
+    pub mqtt_ok: bool,
+    pub ssid_now: String,
+    pub sta_ip: String,
+    pub sta_rssi: i16,
 }
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
@@ -157,6 +173,20 @@ impl ModbusService {
             live.device_versions_text.clear();
             live.iot_software_version = None;
             live.device_software.clear();
+            live.identity_loaded = false;
+            live.iot_type.clear();
+            live.iot_sn.clear();
+            live.safe_code.clear();
+            live.cloud_url.clear();
+            live.wifi_mac.clear();
+            live.ble_mac.clear();
+            live.wifi_password.clear();
+            live.link_status_valid = false;
+            live.wifi_sta = false;
+            live.mqtt_ok = false;
+            live.ssid_now.clear();
+            live.sta_ip.clear();
+            live.sta_rssi = 0;
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();
@@ -194,6 +224,13 @@ impl ModbusService {
     pub fn set_output_busy(&self, busy: bool) {
         if let Ok(mut live) = self.inner.borrow().live.lock() {
             live.output_busy = busy;
+        }
+    }
+
+    /// 配网下发成功后立刻把密码写进主页快照，不必等下次重连。
+    pub fn remember_wifi_credentials(&self, password: &str) {
+        if let Ok(mut live) = self.inner.borrow().live.lock() {
+            live.wifi_password = password.to_string();
         }
     }
 }

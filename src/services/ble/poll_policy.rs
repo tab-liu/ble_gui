@@ -21,7 +21,7 @@ pub const UI_PAGE_DASHBOARD: i32 = 0;
 pub enum PollForeground {
     /// 非 Modbus 相关页（设置、固件等）或未连接。
     None,
-    /// 主页仪表板（100～149、2011～2012）。
+    /// 主页仪表板（功率 + 链路状态）。
     Dashboard,
     /// Modbus 查询页：仅当前激活标签内的查询项。
     ModbusQuery {
@@ -126,7 +126,7 @@ pub fn effective_foreground(policy: &SharedPollPolicy) -> PollForeground {
 pub fn describe_poll_foreground(f: &PollForeground) -> String {
     match f {
         PollForeground::None => "无（停止轮询）".into(),
-        PollForeground::Dashboard => "主页 · 100～149 + 2011～2012".into(),
+        PollForeground::Dashboard => "主页 · 功率 + 链路状态".into(),
         PollForeground::ModbusQuery {
             tab_index,
             slave_id,

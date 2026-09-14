@@ -9,6 +9,7 @@ use std::sync::Mutex;
 
 use log::warn;
 
+use crate::services::ble::modbus::rssi_quality_text;
 use crate::services::ble::{BleScanEntry, BleSnapshot, ScanLinkHint};
 use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
@@ -339,7 +340,7 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     } else {
         ctx.modbus.on_disconnected();
     }
-    if connected && page == PAGE_DASHBOARD {
+    if page == PAGE_DASHBOARD {
         refresh_modbus_dashboard(ui, &ctx.modbus);
     }
     if page == PAGE_DEVICE_CONFIG {
@@ -381,11 +382,101 @@ pub fn refresh_modbus_dashboard_from_live(
     ui: &MainWindow,
     live: &crate::services::modbus::SharedModbusLive,
 ) {
-    let (dash, busy, _) = live
-        .lock()
-        .map(|l| (l.dashboard.clone(), l.output_busy, l.modbus_online))
+    let snap = live.lock().ok();
+    let (dash, busy) = snap
+        .as_ref()
+        .map(|l| (l.dashboard.clone(), l.output_busy))
         .unwrap_or_default();
     refresh_dashboard(ui, &dash, busy);
+
+    let empty = || "—".to_string();
+    let or_dash = |s: &str| {
+        if s.trim().is_empty() {
+            empty()
+        } else {
+            s.to_string()
+        }
+    };
+
+    let (
+        identity_ready,
+        device_type,
+        device_sn,
+        iot_type,
+        iot_sn,
+        safe_code,
+        cloud_url,
+        wifi_mac,
+        ble_mac,
+        wifi_ok,
+        cloud_ok,
+        ssid_now,
+        wifi_password,
+        rssi_text,
+        sta_ip,
+    ) = snap
+        .as_ref()
+        .map(|l| {
+            let rssi_text = if l.wifi_sta && l.sta_rssi != 0 {
+                format!("{} dBm（{}）", l.sta_rssi, rssi_quality_text(l.sta_rssi))
+            } else {
+                empty()
+            };
+            (
+                l.identity_loaded || l.device_info_loaded,
+                or_dash(&l.device_type),
+                or_dash(&l.device_sn),
+                or_dash(&l.iot_type),
+                or_dash(&l.iot_sn),
+                or_dash(&l.safe_code),
+                or_dash(&l.cloud_url),
+                or_dash(&l.wifi_mac),
+                or_dash(&l.ble_mac),
+                l.wifi_sta,
+                l.mqtt_ok,
+                or_dash(&l.ssid_now),
+                l.wifi_password.clone(),
+                rssi_text,
+                or_dash(&l.sta_ip),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                false,
+                empty(),
+                empty(),
+                empty(),
+                empty(),
+                empty(),
+                empty(),
+                empty(),
+                empty(),
+                false,
+                false,
+                empty(),
+                String::new(),
+                empty(),
+                empty(),
+            )
+        });
+
+    ui.set_dashboard_identity_ready(identity_ready);
+    ui.set_dashboard_device_type(device_type.into());
+    ui.set_dashboard_device_sn(device_sn.into());
+    ui.set_dashboard_iot_type(iot_type.into());
+    ui.set_dashboard_iot_sn(iot_sn.into());
+    ui.set_dashboard_safe_code(safe_code.into());
+    ui.set_dashboard_cloud_url(cloud_url.into());
+    ui.set_dashboard_wifi_mac(wifi_mac.into());
+    ui.set_dashboard_ble_mac(ble_mac.into());
+    ui.set_dashboard_wifi_ok(wifi_ok);
+    ui.set_dashboard_cloud_ok(cloud_ok);
+    ui.set_dashboard_wifi_status_label(if wifi_ok { "WiFi 已连接" } else { "WiFi 未连接" }.into());
+    ui.set_dashboard_cloud_status_label(if cloud_ok { "云端已登录" } else { "云端未登录" }.into());
+    ui.set_dashboard_ssid_now(ssid_now.into());
+    ui.set_dashboard_wifi_password(wifi_password.into());
+    ui.set_dashboard_wifi_rssi_text(rssi_text.into());
+    ui.set_dashboard_sta_ip(sta_ip.into());
 }
 
 fn synced_favorite_snapshot(

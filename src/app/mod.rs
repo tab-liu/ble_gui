@@ -72,6 +72,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     refresh_all(&ui, &ctx);
 
     pages::wire_all(&ui, &ctx);
+    // 启动即扫描，省掉主页再点一次「扫描设备」。
+    ctx.ble.start_scan();
 
     let ui_weak = ui.as_weak();
     let ctx_poll = ctx.clone();

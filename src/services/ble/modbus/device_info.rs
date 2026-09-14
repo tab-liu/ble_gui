@@ -12,7 +12,16 @@ pub const REG_DEVICE_INFO_COUNT: u16 = 31;
 /// 11000～11015：IOT 类型 / SN / software_ver（11014～11015）。
 pub const REG_IOT_INFO_START: u16 = 11000;
 pub const REG_IOT_INFO_COUNT: u16 = 16;
+/// 11000～11033：安全码、STA/BLE MAC（连接后读一次，不进周期轮询）。
+pub const REG_IOT_IDENTITY_COUNT: u16 = 34;
+/// 整机类型 + SN（110～115 ASCII，116～119 uint64）。
+pub const REG_WHOLE_DEVICE_START: u16 = 110;
+pub const REG_WHOLE_DEVICE_COUNT: u16 = 10;
 const IOT_VER_OFF: usize = 14;
+const IOT_SN_OFF: usize = 6;
+const IOT_SAFE_OFF: usize = 10;
+const IOT_STA_MAC_OFF: usize = 27;
+const IOT_BLE_MAC_OFF: usize = 30;
 
 const TYPE_OFF: usize = 1101 - 1100;
 const TYPE_REGS: usize = 6;
@@ -150,6 +159,82 @@ pub fn parse_iot_type(values: &[u16]) -> String {
     ascii_low_byte_first(&values[..6])
 }
 
+/// 110～119：整机 ASCII 类型 + uint64 SN（低字在前）。
+pub fn parse_whole_device(values: &[u16]) -> (String, String) {
+    if values.len() < REG_WHOLE_DEVICE_COUNT as usize {
+        return (String::new(), String::new());
+    }
+    (
+        ascii_low_byte_first(&values[..6]),
+        format_u64_decimal(&values[6..10]),
+    )
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct IotIdentity {
+    pub iot_type: String,
+    pub iot_sn: String,
+    pub safe_code: String,
+    pub wifi_mac: String,
+    pub ble_mac: String,
+}
+
+/// 从 11000 段解析 IoT 类型 / SN / 安全码 / MAC。不足 34 个寄存器时 MAC 可为空。
+pub fn parse_iot_identity(values: &[u16]) -> IotIdentity {
+    IotIdentity {
+        iot_type: parse_iot_type(values),
+        iot_sn: values
+            .get(IOT_SN_OFF..IOT_SN_OFF + 4)
+            .map(format_u64_decimal)
+            .unwrap_or_default(),
+        safe_code: values
+            .get(IOT_SAFE_OFF..IOT_SAFE_OFF + 4)
+            .map(format_u64_decimal)
+            .unwrap_or_default(),
+        wifi_mac: values
+            .get(IOT_STA_MAC_OFF..IOT_STA_MAC_OFF + 3)
+            .map(parse_mac6)
+            .unwrap_or_default(),
+        ble_mac: values
+            .get(IOT_BLE_MAC_OFF..IOT_BLE_MAC_OFF + 3)
+            .map(parse_mac6)
+            .unwrap_or_default(),
+    }
+}
+
+/// 保持寄存器 ASCII：寄存器内低字节在前。
+pub fn parse_ascii_regs(values: &[u16]) -> String {
+    ascii_low_byte_first(values)
+}
+
+/// 6 字节 MAC：每寄存器低字节在前，与 `sta_ipv4` 打包方式一致。
+pub fn parse_mac6(values: &[u16]) -> String {
+    if values.len() < 3 {
+        return String::new();
+    }
+    let mut bytes = [0u8; 6];
+    for i in 0..3 {
+        bytes[i * 2] = (values[i] & 0xFF) as u8;
+        bytes[i * 2 + 1] = (values[i] >> 8) as u8;
+    }
+    if bytes.iter().all(|&b| b == 0) {
+        return String::new();
+    }
+    format!(
+        "{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]
+    )
+}
+
+fn format_u64_decimal(words: &[u16]) -> String {
+    let n = combine_u64(words);
+    if n == 0 {
+        String::new()
+    } else {
+        n.to_string()
+    }
+}
+
 fn ascii_low_byte_first(values: &[u16]) -> String {
     let mut out = String::new();
     for &reg in values {
@@ -226,5 +311,42 @@ mod tests {
         info.merge_iot_version(100600108);
         assert_eq!(info.iot_version(), Some(100600108));
         assert!(info.summary_text().contains("IOT 100600108"));
+    }
+
+    #[test]
+    fn mac_low_byte_first() {
+        assert_eq!(
+            parse_mac6(&[0xBBAA, 0xDDCC, 0xFFEE]),
+            "AA:BB:CC:DD:EE:FF"
+        );
+        assert_eq!(parse_mac6(&[0, 0, 0]), "");
+    }
+
+    #[test]
+    fn whole_device_and_iot_identity() {
+        let mut whole = vec![0u16; 10];
+        whole[0] = u16::from(b'H') | (u16::from(b'A') << 8);
+        whole[1] = u16::from(b'1');
+        whole[6] = 0x0042;
+        let (ty, sn) = parse_whole_device(&whole);
+        assert_eq!(ty, "HA1");
+        assert_eq!(sn, "66");
+
+        let mut iot = vec![0u16; 34];
+        iot[0] = u16::from(b'I') | (u16::from(b'O') << 8);
+        iot[6] = 7;
+        iot[10] = 9;
+        iot[27] = 0xBBAA;
+        iot[28] = 0xDDCC;
+        iot[29] = 0xFFEE;
+        iot[30] = 0x2211;
+        iot[31] = 0x4433;
+        iot[32] = 0x6655;
+        let id = parse_iot_identity(&iot);
+        assert_eq!(id.iot_type, "IO");
+        assert_eq!(id.iot_sn, "7");
+        assert_eq!(id.safe_code, "9");
+        assert_eq!(id.wifi_mac, "AA:BB:CC:DD:EE:FF");
+        assert_eq!(id.ble_mac, "11:22:33:44:55:66");
     }
 }

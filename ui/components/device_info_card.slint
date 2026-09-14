@@ -1,0 +1,243 @@
+import { Theme } from "../theme.slint";
+import { CopyableValue, CopyFmt, FieldLabel } from "copyable_info_row.slint";
+
+component StatusChip inherits HorizontalLayout {
+    in property <color> dot-color;
+    in property <string> label;
+    spacing: 5px;
+    cross-axis-alignment: center;
+
+    Rectangle {
+        width: 7px;
+        height: 7px;
+        border-radius: 4px;
+        background: root.dot-color;
+    }
+    Text {
+        text: root.label;
+        color: Theme.text-primary;
+        font-size: 12px;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+}
+
+/// 主页设备信息：属性连上读一次，状态随主页轮询。
+export component DeviceInfoCard inherits Rectangle {
+    in property <bool> identity-ready;
+    in property <string> device-type;
+    in property <string> device-sn;
+    in property <string> iot-type;
+    in property <string> iot-sn;
+    in property <string> safe-code;
+    in property <string> cloud-url;
+    in property <string> wifi-mac;
+    in property <string> ble-mac;
+    in property <bool> wifi-ok;
+    in property <bool> cloud-ok;
+    in property <string> wifi-status-label;
+    in property <string> cloud-status-label;
+    in property <string> ssid-now;
+    in property <string> wifi-password;
+    in property <string> wifi-rssi-text;
+    in property <string> sta-ip;
+    callback copy-text(string);
+
+    property <bool> show-wifi-password: false;
+    property <string> device-ident: CopyFmt.type-sn(root.device-type, root.device-sn);
+    property <string> iot-ident: CopyFmt.type-sn(root.iot-type, root.iot-sn);
+    property <string> password-display: !root.identity-ready ? "—"
+        : (root.wifi-password == "" ? "（空）"
+            : (root.show-wifi-password ? root.wifi-password : "••••••••"));
+
+    border-radius: 12px;
+    background: Theme.bg-panel;
+    border-width: 1px;
+    border-color: Theme.border;
+    vertical-stretch: 0;
+
+    VerticalLayout {
+        padding: 14px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 10px;
+            Text {
+                text: "设备信息";
+                color: Theme.text-primary;
+                font-size: 14px;
+                font-weight: 700;
+                vertical-alignment: center;
+            }
+            if !root.identity-ready: Text {
+                text: "读取中…";
+                color: Theme.text-dim;
+                font-size: 11px;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: stretch;
+
+            VerticalLayout {
+                spacing: 6px;
+                alignment: start;
+                horizontal-stretch: 1;
+                min-width: 0px;
+
+                Text {
+                    text: "属性";
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    font-weight: 700;
+                }
+                GridLayout {
+                    spacing: 6px;
+                    Row {
+                        FieldLabel { caption: "整机"; }
+                        CopyableValue {
+                            value: root.device-ident;
+                            horizontal-stretch: 1;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "IoT"; }
+                        CopyableValue {
+                            value: root.iot-ident;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "安全码"; }
+                        CopyableValue {
+                            value: root.safe-code;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "服务器"; }
+                        CopyableValue {
+                            value: root.cloud-url;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "WiFi MAC"; }
+                        CopyableValue {
+                            value: root.wifi-mac;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "BLE MAC"; }
+                        CopyableValue {
+                            value: root.ble-mac;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Theme.border-subtle;
+                vertical-stretch: 1;
+            }
+
+            VerticalLayout {
+                spacing: 6px;
+                alignment: start;
+                horizontal-stretch: 1;
+                min-width: 0px;
+
+                Text {
+                    text: "状态";
+                    color: Theme.text-secondary;
+                    font-size: 11px;
+                    font-weight: 700;
+                }
+                HorizontalLayout {
+                    spacing: 14px;
+                    StatusChip {
+                        dot-color: root.wifi-ok ? Theme.success : Theme.text-dim;
+                        label: root.wifi-status-label;
+                    }
+                    StatusChip {
+                        dot-color: root.cloud-ok ? Theme.success : Theme.text-dim;
+                        label: root.cloud-status-label;
+                    }
+                }
+                GridLayout {
+                    spacing: 6px;
+                    Row {
+                        FieldLabel { caption: "当前 WiFi"; }
+                        CopyableValue {
+                            value: root.ssid-now;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "密码"; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            min-width: 0px;
+                            TextInput {
+                                text: root.password-display;
+                                read-only: true;
+                                single-line: true;
+                                color: Theme.text-primary;
+                                font-size: 12px;
+                                horizontal-alignment: left;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                                min-width: 0px;
+                            }
+                            if root.identity-ready && root.wifi-password != "": TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.show-wifi-password = !root.show-wifi-password;
+                                }
+                                Text {
+                                    text: root.show-wifi-password ? "隐藏" : "显示";
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            if root.identity-ready && root.wifi-password != "": TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.copy-text(root.wifi-password);
+                                }
+                                Text {
+                                    text: "复制";
+                                    color: Theme.accent;
+                                    font-size: 11px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "信号"; }
+                        CopyableValue {
+                            value: root.wifi-rssi-text;
+                            value-color: root.wifi-ok ? Theme.text-primary : Theme.text-dim;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                    Row {
+                        FieldLabel { caption: "STA IP"; }
+                        CopyableValue {
+                            value: root.sta-ip;
+                            copy-text(t) => { root.copy-text(t); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

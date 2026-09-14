@@ -68,6 +68,23 @@ export component MainWindow inherits Window {
     in-out property <bool> ac-output-on;
     in-out property <bool> dc-output-on;
     in-out property <bool> output-control-busy;
+    in-out property <bool> dashboard-identity-ready;
+    in-out property <string> dashboard-device-type;
+    in-out property <string> dashboard-device-sn;
+    in-out property <string> dashboard-iot-type;
+    in-out property <string> dashboard-iot-sn;
+    in-out property <string> dashboard-safe-code;
+    in-out property <string> dashboard-cloud-url;
+    in-out property <string> dashboard-wifi-mac;
+    in-out property <string> dashboard-ble-mac;
+    in-out property <bool> dashboard-wifi-ok;
+    in-out property <bool> dashboard-cloud-ok;
+    in-out property <string> dashboard-wifi-status-label: "WiFi 未连接";
+    in-out property <string> dashboard-cloud-status-label: "云端未登录";
+    in-out property <string> dashboard-ssid-now;
+    in-out property <string> dashboard-wifi-password;
+    in-out property <string> dashboard-wifi-rssi-text;
+    in-out property <string> dashboard-sta-ip;
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
@@ -159,6 +176,7 @@ export component MainWindow inherits Window {
     callback ble-scan-filters-changed();
     callback ac-output-toggle();
     callback dc-output-toggle();
+    callback copy-text(string);
     callback add-modbus-tab-request();
     callback remove-modbus-tab(int);
     callback switch-modbus-tab(int);
@@ -289,6 +307,23 @@ export component MainWindow inherits Window {
                             ac-output-on: root.ac-output-on;
                             dc-output-on: root.dc-output-on;
                             output-control-busy: root.output-control-busy;
+                            dashboard-identity-ready: root.dashboard-identity-ready;
+                            dashboard-device-type: root.dashboard-device-type;
+                            dashboard-device-sn: root.dashboard-device-sn;
+                            dashboard-iot-type: root.dashboard-iot-type;
+                            dashboard-iot-sn: root.dashboard-iot-sn;
+                            dashboard-safe-code: root.dashboard-safe-code;
+                            dashboard-cloud-url: root.dashboard-cloud-url;
+                            dashboard-wifi-mac: root.dashboard-wifi-mac;
+                            dashboard-ble-mac: root.dashboard-ble-mac;
+                            dashboard-wifi-ok: root.dashboard-wifi-ok;
+                            dashboard-cloud-ok: root.dashboard-cloud-ok;
+                            dashboard-wifi-status-label: root.dashboard-wifi-status-label;
+                            dashboard-cloud-status-label: root.dashboard-cloud-status-label;
+                            dashboard-ssid-now: root.dashboard-ssid-now;
+                            dashboard-wifi-password: root.dashboard-wifi-password;
+                            dashboard-wifi-rssi-text: root.dashboard-wifi-rssi-text;
+                            dashboard-sta-ip: root.dashboard-sta-ip;
                             select-scan-device(address) => {
                                 root.select-scan-device(address);
                             }
@@ -306,6 +341,9 @@ export component MainWindow inherits Window {
                             }
                             dc-output-toggle => {
                                 root.dc-output-toggle();
+                            }
+                            copy-text(text) => {
+                                root.copy-text(text);
                             }
                         }
 
@@ -409,6 +447,7 @@ export component MainWindow inherits Window {
                             start-upgrade => { root.firmware-start(); }
                             stop-upgrade => { root.firmware-stop(); }
                             ota-version-edited(text) => { root.firmware-ota-version-edited(text); }
+                            copy-text(text) => { root.copy-text(text); }
                         }
 
                         if root.current-page == 4: DeviceConfigPage {

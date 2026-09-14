@@ -758,6 +758,7 @@ fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
     );
 
     upsert_saved_wifi(ctx, &ssid, &password);
+    ctx.modbus.remember_wifi_credentials(&password);
     {
         let wifi = &mut ctx.state.borrow_mut().device_config.wifi;
         wifi.phase = WifiProvisionPhase::ConnectingWifi;

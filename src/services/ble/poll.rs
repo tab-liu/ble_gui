@@ -15,12 +15,17 @@ use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
     build_read_holding, build_write_multiple, build_write_single, iot_status_supports_tlv,
-    is_fc10_write_ack, merge_control_states, parse_dashboard_registers, parse_device_info,
-    parse_iot_software_ver, parse_iot_type, parse_read_holding, parse_tlv_response_packet,
-    parse_tlv_read_units, describe_tlv_units, format_regs_hex, tlv_register_values, TlReadSpec,
-    TlvPacketCollector, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS, REG_21000, REG_AC_OUTPUT,
-    REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START,
-    REG_IOT_INFO_COUNT, REG_IOT_INFO_START, REG_IOT_STATUS,
+    is_fc10_write_ack, merge_control_states, parse_ascii_regs, parse_dashboard_registers,
+    parse_device_info, parse_iot_identity, parse_iot_software_ver, parse_iot_type,
+    parse_link_status_regs, parse_read_holding, parse_sta_ipv4_regs, parse_sta_rssi,
+    parse_tlv_response_packet, parse_tlv_read_units, parse_whole_device, describe_tlv_units,
+    format_regs_hex, tlv_register_values, TlReadSpec, TlvPacketCollector, DEFAULT_SLAVE_ID,
+    IOT_CLOUD_DNS_REGISTER, IOT_CLOUD_DNS_REGISTER_COUNT, MODBUS_TIMEOUT_MS, REG_21000,
+    REG_AC_OUTPUT, REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DEVICE_INFO_COUNT,
+    REG_DEVICE_INFO_START, REG_IOT_IDENTITY_COUNT, REG_IOT_INFO_COUNT, REG_IOT_INFO_START,
+    REG_IOT_STATUS, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT, REG_STA_RSSI, REG_WHOLE_DEVICE_COUNT,
+    REG_WHOLE_DEVICE_START, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_PASSWORD,
+    REG_WIFI_STA_PASSWORD_COUNT,
 };
 
 const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
@@ -156,7 +161,8 @@ pub async fn probe_modbus_capabilities(
     true
 }
 
-/// 连接会话内读一次 1100～1130。失败不阻塞主页数据，下一轮再试。
+/// 连接会话内读一次机型 / SN / IoT 身份 / 服务器地址 / WiFi 密码。
+/// 失败不阻塞主页功率数据，下一轮再试。
 pub async fn read_device_info_once(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -192,44 +198,130 @@ pub async fn read_device_info_once(
                     regs.len(),
                     format_regs_hex(&regs),
                 );
-                match modbus_read(
+                let iot_regs = match modbus_read(
                     protocol,
                     write_tx,
-                    build_read_holding(slave_id, REG_IOT_INFO_START, REG_IOT_INFO_COUNT),
+                    build_read_holding(slave_id, REG_IOT_INFO_START, REG_IOT_IDENTITY_COUNT),
                     slave_id,
-                    REG_IOT_INFO_COUNT,
+                    REG_IOT_IDENTITY_COUNT,
                 )
                 .await
                 {
-                    Ok(iot_regs) => {
+                    Ok(regs) => Some(regs),
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+                    Err(err) => {
+                        warn!(
+                            target: "ble_gui::poll",
+                            "读寄存器 11000～11033 失败: {err}，回退 11000～11015",
+                        );
+                        match modbus_read(
+                            protocol,
+                            write_tx,
+                            build_read_holding(slave_id, REG_IOT_INFO_START, REG_IOT_INFO_COUNT),
+                            slave_id,
+                            REG_IOT_INFO_COUNT,
+                        )
+                        .await
+                        {
+                            Ok(regs) => Some(regs),
+                            Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+                            Err(err) => {
+                                warn!(target: "ble_gui::poll", "读寄存器 11000～11015 失败: {err}");
+                                None
+                            }
+                        }
+                    }
+                };
+
+                let identity = if let Some(iot_regs) = iot_regs.as_ref() {
+                    info!(
+                        target: "ble_gui::poll",
+                        "11000 段原始 {} 个: {}",
+                        iot_regs.len(),
+                        format_regs_hex(iot_regs),
+                    );
+                    if let Some(ver) = parse_iot_software_ver(iot_regs) {
                         info!(
                             target: "ble_gui::poll",
-                            "11000～11015 原始 {} 个: {}",
-                            iot_regs.len(),
-                            format_regs_hex(&iot_regs),
+                            "IOT software_ver(11014～11015)={ver} (u32 低字在前)",
                         );
-                        if let Some(ver) = parse_iot_software_ver(&iot_regs) {
-                            info!(
-                                target: "ble_gui::poll",
-                                "IOT software_ver(11014～11015)={ver} (u32 低字在前)",
-                            );
-                            info.merge_iot_version(ver);
+                        info.merge_iot_version(ver);
+                    }
+                    if info.device_type.is_empty() {
+                        info.device_type = parse_iot_type(iot_regs);
+                    }
+                    parse_iot_identity(iot_regs)
+                } else {
+                    parse_iot_identity(&[])
+                };
+
+                match modbus_read(
+                    protocol,
+                    write_tx,
+                    build_read_holding(slave_id, REG_WHOLE_DEVICE_START, REG_WHOLE_DEVICE_COUNT),
+                    slave_id,
+                    REG_WHOLE_DEVICE_COUNT,
+                )
+                .await
+                {
+                    Ok(whole) => {
+                        let (ty, sn) = parse_whole_device(&whole);
+                        if !ty.is_empty() {
+                            info.device_type = ty;
                         }
-                        if info.device_type.is_empty() {
-                            info.device_type = parse_iot_type(&iot_regs);
+                        if !sn.is_empty() {
+                            info.sn = sn;
                         }
                     }
-                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => {}
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
                     Err(err) => {
-                        warn!(target: "ble_gui::poll", "读寄存器 11000～11015 失败: {err}");
+                        warn!(target: "ble_gui::poll", "读寄存器 110～119 失败: {err}");
                     }
                 }
+
+                let cloud_url = match modbus_read(
+                    protocol,
+                    write_tx,
+                    build_read_holding(slave_id, IOT_CLOUD_DNS_REGISTER, IOT_CLOUD_DNS_REGISTER_COUNT),
+                    slave_id,
+                    IOT_CLOUD_DNS_REGISTER_COUNT,
+                )
+                .await
+                {
+                    Ok(regs) => parse_ascii_regs(&regs),
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+                    Err(err) => {
+                        warn!(target: "ble_gui::poll", "读服务器地址 12067 失败: {err}");
+                        String::new()
+                    }
+                };
+
+                let wifi_password = match modbus_read(
+                    protocol,
+                    write_tx,
+                    build_read_holding(slave_id, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT),
+                    slave_id,
+                    REG_WIFI_STA_PASSWORD_COUNT,
+                )
+                .await
+                {
+                    Ok(regs) => parse_ascii_regs(&regs),
+                    Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+                    Err(err) => {
+                        warn!(target: "ble_gui::poll", "读 WiFi 密码 12018 失败: {err}");
+                        String::new()
+                    }
+                };
+
                 let summary = info.summary_text();
                 info!(
                     target: "ble_gui::poll",
-                    "设备信息 type={} sn={} versions={summary}",
+                    "设备信息 type={} sn={} iot_sn={} safe={} cloud={} versions={summary}",
                     info.device_type,
                     if info.sn.is_empty() { "—" } else { &info.sn },
+                    if identity.iot_sn.is_empty() { "—" } else { &identity.iot_sn },
+                    if identity.safe_code.is_empty() { "—" } else { &identity.safe_code },
+                    if cloud_url.is_empty() { "—" } else { &cloud_url },
                 );
                 if let Ok(mut inner) = live.lock() {
                     inner.device_software = info
@@ -241,6 +333,14 @@ pub async fn read_device_info_once(
                     inner.device_type = info.device_type;
                     inner.device_sn = info.sn;
                     inner.device_versions_text = summary;
+                    inner.iot_type = identity.iot_type;
+                    inner.iot_sn = identity.iot_sn;
+                    inner.safe_code = identity.safe_code;
+                    inner.wifi_mac = identity.wifi_mac;
+                    inner.ble_mac = identity.ble_mac;
+                    inner.cloud_url = cloud_url;
+                    inner.wifi_password = wifi_password;
+                    inner.identity_loaded = true;
                     inner.device_info_loaded = true;
                 }
             }
@@ -452,6 +552,16 @@ pub async fn poll_dashboard(
         }
     }
 
+    poll_dashboard_link(
+        protocol,
+        write_tx,
+        live,
+        slave_id,
+        false,
+        None,
+    )
+    .await;
+
     {
         let mut inner = live.lock().expect("modbus live lock");
         inner.dashboard = dashboard.clone();
@@ -483,6 +593,8 @@ async fn poll_dashboard_tlv(
     let tl_items = [
         TlReadSpec::from_register(slave_id, REG_DASHBOARD_START, REG_DASHBOARD_COUNT),
         TlReadSpec::from_register(slave_id, REG_AC_OUTPUT, 2),
+        TlReadSpec::from_register(slave_id, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT),
+        TlReadSpec::from_register(slave_id, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT),
     ];
 
     let results = match modbus_tlv_read(protocol, write_tx, &tl_items).await {
@@ -531,6 +643,16 @@ async fn poll_dashboard_tlv(
         merge_control_states(&mut dashboard, ac_on, dc_on);
     }
 
+    poll_dashboard_link(
+        protocol,
+        write_tx,
+        live,
+        slave_id,
+        true,
+        Some(&results),
+    )
+    .await;
+
     {
         let mut inner = live.lock().expect("modbus live lock");
         inner.dashboard = dashboard.clone();
@@ -546,6 +668,87 @@ async fn poll_dashboard_tlv(
         dashboard.dc_output_on,
     );
     true
+}
+
+fn apply_dashboard_link(live: &SharedModbusLive, link_regs: &[u16], ssid_regs: &[u16]) {
+    let (wifi_sta, mqtt_ok) = parse_link_status_regs(link_regs);
+    let sta_ip = if link_regs.len() >= 4 {
+        parse_sta_ipv4_regs(&link_regs[2..4])
+    } else {
+        String::new()
+    };
+    let sta_rssi = link_regs
+        .get((REG_STA_RSSI - REG_LINK_STATUS) as usize)
+        .copied()
+        .map(parse_sta_rssi)
+        .unwrap_or(0);
+    let ssid_now = parse_ascii_regs(ssid_regs);
+    if let Ok(mut inner) = live.lock() {
+        inner.wifi_sta = wifi_sta;
+        inner.mqtt_ok = mqtt_ok;
+        inner.sta_ip = sta_ip;
+        inner.sta_rssi = sta_rssi;
+        inner.ssid_now = ssid_now;
+        inner.link_status_valid = true;
+    }
+}
+
+/// 主页状态：链路 / STA IP / RSSI / 当前 SSID。失败不影响功率卡片。
+async fn poll_dashboard_link(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    live: &SharedModbusLive,
+    slave_id: u8,
+    use_tlv: bool,
+    tlv_results: Option<&[super::modbus::TlvReadResult]>,
+) {
+    if use_tlv {
+        let Some(results) = tlv_results else {
+            return;
+        };
+        let link_regs = tlv_register_values(results, slave_id, REG_LINK_STATUS).ok();
+        let ssid_regs = tlv_register_values(results, slave_id, REG_WIFI_SSID_NOW).ok();
+        match (link_regs, ssid_regs) {
+            (Some(link), Some(ssid)) => apply_dashboard_link(live, &link, &ssid),
+            (Some(link), None) => apply_dashboard_link(live, &link, &[]),
+            _ => {}
+        }
+        return;
+    }
+
+    let link_regs = match modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT),
+        slave_id,
+        REG_LINK_STATUS_BLOCK_COUNT,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "读链路状态 11018～11026 失败: {err}");
+            return;
+        }
+    };
+    let ssid_regs = match modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT),
+        slave_id,
+        REG_WIFI_SSID_NOW_COUNT,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return,
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "读当前 SSID 11108 失败: {err}");
+            Vec::new()
+        }
+    };
+    apply_dashboard_link(live, &link_regs, &ssid_regs);
 }
 
 /// 写保持寄存器：单字用 FC06，多字用 FC10；`bit` 为 Some 时先读后改写该位；`field` 为 Some 时先读后改多位域。
@@ -761,6 +964,20 @@ pub fn init_live_on_connect(live: &SharedModbusLive) {
     inner.device_versions_text.clear();
     inner.iot_software_version = None;
     inner.device_software.clear();
+    inner.identity_loaded = false;
+    inner.iot_type.clear();
+    inner.iot_sn.clear();
+    inner.safe_code.clear();
+    inner.cloud_url.clear();
+    inner.wifi_mac.clear();
+    inner.ble_mac.clear();
+    inner.wifi_password.clear();
+    inner.link_status_valid = false;
+    inner.wifi_sta = false;
+    inner.mqtt_ok = false;
+    inner.ssid_now.clear();
+    inner.sta_ip.clear();
+    inner.sta_rssi = 0;
 }
 
 pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
@@ -776,4 +993,18 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.device_versions_text.clear();
     inner.iot_software_version = None;
     inner.device_software.clear();
+    inner.identity_loaded = false;
+    inner.iot_type.clear();
+    inner.iot_sn.clear();
+    inner.safe_code.clear();
+    inner.cloud_url.clear();
+    inner.wifi_mac.clear();
+    inner.ble_mac.clear();
+    inner.wifi_password.clear();
+    inner.link_status_valid = false;
+    inner.wifi_sta = false;
+    inner.mqtt_ok = false;
+    inner.ssid_now.clear();
+    inner.sta_ip.clear();
+    inner.sta_rssi = 0;
 }

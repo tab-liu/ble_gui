@@ -6,6 +6,7 @@ import { FavoriteDeviceRow } from "../components/favorite_device_row.slint";
 import { SocCard } from "../components/soc_card.slint";
 import { PowerMetricCard } from "../components/power_metric_card.slint";
 import { OutputControlRow } from "../components/output_control_row.slint";
+import { DeviceInfoCard } from "../components/device_info_card.slint";
 
 export component DashboardPage inherits VerticalBox {
     in property <bool> device-connected;
@@ -24,6 +25,23 @@ export component DashboardPage inherits VerticalBox {
     in property <bool> ac-output-on;
     in property <bool> dc-output-on;
     in property <bool> output-control-busy;
+    in property <bool> dashboard-identity-ready;
+    in property <string> dashboard-device-type;
+    in property <string> dashboard-device-sn;
+    in property <string> dashboard-iot-type;
+    in property <string> dashboard-iot-sn;
+    in property <string> dashboard-safe-code;
+    in property <string> dashboard-cloud-url;
+    in property <string> dashboard-wifi-mac;
+    in property <string> dashboard-ble-mac;
+    in property <bool> dashboard-wifi-ok;
+    in property <bool> dashboard-cloud-ok;
+    in property <string> dashboard-wifi-status-label;
+    in property <string> dashboard-cloud-status-label;
+    in property <string> dashboard-ssid-now;
+    in property <string> dashboard-wifi-password;
+    in property <string> dashboard-wifi-rssi-text;
+    in property <string> dashboard-sta-ip;
     in-out property <string> scan-filter;
     in-out property <bool> scan-rssi-filter-enabled;
     in-out property <string> scan-rssi-min;
@@ -34,6 +52,7 @@ export component DashboardPage inherits VerticalBox {
     callback scan-filters-changed();
     callback ac-output-toggle();
     callback dc-output-toggle();
+    callback copy-text(string);
 
     spacing: 16px;
     vertical-stretch: 1;
@@ -256,10 +275,34 @@ export component DashboardPage inherits VerticalBox {
         }
     }
 
-    if root.device-connected: VerticalBox {
+    if root.device-connected: ScrollView {
+        vertical-stretch: 1;
+
+        VerticalBox {
         spacing: 16px;
         vertical-stretch: 1;
         alignment: start;
+
+        DeviceInfoCard {
+            identity-ready: root.dashboard-identity-ready;
+            device-type: root.dashboard-device-type;
+            device-sn: root.dashboard-device-sn;
+            iot-type: root.dashboard-iot-type;
+            iot-sn: root.dashboard-iot-sn;
+            safe-code: root.dashboard-safe-code;
+            cloud-url: root.dashboard-cloud-url;
+            wifi-mac: root.dashboard-wifi-mac;
+            ble-mac: root.dashboard-ble-mac;
+            wifi-ok: root.dashboard-wifi-ok;
+            cloud-ok: root.dashboard-cloud-ok;
+            wifi-status-label: root.dashboard-wifi-status-label;
+            cloud-status-label: root.dashboard-cloud-status-label;
+            ssid-now: root.dashboard-ssid-now;
+            wifi-password: root.dashboard-wifi-password;
+            wifi-rssi-text: root.dashboard-wifi-rssi-text;
+            sta-ip: root.dashboard-sta-ip;
+            copy-text(t) => { root.copy-text(t); }
+        }
 
         Rectangle {
             vertical-stretch: 0;
@@ -374,6 +417,7 @@ export component DashboardPage inherits VerticalBox {
                     }
                 }
             }
+        }
         }
     }
 }

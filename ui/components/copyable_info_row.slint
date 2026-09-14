@@ -1,0 +1,89 @@
+import { Theme } from "../theme.slint";
+
+export global CopyFmt {
+    public pure function type-sn(ty: string, sn: string) -> string {
+        if (ty == "" || ty == "—") && (sn == "" || sn == "—") {
+            return "—";
+        }
+        if sn == "" || sn == "—" {
+            return ty;
+        }
+        if ty == "" || ty == "—" {
+            return sn;
+        }
+        return ty + "  " + sn;
+    }
+}
+
+export component FieldLabel inherits Text {
+    in property <string> caption;
+    text: root.caption;
+    color: Theme.text-muted;
+    font-size: 12px;
+    width: 80px;
+    vertical-alignment: center;
+    overflow: elide;
+}
+
+/// 只读可选中的值 + 「复制」。
+export component CopyableValue inherits HorizontalLayout {
+    in property <string> value;
+    in property <string> copy-payload: root.value;
+    in property <color> value-color: Theme.text-primary;
+    callback copy-text(string);
+
+    alignment: start;
+    spacing: 6px;
+    min-width: 0px;
+    min-height: 22px;
+
+    TextInput {
+        text: root.value;
+        read-only: true;
+        single-line: true;
+        color: root.value-color;
+        font-size: 12px;
+        horizontal-alignment: left;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        min-width: 0px;
+    }
+
+    if root.copy-payload != "" && root.copy-payload != "—" && root.copy-payload != "未连接": TouchArea {
+        mouse-cursor: pointer;
+        clicked => {
+            root.copy-text(root.copy-payload);
+        }
+        Text {
+            text: "复制";
+            color: Theme.accent;
+            font-size: 11px;
+            vertical-alignment: center;
+        }
+    }
+}
+
+/// 标签 + 可复制值（固件页等单行场景）。
+export component CopyableInfoRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    in property <string> copy-payload: root.value;
+    in property <color> value-color: Theme.text-primary;
+    callback copy-text(string);
+
+    alignment: start;
+    spacing: 8px;
+    min-height: 24px;
+    min-width: 0px;
+
+    FieldLabel {
+        caption: root.label;
+    }
+    CopyableValue {
+        value: root.value;
+        copy-payload: root.copy-payload;
+        value-color: root.value-color;
+        horizontal-stretch: 1;
+        copy-text(t) => { root.copy-text(t); }
+    }
+}
