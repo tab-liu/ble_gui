@@ -32,6 +32,7 @@ use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_modbus_dashboa
 /// 创建并运行主窗口（阻塞到退出）。
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
+    ui.set_window_icon(crate::ui::icon::load_window_icon());
     let ctx = AppContext::new();
 
     let ui_weak = ui.as_weak();
@@ -108,7 +109,28 @@ pub fn run() -> Result<(), slint::PlatformError> {
         }
     });
 
-    ui.run()
+    let ui_for_icon = ui.as_weak();
+    let icon_attempts = Rc::new(Cell::new(0u32));
+    let icon_timer = Rc::new(Timer::default());
+    let icon_timer_cb = icon_timer.clone();
+    icon_timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
+        let attempt = icon_attempts.get();
+        if attempt >= 40 {
+            log::warn!("窗口图标：多次重试仍未拿到窗口句柄");
+            icon_timer_cb.stop();
+            return;
+        }
+        icon_attempts.set(attempt + 1);
+        if let Some(ui) = ui_for_icon.upgrade() {
+            if crate::ui::icon::apply_after_window_ready(&ui) {
+                icon_timer_cb.stop();
+            }
+        }
+    });
+
+    let result = ui.run();
+    drop((poll_timer, icon_timer));
+    result
 }
 
 /// 供各页面使用的 UI 刷新辅助。

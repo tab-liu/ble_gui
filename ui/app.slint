@@ -227,7 +227,9 @@ export component MainWindow inherits Window {
     callback wifi-remove-saved(int);
 
     title: "BLE Modbus 工具";
-    icon: @image-url("../assets/app-icon.png");
+    // 由 Rust 写入编译期从 app.ico 解出的像素；勿用 @image-url 嵌独立 PNG。
+    in property <image> window-icon;
+    icon: window-icon;
     // 4 列：卡片 756 + 侧栏 160 + 内容/面板内边距 32。1080 会多出约半张卡的空白。
     preferred-width: 980px;
     preferred-height: 640px;

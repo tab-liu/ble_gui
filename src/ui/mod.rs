@@ -10,3 +10,4 @@ slint::include_modules!();
 
 pub mod bindings;
 pub mod clipboard;
+pub mod icon;

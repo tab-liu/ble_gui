@@ -49,7 +49,9 @@ impl ThemeService {
 
     pub fn set_mode(&self, mode: ThemeMode) {
         *self.inner.borrow_mut() = mode;
-        let _ = save_mode(mode);
+        if let Err(err) = save_mode(mode) {
+            log::warn!(target: "ble_gui::theme", "保存主题失败: {err}");
+        }
     }
 
     pub fn toggle_quick(&self) {
@@ -97,30 +99,89 @@ fn detect_system_dark() -> bool {
         }
         false
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        windows_system_dark().unwrap_or(false)
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
     {
         false
     }
 }
 
+#[cfg(windows)]
+fn windows_system_dark() -> Option<bool> {
+    use windows::Win32::System::Registry::{
+        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_VALUE_TYPE,
+    };
+    use windows::core::w;
+
+    let mut key = Default::default();
+    if unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            None,
+            KEY_READ,
+            &mut key,
+        )
+    }
+    .is_err()
+    {
+        return None;
+    }
+    let mut data: u32 = 1;
+    let mut data_size = std::mem::size_of::<u32>() as u32;
+    let mut ty = REG_VALUE_TYPE::default();
+    let queried = unsafe {
+        RegQueryValueExW(
+            key,
+            w!("AppsUseLightTheme"),
+            None,
+            Some(&mut ty),
+            Some((&raw mut data).cast()),
+            Some(&mut data_size),
+        )
+    };
+    let _ = unsafe { RegCloseKey(key) };
+    if queried.is_err() {
+        return None;
+    }
+    Some(data == 0)
+}
+
 fn config_path() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|home| {
-        PathBuf::from(home)
-            .join(".config")
-            .join("ble_gui")
-            .join("theme")
-    })
+    #[cfg(windows)]
+    {
+        std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("ble_gui").join("theme"))
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var_os("HOME").map(|home| {
+            PathBuf::from(home)
+                .join(".config")
+                .join("ble_gui")
+                .join("theme")
+        })
+    }
 }
 
 fn load_mode() -> Option<ThemeMode> {
     let path = config_path()?;
-    let text = fs::read_to_string(path).ok()?;
-    text.trim().parse::<i32>().ok().map(ThemeMode::from_i32)
+    let text = fs::read_to_string(&path).ok()?;
+    let mode = text.trim().parse::<i32>().ok().map(ThemeMode::from_i32)?;
+    log::info!(
+        target: "ble_gui::theme",
+        "已加载主题 {:?}, 路径={}",
+        mode,
+        path.display(),
+    );
+    Some(mode)
 }
 
 fn save_mode(mode: ThemeMode) -> std::io::Result<()> {
     let path = config_path().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no config path")
+        std::io::Error::new(std::io::ErrorKind::NotFound, "无法确定配置目录")
     })?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
