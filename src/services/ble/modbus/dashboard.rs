@@ -14,7 +14,8 @@ pub const REG_DC_OUTPUT: u16 = 2012;
 
 pub const DEFAULT_SLAVE_ID: u8 = 0;
 pub const POLL_INTERVAL_MS: u64 = 2000;
-pub const MODBUS_TIMEOUT_MS: u64 = 1800;
+/// 常规 FC03/写应答超时（健康 RTT 通常 ≪1s；略低于轮询间隔以便尽快失败）。
+pub const MODBUS_TIMEOUT_MS: u64 = 1000;
 
 /// SOC（102）+ 功率段 140～147（8 个寄存器）。
 pub fn parse_dashboard_soc_and_power(soc: u16, power: &[u16]) -> Option<DashboardData> {

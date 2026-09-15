@@ -28,7 +28,10 @@ use super::modbus::{
     REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT,
 };
 
-const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
+/// TLV：收到 ACK / 任一数据分包后重置；无进展超过此时长则失败。
+const MODBUS_TLV_IDLE_TIMEOUT_MS: u64 = 1000;
+/// TLV：整次组合读硬上限（防断续永远凑不齐）。
+const MODBUS_TLV_TOTAL_TIMEOUT_MS: u64 = 8000;
 
 fn hex_preview(data: &[u8], max: usize) -> String {
     let take = data.len().min(max);
@@ -401,14 +404,16 @@ pub(crate) async fn modbus_tlv_read(
         .send(air)
         .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "写通道已关闭"))?;
 
-    let deadline =
-        tokio::time::Instant::now() + Duration::from_millis(MODBUS_TLV_TIMEOUT_MS);
+    let started = tokio::time::Instant::now();
+    let total_deadline = started + Duration::from_millis(MODBUS_TLV_TOTAL_TIMEOUT_MS);
+    let mut idle_deadline = started + Duration::from_millis(MODBUS_TLV_IDLE_TIMEOUT_MS);
     let mut collector = TlvPacketCollector::default();
     let mut got_ack = false;
     let mut rx_frames = 0u32;
 
     loop {
         tokio::time::sleep(Duration::from_millis(25)).await;
+        let mut progressed = false;
         loop {
             let resp = protocol
                 .lock()
@@ -420,6 +425,7 @@ pub(crate) async fn modbus_tlv_read(
             rx_frames += 1;
             if is_fc10_write_ack(&resp) {
                 got_ack = true;
+                progressed = true;
                 debug!(
                     target: "ble_gui::poll",
                     "TLV 收到 FC10 写应答 hex={}",
@@ -438,9 +444,14 @@ pub(crate) async fn modbus_tlv_read(
                     hex_preview(&resp, 64),
                 );
                 collector.insert(packet)?;
+                progressed = true;
                 continue;
             }
             log_unrecognized_tlv_frame(&resp);
+        }
+        if progressed {
+            idle_deadline =
+                tokio::time::Instant::now() + Duration::from_millis(MODBUS_TLV_IDLE_TIMEOUT_MS);
         }
         if collector.is_complete() {
             let assembled = collector.assembled();
@@ -462,15 +473,23 @@ pub(crate) async fn modbus_tlv_read(
             }
             return Ok(units);
         }
-        if tokio::time::Instant::now() >= deadline {
+        let now = tokio::time::Instant::now();
+        if now >= idle_deadline || now >= total_deadline {
             let (pending, pending_hex) = protocol
                 .lock()
                 .expect("protocol lock")
                 .rx_pending_debug();
+            let reason = if now >= total_deadline {
+                "总时长"
+            } else {
+                "包间空闲"
+            };
             warn!(
                 target: "ble_gui::poll",
-                "TLV 响应超时 ({}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B rx_pending={}B [{}]",
-                MODBUS_TLV_TIMEOUT_MS,
+                "TLV 响应超时 ({reason} idle={}ms total={}ms elapsed={}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B rx_pending={}B [{}]",
+                MODBUS_TLV_IDLE_TIMEOUT_MS,
+                MODBUS_TLV_TOTAL_TIMEOUT_MS,
+                started.elapsed().as_millis(),
                 collector.received_count(),
                 collector.expected_total().unwrap_or(0),
                 collector.assembled().len(),
