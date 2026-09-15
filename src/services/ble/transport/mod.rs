@@ -3,7 +3,7 @@
 use std::collections::VecDeque;
 use std::io;
 
-use crate::services::ble::crypto::decrypt_business_packet;
+use crate::services::ble::crypto::{decrypt_business_packet, diagnose_business_decrypt};
 use crate::services::ble::modbus::plain_modbus_frame_length;
 
 const XMODEM_ACK: u8 = 0x06;
@@ -133,6 +133,7 @@ impl ModbusRxAssembler {
             self.enqueue(data.to_vec());
             return Ok(());
         }
+        // 以下加密业务包路径与是否 OTA 无关；失败日志走 transport，勿标成 ota。
         if self.encrypted {
             self.push_encrypted(data)?;
         } else {
@@ -162,7 +163,7 @@ impl ModbusRxAssembler {
         })?;
         if self.ota_verbose && data.len() <= 48 {
             log::warn!(
-                target: "ble_gui::ota",
+                target: "ble_gui::transport",
                 "GATT-ENC-CHUNK {}B pending={}B {}",
                 data.len(),
                 self.buffer.len(),
@@ -174,8 +175,8 @@ impl ModbusRxAssembler {
             if self.buffer.len() < 6 {
                 if self.ota_verbose && !self.buffer.is_empty() {
                     log::warn!(
-                        target: "ble_gui::ota",
-                        "RX-OTA 重组未满包头 pending={}B {}",
+                        target: "ble_gui::transport",
+                        "RX-ENC 重组未满包头 pending={}B {}",
                         self.buffer.len(),
                         hex_preview(&self.buffer, 16),
                     );
@@ -186,8 +187,8 @@ impl ModbusRxAssembler {
                 ((self.buffer[0] as usize) << 8) | (self.buffer[1] as usize);
             if plain_length == 0 || plain_length > 4096 {
                 log::warn!(
-                    target: "ble_gui::ota",
-                    "RX-OTA 长度字段异常 plain_len={} pending={}B {}",
+                    target: "ble_gui::transport",
+                    "RX-ENC 长度字段异常 plain_len={} pending={}B {}",
                     plain_length,
                     self.buffer.len(),
                     hex_preview(&self.buffer, 48),
@@ -206,8 +207,8 @@ impl ModbusRxAssembler {
             if self.buffer.len() < total_length {
                 if self.ota_verbose {
                     log::warn!(
-                        target: "ble_gui::ota",
-                        "RX-OTA 重组未满业务包 need={} have={} plain_len={}",
+                        target: "ble_gui::transport",
+                        "RX-ENC 重组未满业务包 need={} have={} plain_len={}",
                         total_length,
                         self.buffer.len(),
                         plain_length,
@@ -216,12 +217,23 @@ impl ModbusRxAssembler {
                 break;
             }
             let raw: Vec<u8> = self.buffer.drain(..total_length).collect();
+            let pending_after = self.buffer.len();
+            let chunk_just_arrived = data.len();
             match decrypt_business_packet(&key, &raw) {
                 Ok(plain) => {
+                    log::debug!(
+                        target: "ble_gui::transport",
+                        "RX-ENC ok plain={}B air={}B chunk={}B pending_left={}B head={}",
+                        plain.len(),
+                        raw.len(),
+                        chunk_just_arrived,
+                        pending_after,
+                        hex_preview(&plain, 16),
+                    );
                     if self.ota_verbose {
                         log::warn!(
-                            target: "ble_gui::ota",
-                            "RX-OTA-PLAIN {}B [{}] {}",
+                            target: "ble_gui::transport",
+                            "RX-ENC-PLAIN {}B [{}] {}",
                             plain.len(),
                             classify_ota_payload(&plain),
                             hex_preview(&plain, 48),
@@ -230,11 +242,14 @@ impl ModbusRxAssembler {
                     self.enqueue(plain);
                 }
                 Err(err) => {
+                    let diag = diagnose_business_decrypt(&key, &raw);
                     log::warn!(
-                        target: "ble_gui::ota",
-                        "RX-OTA 业务包解密失败: {err}; air {}B {}",
-                        raw.len(),
-                        hex_preview(&raw, 24),
+                        target: "ble_gui::transport",
+                        "RX-ENC 业务包解密失败: {err}; {diag}; chunk={}B pending_left={}B air_head={} pending_head={}",
+                        chunk_just_arrived,
+                        pending_after,
+                        hex_preview(&raw, 32),
+                        hex_preview(&self.buffer, 24),
                     );
                 }
             }

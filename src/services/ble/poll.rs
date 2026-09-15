@@ -463,13 +463,19 @@ pub(crate) async fn modbus_tlv_read(
             return Ok(units);
         }
         if tokio::time::Instant::now() >= deadline {
+            let (pending, pending_hex) = protocol
+                .lock()
+                .expect("protocol lock")
+                .rx_pending_debug();
             warn!(
                 target: "ble_gui::poll",
-                "TLV 响应超时 ({}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B",
+                "TLV 响应超时 ({}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B rx_pending={}B [{}]",
                 MODBUS_TLV_TIMEOUT_MS,
                 collector.received_count(),
                 collector.expected_total().unwrap_or(0),
                 collector.assembled().len(),
+                pending,
+                pending_hex,
             );
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

@@ -35,7 +35,7 @@ mod imp {
             Ok(req) => req,
             Err(err) => {
                 warn!(
-                    target: "ble_gui::ota",
+                    target: "ble_gui::win_conn",
                     "Windows 不支持请求吞吐优先连接参数（常见于 Win10）: {err}",
                 );
                 return None;
@@ -43,7 +43,7 @@ mod imp {
         };
         let status = request.Status().ok()?;
         info!(
-            target: "ble_gui::ota",
+            target: "ble_gui::win_conn",
             "Windows 吞吐优先连接参数 status={}",
             status_name(status),
         );
@@ -64,14 +64,14 @@ mod imp {
                 let latency = p.ConnectionLatency().unwrap_or(0);
                 let timeout = p.LinkTimeout().unwrap_or(0);
                 info!(
-                    target: "ble_gui::ota",
+                    target: "ble_gui::win_conn",
                     "BLE 连接参数[{when}]: interval={interval} ({:.1}ms) latency={latency} timeout={timeout}",
                     interval as f32 * 1.25,
                 );
             }
             Err(err) => {
                 info!(
-                    target: "ble_gui::ota",
+                    target: "ble_gui::win_conn",
                     "无法读取 BLE 连接参数[{when}]: {err}",
                 );
             }
