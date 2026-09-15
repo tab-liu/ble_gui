@@ -124,11 +124,12 @@ fn main() -> Result<(), slint::PlatformError> {
     )
     .format(|buf, record| {
         use std::io::Write;
-        // 本机时区（含毫秒与偏移），避免默认 UTC 造成对不上墙钟。
-        let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+        // 本机时区墙钟，不含偏移（避免行尾 +08:00 过长）。
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let level_style = buf.default_level_style(record.level());
         writeln!(
             buf,
-            "[{ts} {level:<5} {target}] {args}",
+            "[{ts} {level_style}{level:<5}{level_style:#} {target}] {args}",
             level = record.level(),
             target = record.target(),
             args = record.args()
