@@ -104,7 +104,7 @@ pub fn diagnose_business_decrypt(shared_key: &[u8; 32], packet: &[u8]) -> String
         "-".into()
     };
     let hint = if plain_length == 191 && packet.len() == 198 {
-        "疑似主页TLV整包应答(100~149+开关+链路+SSID)"
+        "旧主页TLV整包(曾读100~149×50)"
     } else if plain_length == 8 && packet.len() == 22 {
         "疑似FC10写应答"
     } else {

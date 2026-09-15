@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn build_read_request_wire_order_matches_modbus_write_cmd() {
-        // 主页 TLV：reg100×50 + reg2011×2；reg2011(0x07DB) 高字节非零，可暴露 BE/LE 组包差异。
+        // 主页 TLV：SOC@102×1 + 功率@140×8 + 开关@2011×2。
         let frame = build_tlv_read_request(&[
             TlReadSpec::from_register(0, 100, 50),
             TlReadSpec::from_register(0, 2011, 2),

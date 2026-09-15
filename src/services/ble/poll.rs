@@ -1,6 +1,6 @@
 //! Modbus 传输原语：仪表板轮询、能力探测、保持寄存器读写。
 //!
-//! - 主页：100～149 实时数据 + 2011/2012 输出状态（标准读或 TLV）
+//! - 主页：SOC@102 + 功率@140～147 + 2011/2012 开关（标准读或 TLV）
 //! - 写：FC06/FC10；[`write_holding_registers`] 支持单 bit 或
 //!   [`super::modbus::RegisterFieldPatch`] 多位域 RMW
 //! - 前台「该轮询什么」由 [`super::poll_executor`] 按策略调用本模块
@@ -15,17 +15,17 @@ use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
     build_read_holding, build_write_multiple, build_write_single, iot_status_supports_tlv,
-    is_fc10_write_ack, merge_control_states, parse_ascii_regs, parse_dashboard_registers,
+    is_fc10_write_ack, merge_control_states, parse_ascii_regs, parse_dashboard_soc_and_power,
     parse_device_info, parse_iot_identity, parse_iot_software_ver, parse_iot_type,
     parse_link_status_regs, parse_read_holding, parse_sta_ipv4_regs, parse_sta_rssi,
     parse_tlv_response_packet, parse_tlv_read_units, parse_whole_device, describe_tlv_units,
     format_regs_hex, tlv_register_values, TlReadSpec, TlvPacketCollector, DEFAULT_SLAVE_ID,
     IOT_CLOUD_DNS_REGISTER, IOT_CLOUD_DNS_REGISTER_COUNT, MODBUS_TIMEOUT_MS, REG_21000,
-    REG_AC_OUTPUT, REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DEVICE_INFO_COUNT,
-    REG_DEVICE_INFO_START, REG_IOT_IDENTITY_COUNT, REG_IOT_INFO_COUNT, REG_IOT_INFO_START,
-    REG_IOT_STATUS, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT, REG_STA_RSSI, REG_WHOLE_DEVICE_COUNT,
-    REG_WHOLE_DEVICE_START, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_PASSWORD,
-    REG_WIFI_STA_PASSWORD_COUNT,
+    REG_AC_OUTPUT, REG_DEVICE_INFO_COUNT, REG_DEVICE_INFO_START, REG_IOT_IDENTITY_COUNT,
+    REG_IOT_INFO_COUNT, REG_IOT_INFO_START, REG_IOT_STATUS, REG_LINK_STATUS,
+    REG_LINK_STATUS_BLOCK_COUNT, REG_POWER_COUNT, REG_POWER_START, REG_SOC, REG_SOC_COUNT,
+    REG_STA_RSSI, REG_WHOLE_DEVICE_COUNT, REG_WHOLE_DEVICE_START, REG_WIFI_SSID_NOW,
+    REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT,
 };
 
 const MODBUS_TLV_TIMEOUT_MS: u64 = 8000;
@@ -485,7 +485,7 @@ pub(crate) async fn modbus_tlv_read(
     }
 }
 
-/// 执行一次仪表板轮询（串行：先读 100～149，再读 2011～2012）。
+/// 执行一次仪表板轮询（SOC@102、功率@140～147、开关 2011/2012）。
 pub async fn poll_dashboard(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -504,37 +504,59 @@ pub async fn poll_dashboard(
 
     info!(
         target: "ble_gui::poll",
-        "主页轮询 slave_id={slave_id} 寄存器 100～149, 2011～2012",
+        "主页轮询 slave_id={slave_id} 寄存器 {REG_SOC}、{REG_POWER_START}～{}、2011～2012",
+        REG_POWER_START + REG_POWER_COUNT - 1,
     );
 
-    let regs = match modbus_read(
+    let soc_regs = match modbus_read(
         protocol,
         write_tx,
-        build_read_holding(slave_id, REG_DASHBOARD_START, REG_DASHBOARD_COUNT),
+        build_read_holding(slave_id, REG_SOC, REG_SOC_COUNT),
         slave_id,
-        REG_DASHBOARD_COUNT,
+        REG_SOC_COUNT,
     )
     .await
     {
         Ok(r) => r,
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
         Err(err) => {
-            warn!(target: "ble_gui::poll", "读寄存器 100～149 失败: {err}");
+            warn!(target: "ble_gui::poll", "读寄存器 {REG_SOC}(SOC) 失败: {err}");
+            return false;
+        }
+    };
+    let power_regs = match modbus_read(
+        protocol,
+        write_tx,
+        build_read_holding(slave_id, REG_POWER_START, REG_POWER_COUNT),
+        slave_id,
+        REG_POWER_COUNT,
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+        Err(err) => {
+            warn!(
+                target: "ble_gui::poll",
+                "读寄存器 {REG_POWER_START}～{} 失败: {err}",
+                REG_POWER_START + REG_POWER_COUNT - 1,
+            );
             return false;
         }
     };
 
-    if regs.iter().all(|v| *v == 0) {
+    let soc = *soc_regs.first().unwrap_or(&0);
+    if soc == 0 && power_regs.iter().all(|v| *v == 0) {
         warn!(
             target: "ble_gui::poll",
-            "100～149 段全部为 0，请检查从机地址 slave_id={slave_id}"
+            "主页功率段全 0，请检查从机地址 slave_id={slave_id}"
         );
     }
 
-    let mut dashboard = match parse_dashboard_registers(&regs) {
+    let mut dashboard = match parse_dashboard_soc_and_power(soc, &power_regs) {
         Some(d) => d,
         None => {
-            warn!(target: "ble_gui::poll", "解析 100～149 数据失败");
+            warn!(target: "ble_gui::poll", "解析主页 SOC/功率数据失败");
             return false;
         }
     };
@@ -593,11 +615,12 @@ async fn poll_dashboard_tlv(
 ) -> bool {
     debug!(
         target: "ble_gui::poll",
-        "主页 TLV 轮询 slave_id={slave_id} 寄存器 100～149, 2011～2012",
+        "主页 TLV 轮询 slave_id={slave_id} SOC@{REG_SOC} 功率@{REG_POWER_START}×{REG_POWER_COUNT} 开关@2011",
     );
 
     let tl_items = [
-        TlReadSpec::from_register(slave_id, REG_DASHBOARD_START, REG_DASHBOARD_COUNT),
+        TlReadSpec::from_register(slave_id, REG_SOC, REG_SOC_COUNT),
+        TlReadSpec::from_register(slave_id, REG_POWER_START, REG_POWER_COUNT),
         TlReadSpec::from_register(slave_id, REG_AC_OUTPUT, 2),
         TlReadSpec::from_register(slave_id, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT),
         TlReadSpec::from_register(slave_id, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT),
@@ -612,31 +635,36 @@ async fn poll_dashboard_tlv(
         }
     };
 
-    let dashboard = match tlv_register_values(&results, slave_id, REG_DASHBOARD_START) {
-        Ok(regs) => {
-            debug!(
-                target: "ble_gui::poll",
-                "TLV 100～149 原始 {} 个寄存器",
-                regs.len(),
-            );
-            parse_dashboard_registers(&regs)
-        }
+    let soc = match tlv_register_values(&results, slave_id, REG_SOC) {
+        Ok(regs) => *regs.first().unwrap_or(&0),
         Err(err) => {
             warn!(
                 target: "ble_gui::poll",
-                "TLV 缺少 100～149 数据: {err}；已收到 [{}]",
+                "TLV 缺少 SOC({REG_SOC}): {err}；已收到 [{}]",
                 describe_tlv_units(&results),
             );
-            None
+            return false;
+        }
+    };
+    let power = match tlv_register_values(&results, slave_id, REG_POWER_START) {
+        Ok(regs) => regs,
+        Err(err) => {
+            warn!(
+                target: "ble_gui::poll",
+                "TLV 缺少功率段({REG_POWER_START}): {err}；已收到 [{}]",
+                describe_tlv_units(&results),
+            );
+            return false;
         }
     };
 
-    let mut dashboard = match dashboard {
+    let mut dashboard = match parse_dashboard_soc_and_power(soc, &power) {
         Some(d) => d,
         None => {
             warn!(
                 target: "ble_gui::poll",
-                "TLV 解析 100～149 数据失败（需要 ≥48 寄存器）；已收到 [{}]",
+                "TLV 解析主页功率失败（需要 {REG_POWER_COUNT} 寄存器，实得 {}）；已收到 [{}]",
+                power.len(),
                 describe_tlv_units(&results),
             );
             return false;

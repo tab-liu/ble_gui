@@ -5,7 +5,7 @@
 //! | [`rtu`] | CRC、读/写保持寄存器帧、响应解析 |
 //! | [`query`] | 地址记法、整数/浮点/字符串格式化与写入编码 |
 //! | [`tlv`] | 组合读（写 21000）批量 TL |
-//! | [`dashboard`] | 主页 100～149 / 2011～2012 映射 |
+//! | [`dashboard`] | 主页 SOC@102 / 功率@140～147 / 2011～2012 |
 //! | [`device_info`] | 1100～1130 机型 / SN / 软件版本 |
 //! | [`device_config_builtin`] | 设备配置「常用」静态寄存器表 |
 //! | [`wifi_provision`] | WiFi 配网寄存器与链路状态 |
@@ -26,8 +26,9 @@ pub use device_config_builtin::{
 };
 
 pub use dashboard::{
-    merge_control_states, parse_dashboard_registers, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS,
-    POLL_INTERVAL_MS, REG_AC_OUTPUT, REG_DASHBOARD_COUNT, REG_DASHBOARD_START, REG_DC_OUTPUT,
+    merge_control_states, parse_dashboard_soc_and_power, DEFAULT_SLAVE_ID, MODBUS_TIMEOUT_MS,
+    POLL_INTERVAL_MS, REG_AC_OUTPUT, REG_DC_OUTPUT, REG_POWER_COUNT, REG_POWER_START, REG_SOC,
+    REG_SOC_COUNT,
 };
 pub use device_info::{
     format_regs_hex, parse_ascii_regs, parse_device_info, parse_iot_identity, parse_iot_software_ver,

@@ -719,6 +719,7 @@ dependencies = [
  "arboard",
  "btleplug",
  "cbc",
+ "chrono",
  "cipher",
  "encoding_rs",
  "env_logger",

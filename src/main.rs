@@ -58,7 +58,7 @@
 //!
 //! | 页面 | 轮询内容 |
 //! |------|----------|
-//! | 主页 | 寄存器 100～149 + AC/DC 2011/2012 |
+//! | 主页 | SOC@102 + 功率@140～147 + AC/DC 2011/2012 |
 //! | Modbus 查询 | 当前标签内查询项 |
 //! | 设备配置 | 常用映射或当前自定义分组项 |
 //! | 固件升级 / 设置 | 停止 Modbus 轮询 |
@@ -122,7 +122,18 @@ fn main() -> Result<(), slint::PlatformError> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("warn"),
     )
-    .format_timestamp_millis()
+    .format(|buf, record| {
+        use std::io::Write;
+        // 本机时区（含毫秒与偏移），避免默认 UTC 造成对不上墙钟。
+        let ts = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S%.3f%:z");
+        writeln!(
+            buf,
+            "[{ts} {level:<5} {target}] {args}",
+            level = record.level(),
+            target = record.target(),
+            args = record.args()
+        )
+    })
     .init();
     app::run()
 }
