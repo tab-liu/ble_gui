@@ -1368,18 +1368,55 @@ async fn connect_device(
     )
     .await?;
 
-    if connect_cancelled(cancel_connect) {
+    // GATT 已连上后，后续任一步失败都必须主动 disconnect。
+    // 否则链路占着：UI 像卡住、再连报 occupied，要等用户点取消才释放。
+    let result = connect_after_gatt(
+        adapter,
+        peripheral.clone(),
+        state,
+        event_tx,
+        ui_refresh,
+        address_text,
+        modbus_live,
+        query_live,
+        query_generation,
+        poll_policy,
+        cancel_connect,
+        ota_live,
+        expect_drop,
+    )
+    .await;
+    if result.is_err() {
         disconnect_peripheral(&peripheral).await;
+    }
+    result
+}
+
+async fn connect_after_gatt(
+    adapter: Adapter,
+    peripheral: Peripheral,
+    state: &SharedBleState,
+    event_tx: &std::sync::mpsc::Sender<()>,
+    ui_refresh: &super::UiRefreshSlot,
+    address_text: &str,
+    modbus_live: &SharedModbusLive,
+    query_live: &SharedQueryPollLive,
+    query_generation: &Arc<AtomicU64>,
+    poll_policy: &SharedPollPolicy,
+    cancel_connect: &AtomicBool,
+    ota_live: &SharedOtaLive,
+    expect_drop: SharedExpectDrop,
+) -> Result<ActiveSession, String> {
+    if connect_cancelled(cancel_connect) {
         return Err("已取消连接".into());
     }
 
     set_phase(state, LinkPhase::Connecting, "正在发现 GATT 服务……");
     notify_ui_force(ui_refresh, true);
 
-    discover_services_with_retry(&peripheral, 10).await?;
+    discover_services_with_retry(&peripheral, 10, cancel_connect).await?;
 
     if connect_cancelled(cancel_connect) {
-        disconnect_peripheral(&peripheral).await;
         return Err("已取消连接".into());
     }
 
@@ -1916,8 +1953,15 @@ async fn connect_device(
     })
 }
 
-async fn discover_services_with_retry(peripheral: &Peripheral, attempts: usize) -> Result<(), String> {
+async fn discover_services_with_retry(
+    peripheral: &Peripheral,
+    attempts: usize,
+    cancel_connect: &AtomicBool,
+) -> Result<(), String> {
     for attempt in 1..=attempts {
+        if connect_cancelled(cancel_connect) {
+            return Err("已取消连接".into());
+        }
         match peripheral.discover_services().await {
             Ok(()) => {
                 let has_target = peripheral.characteristics().iter().any(|c| {
@@ -1927,12 +1971,22 @@ async fn discover_services_with_retry(peripheral: &Peripheral, attempts: usize) 
                     return Ok(());
                 }
             }
-            Err(err) if attempt == attempts => {
-                return Err(format!("GATT 服务发现失败：{err}"));
+            Err(err) => {
+                let msg = err.to_string();
+                // 对象已关闭 / 已中止：链路已废，再重试只会空转。
+                let link_dead = msg.contains("0x80000013")
+                    || msg.contains("已关闭")
+                    || msg.contains("0x80004004")
+                    || msg.contains("已中止");
+                if link_dead && attempt >= 2 {
+                    return Err(format!("GATT 服务发现失败：{err}"));
+                }
+                if attempt == attempts {
+                    return Err(format!("GATT 服务发现失败：{err}"));
+                }
             }
-            Err(_) => {}
         }
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        sleep_unless_cancelled(cancel_connect, Duration::from_millis(500)).await?;
     }
     Err("GATT 已连接但未发现 FF00 服务".to_string())
 }
