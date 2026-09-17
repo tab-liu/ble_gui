@@ -25,9 +25,9 @@ use crate::pages;
 use crate::pages::{device_config, modbus_query};
 use crate::services::ble::ensure_dashboard_poll_if_idle;
 use crate::services::poll_sync::{set_app_page, sync_poll_policy};
-use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD};
+use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD, PAGE_EXTERNAL};
 use crate::ui::MainWindow;
-use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_modbus_dashboard_from_live};
+use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_external_devices_from_live, refresh_modbus_dashboard_from_live};
 
 /// 创建并运行主窗口（阻塞到退出）。
 pub fn run() -> Result<(), slint::PlatformError> {
@@ -59,6 +59,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     ensure_dashboard_poll_if_idle(&poll_policy);
                     if ui.get_current_page() == PAGE_DASHBOARD {
                         refresh_modbus_dashboard_from_live(&ui, &modbus_live);
+                    }
+                    if ui.get_current_page() == PAGE_EXTERNAL {
+                        refresh_external_devices_from_live(&ui, &modbus_live);
                     }
                 }
             }

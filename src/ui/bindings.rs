@@ -16,7 +16,7 @@ use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
 use crate::services::modbus::{DashboardData, ModbusReadMode, SubDevice};
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG};
+use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_EXTERNAL};
 use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow, SubDeviceInfo};
 
 const DEFAULT_RSSI_MIN: i32 = -70;
@@ -345,6 +345,9 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     if page == PAGE_DASHBOARD {
         refresh_modbus_dashboard(ui, &ctx.modbus);
     }
+    if page == PAGE_EXTERNAL {
+        refresh_external_devices(ui, &ctx.modbus);
+    }
     if page == PAGE_DEVICE_CONFIG {
         crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
@@ -479,12 +482,23 @@ pub fn refresh_modbus_dashboard_from_live(
     ui.set_dashboard_wifi_password(wifi_password.into());
     ui.set_dashboard_wifi_rssi_text(rssi_text.into());
     ui.set_dashboard_sta_ip(sta_ip.into());
+}
 
-    let sub_devices = snap
+pub fn refresh_external_devices(ui: &MainWindow, modbus: &crate::services::modbus::ModbusService) {
+    refresh_external_devices_from_live(ui, &modbus.shared_live());
+}
+
+pub fn refresh_external_devices_from_live(
+    ui: &MainWindow,
+    live: &crate::services::modbus::SharedModbusLive,
+) {
+    let snap = live.lock().ok();
+    let (devices, valid) = snap
         .as_ref()
-        .map(|l| l.sub_devices.clone())
+        .map(|l| (l.sub_devices.clone(), l.sub_devices_valid))
         .unwrap_or_default();
-    let fp = sub_devices
+    ui.set_external_devices_valid(valid);
+    let fp = devices
         .iter()
         .map(|d| format!("{}:{}:{}:{}", d.sn, d.state, d.dev_type, d.slave_addr))
         .collect::<Vec<_>>()
@@ -498,8 +512,8 @@ pub fn refresh_modbus_dashboard_from_live(
         }
     });
     if changed {
-        ui.set_dashboard_sub_devices(ModelRc::new(VecModel::from(
-            sub_devices.iter().map(sub_device_to_ui).collect::<Vec<_>>(),
+        ui.set_external_devices(ModelRc::new(VecModel::from(
+            devices.iter().map(sub_device_to_ui).collect::<Vec<_>>(),
         )));
     }
 }
@@ -507,7 +521,7 @@ pub fn refresh_modbus_dashboard_from_live(
 fn sub_device_to_ui(dev: &SubDevice) -> SubDeviceInfo {
     let type_name = sn_type_name(dev.dev_type);
     SubDeviceInfo {
-        role: if dev.is_self { "本机".into() } else { "子设备".into() },
+        role: if dev.is_self { "本机".into() } else { "配件".into() },
         type_name: if type_name.is_empty() {
             "—".into()
         } else {

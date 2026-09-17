@@ -22,6 +22,7 @@ import { WifiPickerDialog } from "components/wifi_picker_dialog.slint";
 import { DashboardPage } from "pages/dashboard.slint";
 import { ModbusPage } from "pages/modbus.slint";
 import { DeviceConfigPage } from "pages/device_config.slint";
+import { ExternalPage } from "pages/external.slint";
 import { SettingsPage } from "pages/settings.slint";
 import { FirmwarePage } from "pages/firmware.slint";
 import { ModbusDndApi } from "components/modbus_dnd.slint";
@@ -87,7 +88,8 @@ export component MainWindow inherits Window {
     in-out property <string> dashboard-wifi-password;
     in-out property <string> dashboard-wifi-rssi-text;
     in-out property <string> dashboard-sta-ip;
-    in-out property <[SubDeviceInfo]> dashboard-sub-devices;
+    in-out property <[SubDeviceInfo]> external-devices;
+    in-out property <bool> external-devices-valid;
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
@@ -330,7 +332,6 @@ export component MainWindow inherits Window {
                             dashboard-wifi-password: root.dashboard-wifi-password;
                             dashboard-wifi-rssi-text: root.dashboard-wifi-rssi-text;
                             dashboard-sta-ip: root.dashboard-sta-ip;
-                            dashboard-sub-devices: root.dashboard-sub-devices;
                             select-scan-device(address) => {
                                 root.select-scan-device(address);
                             }
@@ -506,6 +507,15 @@ export component MainWindow inherits Window {
                             tab-strip-width-changed(width) => { root.config-tab-strip-width-changed(width); }
                             wifi-apply => { root.wifi-apply(); }
                             wifi-scan => { root.wifi-scan(); }
+                        }
+
+                        if root.current-page == 5: ExternalPage {
+                            device-connected: root.device-connected;
+                            external-devices-valid: root.external-devices-valid;
+                            external-devices: root.external-devices;
+                            copy-text(text) => {
+                                root.copy-text(text);
+                            }
                         }
                     }
                 }

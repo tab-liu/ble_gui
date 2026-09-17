@@ -2,7 +2,7 @@
 //!
 //! 基于 **Rust + Slint + btleplug** 的跨平台 GUI：扫描/连接 BLUETTI 类设备，
 //! 经加密 BLE 链路做 Modbus 轮询与写入。页面包括主页仪表、Modbus 查询、
-//! 设备配置、固件升级、设置。
+//! 设备配置、外部设备、固件升级、设置。
 //!
 //! ## 生成文档（rustdoc）
 //!
@@ -100,7 +100,7 @@
 //! | 模块 | 职责 |
 //! |------|------|
 //! | [`app`] | 组装 UI、定时器、事件循环入口 |
-//! | [`pages`] | 各页面回调接线（dashboard / modbus / device_config / firmware …） |
+//! | [`pages`] | 各页面回调接线（dashboard / modbus / device_config / external / firmware …） |
 //! | [`services`] | BLE、Modbus、固件 OTA、持久化、主题 |
 //! | [`state`] | `AppContext`、页面 ID、对话框常量 |
 //! | [`ui`] | Slint 生成类型 + 属性刷新辅助 |
