@@ -7,7 +7,7 @@
 //!
 //! 与侧栏 `navigate`、Slint `current-page` 一致：
 //! [`PAGE_DASHBOARD`] / [`PAGE_MODBUS`] / [`PAGE_DEVICE_CONFIG`] /
-//! [`PAGE_FIRMWARE`] / [`PAGE_SETTINGS`]。
+//! [`PAGE_EXTERNAL`] / [`PAGE_FIRMWARE`] / [`PAGE_SETTINGS`]。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -41,6 +41,8 @@ pub const PAGE_SETTINGS: i32 = 2;
 pub const PAGE_FIRMWARE: i32 = 3;
 /// 设备配置（固定「常用」+ 自定义寄存器表单）。
 pub const PAGE_DEVICE_CONFIG: i32 = 4;
+/// 外部设备 / 组网配件（21000 段列表）。
+pub const PAGE_EXTERNAL: i32 = 5;
 
 /// UI 线程可变状态（查询标签、设备配置分组等）。
 pub struct AppState {

@@ -36,6 +36,8 @@ pub enum PollForeground {
         slave_id: u8,
         items: Vec<QueryPollItemSpec>,
     },
+    /// 外部设备页：写 21000=1 取组网配件列表。
+    ExternalDevices,
 }
 
 /// 单个查询/配置项在轮询层的描述（与 Slint 模型解耦）。
@@ -141,6 +143,7 @@ pub fn describe_poll_foreground(f: &PollForeground) -> String {
             let kind = if *builtin { "设备配置·常用" } else { "设备配置·分组" };
             describe_items(kind, *group_index, *slave_id, items)
         }
+        PollForeground::ExternalDevices => "外部设备 · 21000 组网列表".into(),
     }
 }
 

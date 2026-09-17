@@ -1,0 +1,76 @@
+import { VerticalBox, ScrollView } from "std-widgets.slint";
+import { SubDeviceInfo } from "../types.slint";
+import { Theme } from "../theme.slint";
+import { SubDeviceRow } from "../components/sub_device_row.slint";
+
+export component ExternalPage inherits VerticalBox {
+    in property <bool> device-connected;
+    in property <bool> external-devices-valid;
+    in property <[SubDeviceInfo]> external-devices;
+    callback copy-text(string);
+
+    spacing: 16px;
+    vertical-stretch: 1;
+
+    Text {
+        text: "外部设备";
+        color: Theme.text-primary;
+        font-size: 18px;
+        font-weight: 700;
+    }
+
+    Text {
+        text: "电池包、插座、Hub 等组网配件；本页打开时查询 21000 段列表。";
+        color: Theme.text-dim;
+        font-size: 12px;
+        wrap: word-wrap;
+    }
+
+    if !root.device-connected: Rectangle {
+        vertical-stretch: 1;
+        border-radius: 12px;
+        background: Theme.bg-panel;
+        border-width: 1px;
+        border-color: Theme.border;
+        Text {
+            text: "请先在主页连接设备";
+            color: Theme.text-dim;
+            font-size: 13px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.device-connected: ScrollView {
+        vertical-stretch: 1;
+
+        VerticalBox {
+            spacing: 12px;
+            alignment: start;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.external-devices.length == 0
+                        ? (root.external-devices-valid ? "暂无配件上报" : "正在查询…")
+                        : "\{root.external-devices.length} 台";
+                    color: Theme.text-dim;
+                    font-size: 12px;
+                    vertical-alignment: center;
+                }
+            }
+
+            for dev in root.external-devices: SubDeviceRow {
+                role: dev.role;
+                type-name: dev.type-name;
+                sn: dev.sn;
+                addr-text: dev.addr-text;
+                status-text: dev.status-text;
+                online: dev.online;
+                alarm: dev.alarm;
+                copy-text(t) => { root.copy-text(t); }
+            }
+        }
+    }
+}

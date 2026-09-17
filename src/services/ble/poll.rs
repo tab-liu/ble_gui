@@ -520,7 +520,6 @@ pub async fn poll_dashboard(
     gate: &ModbusGate,
 ) -> bool {
     let _guard = gate.lock().await;
-    request_sub_device_list_once(protocol, write_tx, live).await;
     let (slave_id, use_tlv) = {
         let inner = live.lock().expect("modbus live lock");
         (inner.slave_id, inner.read_mode == ModbusReadMode::Tlv)
@@ -813,27 +812,45 @@ async fn poll_dashboard_link(
     apply_dashboard_link(live, &link_regs, &ssid_regs);
 }
 
-/// 写 21000=1，触发设备主动上报组网/子设备列表。
-async fn request_sub_device_list_once(
+/// 外部设备页：写 21000=1，等待设备上报组网配件列表。
+pub async fn poll_external_devices(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
     live: &SharedModbusLive,
-) {
-    let already = live
-        .lock()
-        .map(|inner| inner.sub_devices_requested)
-        .unwrap_or(true);
-    if already {
-        return;
-    }
-    if let Ok(mut inner) = live.lock() {
-        inner.sub_devices_requested = true;
-    }
+    gate: &ModbusGate,
+) -> bool {
+    let _guard = gate.lock().await;
     let request = build_write_single(0, REG_21000, 1);
     match modbus_transaction(protocol, write_tx, request).await {
-        Ok(_) => info!(target: "ble_gui::poll", "已请求 21000 子设备列表"),
-        Err(err) => warn!(target: "ble_gui::poll", "请求 21000 子设备列表失败: {err}"),
+        Ok(_) => info!(target: "ble_gui::poll", "已请求 21000 组网列表"),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "请求 21000 组网列表失败: {err}");
+            return false;
+        }
     }
+
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(1000);
+    loop {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+        loop {
+            let more = protocol
+                .lock()
+                .expect("protocol lock")
+                .pop_modbus_response()
+                .is_some();
+            if !more {
+                break;
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+    }
+
+    live.lock()
+        .map(|inner| inner.sub_devices_valid)
+        .unwrap_or(false)
 }
 
 /// 写保持寄存器：单字用 FC06，多字用 FC10；`bit` 为 Some 时先读后改写该位；`field` 为 Some 时先读后改多位域。
@@ -1065,7 +1082,6 @@ pub fn init_live_on_connect(live: &SharedModbusLive) {
     inner.sta_rssi = 0;
     inner.sub_devices.clear();
     inner.sub_devices_valid = false;
-    inner.sub_devices_requested = false;
 }
 
 pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
@@ -1097,7 +1113,6 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.sta_rssi = 0;
     inner.sub_devices.clear();
     inner.sub_devices_valid = false;
-    inner.sub_devices_requested = false;
 }
 
 #[cfg(test)]

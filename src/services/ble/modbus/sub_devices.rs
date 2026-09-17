@@ -119,7 +119,7 @@ pub fn apply_sub_device_report(live: &SharedModbusLive, report: SubDeviceReport)
     inner.sub_devices_valid = true;
     info!(
         target: "ble_gui::poll",
-        "21000 子设备列表 ver={} bias={} 共 {} 台: {}",
+        "21000 组网列表 ver={} bias={} 共 {} 台: {}",
         report.ver,
         report.bias,
         inner.sub_devices.len(),

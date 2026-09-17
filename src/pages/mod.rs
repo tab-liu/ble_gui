@@ -7,6 +7,7 @@
 
 pub mod dashboard;
 pub mod device_config;
+pub mod external;
 pub mod firmware_upgrade;
 pub mod modbus_query;
 pub mod settings;
@@ -20,6 +21,7 @@ pub fn wire_all(ui: &MainWindow, ctx: &AppContext) {
     dashboard::wire(ui, ctx);
     modbus_query::wire(ui, ctx);
     device_config::wire(ui, ctx);
+    external::wire(ui, ctx);
     settings::wire(ui, ctx);
     firmware_upgrade::wire(ui, ctx);
 }

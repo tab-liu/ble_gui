@@ -4,6 +4,7 @@
 //! |----------------------------------------|------|
 //! | `Dashboard` | [`super::poll::poll_dashboard`] + 连接后一次设备信息 |
 //! | `ModbusQuery` / `DeviceConfig` | 按项读保持寄存器，写入 `QueryPollSnapshot` |
+//! | `ExternalDevices` | 写 21000=1，收组网配件列表 |
 //! | `None` 或 OTA 忙 | 不发 Modbus |
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -19,7 +20,7 @@ use super::modbus::{
     build_read_holding, chunk_tl_batches, format_query_value, tlv_batch_start_index,
     tlv_item_batch_index, tlv_register_values, TlReadSpec,
 };
-use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, probe_modbus_capabilities, read_device_info_once, ModbusGate};
+use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, poll_external_devices, probe_modbus_capabilities, read_device_info_once, ModbusGate};
 use super::poll_policy::{
     describe_poll_foreground, effective_foreground, ensure_dashboard_poll_if_idle, PollForeground,
     QueryPollItemSpec, SharedPollPolicy,
@@ -159,6 +160,14 @@ pub async fn poll_foreground(
                 items,
             )
             .await
+        }
+        PollForeground::ExternalDevices => {
+            info!(
+                target: "ble_gui::poll",
+                "开始 {}",
+                describe_poll_foreground(&foreground),
+            );
+            poll_external_devices(protocol, write_tx, modbus_live, gate).await
         }
     }
 }

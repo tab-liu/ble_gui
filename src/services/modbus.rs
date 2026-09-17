@@ -120,7 +120,7 @@ impl SubDevice {
     }
 
     pub fn summary(&self) -> String {
-        let role = if self.is_self { "本机" } else { "子设备" };
+        let role = if self.is_self { "本机" } else { "配件" };
         let sn = self.sn_text();
         if sn.is_empty() {
             format!("{role} 从机{}", self.slave_addr)
@@ -166,7 +166,6 @@ pub struct ModbusLive {
     /// 21000 段主动上报的组网设备（含本机）。
     pub sub_devices: Vec<SubDevice>,
     pub sub_devices_valid: bool,
-    pub sub_devices_requested: bool,
 }
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
@@ -282,7 +281,6 @@ impl ModbusService {
             live.sta_rssi = 0;
             live.sub_devices.clear();
             live.sub_devices_valid = false;
-            live.sub_devices_requested = false;
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();

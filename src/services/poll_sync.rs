@@ -14,7 +14,8 @@ use crate::services::ble::modbus::{
 };
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
 use crate::state::{
-    AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_FIRMWARE, PAGE_MODBUS, PAGE_SETTINGS,
+    AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_EXTERNAL, PAGE_FIRMWARE, PAGE_MODBUS,
+    PAGE_SETTINGS,
 };
 use crate::ui::MainWindow;
 
@@ -41,6 +42,7 @@ pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
             PAGE_DASHBOARD => PollForeground::Dashboard,
             PAGE_MODBUS => build_modbus_query_foreground(ui, ctx),
             PAGE_DEVICE_CONFIG => build_device_config_foreground(ui, ctx),
+            PAGE_EXTERNAL => PollForeground::ExternalDevices,
             PAGE_SETTINGS | PAGE_FIRMWARE => PollForeground::None,
             _ => PollForeground::None,
         }
