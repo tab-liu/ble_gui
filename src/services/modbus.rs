@@ -41,6 +41,95 @@ pub struct DashboardData {
     pub dc_output_on: bool,
 }
 
+/// 21000 段上报的组网节点（本机或子设备）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SubDevice {
+    pub is_self: bool,
+    pub slave_addr: u8,
+    pub group_addr: u8,
+    pub master_addr: u8,
+    pub group_same_type_addr: u8,
+    pub state: u16,
+    pub sn: u64,
+    pub dev_type: u16,
+}
+
+impl SubDevice {
+    pub fn online(&self) -> bool {
+        self.state & 0x0001 != 0
+    }
+
+    pub fn update_need(&self) -> bool {
+        self.state & 0x0002 != 0
+    }
+
+    pub fn alarm(&self) -> bool {
+        self.state & 0x0004 != 0
+    }
+
+    pub fn protect(&self) -> bool {
+        self.state & 0x0008 != 0
+    }
+
+    pub fn system_on(&self) -> bool {
+        self.state & 0x0010 != 0
+    }
+
+    pub fn bat_alarm(&self) -> bool {
+        self.state & 0x0020 != 0
+    }
+
+    pub fn sn_text(&self) -> String {
+        if self.sn == 0 {
+            String::new()
+        } else {
+            self.sn.to_string()
+        }
+    }
+
+    pub fn status_text(&self) -> String {
+        let mut parts = Vec::new();
+        if self.online() {
+            parts.push("在线");
+        } else {
+            parts.push("离线");
+        }
+        if self.system_on() {
+            parts.push("开机");
+        }
+        if self.update_need() {
+            parts.push("待升级");
+        }
+        if self.alarm() {
+            parts.push("告警");
+        }
+        if self.protect() {
+            parts.push("故障");
+        }
+        if self.bat_alarm() {
+            parts.push("电池告警");
+        }
+        parts.join(" · ")
+    }
+
+    pub fn addr_text(&self) -> String {
+        format!(
+            "从机 {} · 群组 {} · 主机 {}",
+            self.slave_addr, self.group_addr, self.master_addr
+        )
+    }
+
+    pub fn summary(&self) -> String {
+        let role = if self.is_self { "本机" } else { "子设备" };
+        let sn = self.sn_text();
+        if sn.is_empty() {
+            format!("{role} 从机{}", self.slave_addr)
+        } else {
+            format!("{role} {sn}")
+        }
+    }
+}
+
 /// BLE worker 与 UI 共享的 Modbus 实时状态。
 #[derive(Clone, Debug, Default)]
 pub struct ModbusLive {
@@ -74,6 +163,10 @@ pub struct ModbusLive {
     pub ssid_now: String,
     pub sta_ip: String,
     pub sta_rssi: i16,
+    /// 21000 段主动上报的组网设备（含本机）。
+    pub sub_devices: Vec<SubDevice>,
+    pub sub_devices_valid: bool,
+    pub sub_devices_requested: bool,
 }
 
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
@@ -187,6 +280,9 @@ impl ModbusService {
             live.ssid_now.clear();
             live.sta_ip.clear();
             live.sta_rssi = 0;
+            live.sub_devices.clear();
+            live.sub_devices_valid = false;
+            live.sub_devices_requested = false;
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();

@@ -119,3 +119,14 @@ export struct WifiScanAp {
     signal: string,
     band: string,
 }
+
+/// 21000 段上报的组网节点（本机或子设备）。
+export struct SubDeviceInfo {
+    role: string,
+    type-name: string,
+    sn: string,
+    addr-text: string,
+    status-text: string,
+    online: bool,
+    alarm: bool,
+}

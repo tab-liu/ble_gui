@@ -11,6 +11,7 @@ import {
     BuiltinConfigItem,
     WifiSavedNetwork,
     WifiScanAp,
+    SubDeviceInfo,
 } from "types.slint";
 
 import { Theme } from "theme.slint";
@@ -36,6 +37,7 @@ export {
     BuiltinConfigItem,
     WifiSavedNetwork,
     WifiScanAp,
+    SubDeviceInfo,
     Theme,
     Palette,
     ModbusDndApi,
@@ -85,6 +87,7 @@ export component MainWindow inherits Window {
     in-out property <string> dashboard-wifi-password;
     in-out property <string> dashboard-wifi-rssi-text;
     in-out property <string> dashboard-sta-ip;
+    in-out property <[SubDeviceInfo]> dashboard-sub-devices;
 
     in-out property <[ModbusTab]> modbus-tabs;
     in-out property <int> active-modbus-tab: 0;
@@ -327,6 +330,7 @@ export component MainWindow inherits Window {
                             dashboard-wifi-password: root.dashboard-wifi-password;
                             dashboard-wifi-rssi-text: root.dashboard-wifi-rssi-text;
                             dashboard-sta-ip: root.dashboard-sta-ip;
+                            dashboard-sub-devices: root.dashboard-sub-devices;
                             select-scan-device(address) => {
                                 root.select-scan-device(address);
                             }

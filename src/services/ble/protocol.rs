@@ -16,7 +16,9 @@ use super::crypto::{
     aes_cbc, encrypt_business_packet, trim_zero, zero_pad, PRIVATE_KEY_L1, PUBLIC_KEY_K2,
     ROOT_AES_KEY,
 };
+use super::modbus::{apply_sub_device_report, parse_reg21000_report_frame};
 use super::transport::ModbusRxAssembler;
+use crate::services::modbus::SharedModbusLive;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandshakePhase {
@@ -40,6 +42,7 @@ pub struct ProtocolSession {
     handshake_acc: Vec<u8>,
     handshake_prefix: Option<&'static str>,
     pub rx: ModbusRxAssembler,
+    modbus_live: Option<SharedModbusLive>,
 }
 
 impl ProtocolSession {
@@ -58,7 +61,12 @@ impl ProtocolSession {
             handshake_acc: Vec::new(),
             handshake_prefix: None,
             rx: ModbusRxAssembler::new(),
+            modbus_live: None,
         }
+    }
+
+    pub fn set_modbus_live(&mut self, live: SharedModbusLive) {
+        self.modbus_live = Some(live);
     }
 
     pub fn is_encryption_ready(&self) -> bool {
@@ -91,11 +99,30 @@ impl ProtocolSession {
     }
 
     pub fn pop_modbus_response(&mut self) -> Option<Vec<u8>> {
-        self.rx.pop_response()
+        loop {
+            let frame = self.rx.pop_response()?;
+            if self.consume_unsolicited_21000(&frame) {
+                continue;
+            }
+            return Some(frame);
+        }
     }
 
     pub fn clear_modbus_responses(&mut self) {
+        while let Some(frame) = self.rx.pop_response() {
+            let _ = self.consume_unsolicited_21000(&frame);
+        }
         self.rx.clear_pending_responses();
+    }
+
+    fn consume_unsolicited_21000(&self, frame: &[u8]) -> bool {
+        let Some(report) = parse_reg21000_report_frame(frame) else {
+            return false;
+        };
+        if let Some(live) = &self.modbus_live {
+            apply_sub_device_report(live, report);
+        }
+        true
     }
 
     pub fn set_ota_rx_diag(&mut self, enabled: bool) {

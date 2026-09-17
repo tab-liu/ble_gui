@@ -10,13 +10,14 @@ use std::sync::Mutex;
 use log::warn;
 
 use crate::services::ble::modbus::rssi_quality_text;
+use crate::services::ble::modbus::sn_type_name;
 use crate::services::ble::{BleScanEntry, BleSnapshot, ScanLinkHint};
 use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
-use crate::services::modbus::{DashboardData, ModbusReadMode};
+use crate::services::modbus::{DashboardData, ModbusReadMode, SubDevice};
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG};
-use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow};
+use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow, SubDeviceInfo};
 
 const DEFAULT_RSSI_MIN: i32 = -70;
 
@@ -44,6 +45,7 @@ thread_local! {
         filter_key: String::new(),
         favorites_fingerprint: String::new(),
     });
+    static SUB_DEVICE_FP: RefCell<String> = RefCell::new(String::new());
 }
 
 fn parse_rssi_min(text: &str) -> i32 {
@@ -477,6 +479,53 @@ pub fn refresh_modbus_dashboard_from_live(
     ui.set_dashboard_wifi_password(wifi_password.into());
     ui.set_dashboard_wifi_rssi_text(rssi_text.into());
     ui.set_dashboard_sta_ip(sta_ip.into());
+
+    let sub_devices = snap
+        .as_ref()
+        .map(|l| l.sub_devices.clone())
+        .unwrap_or_default();
+    let fp = sub_devices
+        .iter()
+        .map(|d| format!("{}:{}:{}:{}", d.sn, d.state, d.dev_type, d.slave_addr))
+        .collect::<Vec<_>>()
+        .join("|");
+    let changed = SUB_DEVICE_FP.with(|cached| {
+        if *cached.borrow() == fp {
+            false
+        } else {
+            *cached.borrow_mut() = fp;
+            true
+        }
+    });
+    if changed {
+        ui.set_dashboard_sub_devices(ModelRc::new(VecModel::from(
+            sub_devices.iter().map(sub_device_to_ui).collect::<Vec<_>>(),
+        )));
+    }
+}
+
+fn sub_device_to_ui(dev: &SubDevice) -> SubDeviceInfo {
+    let type_name = sn_type_name(dev.dev_type);
+    SubDeviceInfo {
+        role: if dev.is_self { "本机".into() } else { "子设备".into() },
+        type_name: if type_name.is_empty() {
+            "—".into()
+        } else {
+            type_name.into()
+        },
+        sn: {
+            let sn = dev.sn_text();
+            if sn.is_empty() {
+                "—".into()
+            } else {
+                sn.into()
+            }
+        },
+        addr_text: dev.addr_text().into(),
+        status_text: dev.status_text().into(),
+        online: dev.online(),
+        alarm: dev.alarm() || dev.protect() || dev.bat_alarm(),
+    }
 }
 
 fn synced_favorite_snapshot(

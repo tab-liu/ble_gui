@@ -1509,7 +1509,11 @@ async fn connect_after_gatt(
 
     let (write_tx, mut write_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let (session_cmd_tx, mut session_cmd_rx) = mpsc::unbounded_channel::<SessionCommand>();
-    let protocol = Arc::new(Mutex::new(ProtocolSession::new()));
+    let protocol = Arc::new(Mutex::new({
+        let mut session = ProtocolSession::new();
+        session.set_modbus_live(modbus_live.clone());
+        session
+    }));
     let protocol_for_notify = protocol.clone();
     let protocol_for_write = protocol.clone();
     let state_for_notify = state.clone();

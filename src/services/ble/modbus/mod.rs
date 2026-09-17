@@ -5,6 +5,7 @@
 //! | [`rtu`] | CRC、读/写保持寄存器帧、响应解析 |
 //! | [`query`] | 地址记法、整数/浮点/字符串格式化与写入编码 |
 //! | [`tlv`] | 组合读（写 21000）批量 TL |
+//! | [`sub_devices`] | 21000 段主动上报的组网/子设备列表 |
 //! | [`dashboard`] | 主页 SOC@102 / 功率@140～147 / 2011～2012 |
 //! | [`device_info`] | 1100～1130 机型 / SN / 软件版本 |
 //! | [`device_config_builtin`] | 设备配置「常用」静态寄存器表 |
@@ -15,6 +16,7 @@ mod device_config_builtin;
 mod device_info;
 mod query;
 mod rtu;
+mod sub_devices;
 mod tlv;
 mod wifi_provision;
 
@@ -53,6 +55,7 @@ pub use wifi_provision::{
 pub use rtu::{
     build_read_holding, build_write_single, parse_read_holding, plain_modbus_frame_length,
 };
+pub use sub_devices::{apply_sub_device_report, parse_reg21000_report_frame, sn_type_name};
 pub use tlv::{
     build_tlv_read_request, build_write_multiple, chunk_tl_batches,
     iot_status_supports_tlv, is_fc10_write_ack, parse_tlv_read_units, parse_tlv_response_packet,

@@ -1,0 +1,77 @@
+import { Theme } from "../theme.slint";
+import { CopyableValue } from "copyable_info_row.slint";
+
+/// 主页子设备列表中的一行。
+export component SubDeviceRow inherits Rectangle {
+    in property <string> role;
+    in property <string> type-name;
+    in property <string> sn;
+    in property <string> addr-text;
+    in property <string> status-text;
+    in property <bool> online;
+    in property <bool> alarm;
+    callback copy-text(string);
+
+    border-radius: 10px;
+    background: Theme.bg-panel-alt;
+    border-width: 1px;
+    border-color: Theme.border;
+    min-height: 64px;
+    vertical-stretch: 0;
+
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+        alignment: start;
+        cross-axis-alignment: start;
+
+        Rectangle {
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
+            background: root.alarm ? Theme.error : (root.online ? Theme.success : Theme.text-dim);
+            vertical-stretch: 0;
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+            min-width: 0px;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text {
+                    text: root.role;
+                    color: Theme.accent;
+                    font-size: 11px;
+                    font-weight: 700;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: root.type-name == "" ? "—" : root.type-name;
+                    color: Theme.text-primary;
+                    font-size: 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                }
+            }
+
+            CopyableValue {
+                value: root.sn == "" ? "—" : root.sn;
+                copy-payload: root.sn;
+                copy-text(t) => { root.copy-text(t); }
+            }
+
+            Text {
+                text: root.addr-text + "  ·  " + root.status-text;
+                color: Theme.text-dim;
+                font-size: 11px;
+                overflow: elide;
+            }
+        }
+    }
+}
