@@ -4,6 +4,8 @@
 //! - 子设备：EOT 后再读 720～768，等 IOT 经 CAN 刷完。
 //! - Start 后不等 0x10 应答，等 `'C'`(0x43)
 //! - 数据块 1029 字节（STX + 序号 + 反码 + 1024 + CRC16-XMODEM）
+//! - 用户停止：已在传包则发 ETX(0x03) 并补一包，让设备 `iot_ota_abort` 且开回 Wi-Fi；
+//!   仍在等 C 或 ETX 无应答则断开 GATT（`BLE_EVT_ADV` → `vXmodemClientExit`）
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -26,6 +28,7 @@ use crate::services::modbus::SharedModbusLive;
 const XMODEM_BLOCK: usize = 1024;
 const XMODEM_STX: u8 = 0x02;
 const XMODEM_EOT: u8 = 0x04;
+const XMODEM_ETX: u8 = 0x03;
 const XMODEM_ACK: u8 = 0x06;
 const XMODEM_NAK: u8 = 0x15;
 const XMODEM_CAN: u8 = 0x18;
@@ -42,6 +45,25 @@ const CTRL_WAIT: Duration = Duration::from_secs(5);
 const CTRL_WAIT_IOT_START: Duration = Duration::from_secs(15);
 const DIST_POLL: Duration = Duration::from_secs(1);
 const DIST_STALL: Duration = Duration::from_secs(90);
+const ABORT_WAIT: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AbortPhase {
+    /// OTA Start 已发或等待 C：设备可能已关 Wi-Fi，1 字节 ETX 会踩 step 0。
+    AwaitingReady,
+    /// 已收到 C、尚未 EOT：发 ETX 中止并补一包触发开 Wi-Fi。
+    Xmodem,
+    /// XMODEM 已结束（CAN 分发）：设备已 `vXmodemClientExit`，Wi-Fi 应已恢复。
+    AfterXmodem,
+}
+
+fn abort_should_disconnect(phase: AbortPhase, etx_acked: bool) -> bool {
+    match phase {
+        AbortPhase::AwaitingReady => true,
+        AbortPhase::Xmodem => !etx_acked,
+        AbortPhase::AfterXmodem => false,
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum CtrlResult {
@@ -182,6 +204,7 @@ fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl Into<String
         g.fail_reason = reason.clone();
         g.stage_text = if g.cancel { "已停止".into() } else { "升级失败".into() };
         g.status_text = reason;
+        g.freeze_elapsed();
     }
     if let Ok(hook) = ui.lock() {
         if let Some(cb) = hook.as_ref() {
@@ -200,12 +223,82 @@ fn succeed(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, stage: String) {
         g.fail_reason.clear();
         g.stage_text = stage;
         g.status_text.clear();
+        g.freeze_elapsed();
     }
     if let Ok(hook) = ui.lock() {
         if let Some(cb) = hook.as_ref() {
             cb();
         }
     }
+}
+
+/// 用户点停止：XMODEM 阶段发 ETX+补包；等 C 时 1 字节 ETX 不安全，改断 GATT。
+async fn finish_user_stop(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &UnboundedSender<Vec<u8>>,
+    ota: &SharedOtaLive,
+    ui: &super::UiRefreshSlot,
+    phase: AbortPhase,
+) {
+    publish(ota, ui, "正在通知设备结束升级…", None, None);
+    let etx_acked = if phase == AbortPhase::Xmodem {
+        notify_device_xmodem_abort(protocol, write_tx, ota).await
+    } else {
+        false
+    };
+    let disconnect = abort_should_disconnect(phase, etx_acked);
+    if disconnect {
+        if let Ok(mut g) = ota.lock() {
+            g.request_disconnect = true;
+        }
+        warn!(
+            target: "ble_gui::ota",
+            "用户停止升级：phase={phase:?} etx_acked={etx_acked}，将断开蓝牙以恢复 Wi-Fi",
+        );
+        fail(ota, ui, "用户终止（已断开蓝牙以恢复设备 Wi-Fi）");
+    } else {
+        warn!(
+            target: "ble_gui::ota",
+            "用户停止升级：phase={phase:?} etx_acked={etx_acked}，保持连接",
+        );
+        fail(ota, ui, "用户终止");
+    }
+}
+
+/// 发 ETX 让设备 `iot_ota_abort()`，再补一包触发 `vXmodemClientExit` 开 Wi-Fi。
+/// 返回是否收到 ETX 的 ACK 且补包发出。
+async fn notify_device_xmodem_abort(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &UnboundedSender<Vec<u8>>,
+    ota: &SharedOtaLive,
+) -> bool {
+    {
+        let mut session = protocol.lock().expect("protocol lock");
+        session.clear_modbus_responses();
+    }
+    if send_air(protocol, write_tx, &[XMODEM_ETX], "ABORT-ETX")
+        .await
+        .is_err()
+    {
+        warn!(target: "ble_gui::ota", "停止升级：ETX 发送失败");
+        return false;
+    }
+    let (result, _) = wait_control_ex(protocol, ota, XMODEM_ACK, ABORT_WAIT, true).await;
+    let acked = matches!(result, CtrlResult::Match);
+    if !acked {
+        warn!(
+            target: "ble_gui::ota",
+            "停止升级：ETX 未收到 ACK ({result:?})，仍补一包后准备断链",
+        );
+    }
+    let kick_ok = send_air(protocol, write_tx, &[XMODEM_ETX], "ABORT-ETX-KICK")
+        .await
+        .is_ok();
+    if !kick_ok {
+        warn!(target: "ble_gui::ota", "停止升级：补包发送失败");
+    }
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    acked && kick_ok
 }
 
 struct OtaRxGuard {
@@ -244,13 +337,9 @@ fn expected_name(expected: u8) -> &'static str {
 async fn send_air(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &UnboundedSender<Vec<u8>>,
-    ota: &SharedOtaLive,
     plain: &[u8],
     stage: &str,
 ) -> Result<(), String> {
-    if cancelled(ota) {
-        return Err("用户终止".into());
-    }
     let air = {
         let session = protocol.lock().expect("protocol lock");
         session
@@ -258,7 +347,7 @@ async fn send_air(
             .map_err(|e| e.to_string())?
     };
     let chunks = air.len().div_ceil(GATT_CHUNK);
-    let verbose = stage.starts_with("START") || stage == "EOT";
+    let verbose = stage.starts_with("START") || stage == "EOT" || stage.starts_with("ABORT");
     if verbose {
         warn!(
             target: "ble_gui::ota",
@@ -289,6 +378,16 @@ async fn wait_control(
     expected: u8,
     timeout: Duration,
 ) -> (CtrlResult, WaitStats) {
+    wait_control_ex(protocol, ota, expected, timeout, false).await
+}
+
+async fn wait_control_ex(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    ota: &SharedOtaLive,
+    expected: u8,
+    timeout: Duration,
+    ignore_cancel: bool,
+) -> (CtrlResult, WaitStats) {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut stats = WaitStats {
         chunks: 0,
@@ -298,7 +397,7 @@ async fn wait_control(
         last_class: "none",
     };
     loop {
-        if cancelled(ota) {
+        if !ignore_cancel && cancelled(ota) {
             return (CtrlResult::Timeout, stats);
         }
         loop {
@@ -523,10 +622,11 @@ pub async fn run_ble_ota(
         Some(0),
     );
 
+    let mut abort_phase = AbortPhase::AwaitingReady;
     let mut got_c = false;
     for attempt in 1..=START_ATTEMPTS {
         if cancelled(ota) {
-            fail(ota, ui, "用户终止");
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
             return;
         }
         {
@@ -543,11 +643,15 @@ pub async fn run_ble_ota(
             "OTA Start 第 {attempt}/{START_ATTEMPTS} 次发送，等待 C(0x43) 最长 {}s",
             wait.as_secs(),
         );
-        if send_air(protocol, write_tx, ota, &start_req, &format!("START-{attempt}")).await.is_err() {
+        if send_air(protocol, write_tx, &start_req, &format!("START-{attempt}")).await.is_err() {
             warn!(target: "ble_gui::ota", "OTA Start 第 {attempt} 次空口发送失败");
             continue;
         }
         let (result, stats) = wait_control(protocol, ota, XMODEM_C, wait).await;
+        if cancelled(ota) {
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+            return;
+        }
         match result {
             CtrlResult::Match => {
                 warn!(
@@ -556,6 +660,7 @@ pub async fn run_ble_ota(
                     stats.saw_fc10_start_ack,
                 );
                 got_c = true;
+                abort_phase = AbortPhase::Xmodem;
                 break;
             }
             CtrlResult::Nak => {
@@ -581,15 +686,11 @@ pub async fn run_ble_ota(
         }
     }
     if !got_c {
-        fail(
-            ota,
-            ui,
-            if cancelled(ota) {
-                "用户终止".to_string()
-            } else {
-                "OTA Start 失败：未收到设备就绪（C）".to_string()
-            },
-        );
+        if cancelled(ota) {
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+            return;
+        }
+        fail(ota, ui, "OTA Start 失败：未收到设备就绪（C）");
         return;
     }
 
@@ -601,7 +702,7 @@ pub async fn run_ble_ota(
     let mut last_ui = Instant::now() - Duration::from_secs(1);
     for packet_index in 0..packet_total {
         if cancelled(ota) {
-            fail(ota, ui, "用户终止");
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
             return;
         }
         let pc = ((packet_index as i64) * 100 / packet_total.max(1) as i64) as i32;
@@ -623,7 +724,7 @@ pub async fn run_ble_ota(
         let mut acked = false;
         for _attempt in 1..=PACKET_ATTEMPTS {
             if cancelled(ota) {
-                fail(ota, ui, "用户终止");
+                finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
                 return;
             }
             {
@@ -633,7 +734,6 @@ pub async fn run_ble_ota(
             if send_air(
                 protocol,
                 write_tx,
-                ota,
                 &packet,
                 &format!("XMODEM-{}", packet_index + 1),
             )
@@ -643,6 +743,10 @@ pub async fn run_ble_ota(
                 continue;
             }
             let (result, _) = wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await;
+            if cancelled(ota) {
+                finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+                return;
+            }
             match result {
                 CtrlResult::Match => {
                     acked = true;
@@ -663,6 +767,10 @@ pub async fn run_ble_ota(
             }
         }
         if !acked {
+            if cancelled(ota) {
+                finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+                return;
+            }
             fail(
                 ota,
                 ui,
@@ -690,20 +798,24 @@ pub async fn run_ble_ota(
     let mut eot_ok = false;
     for _attempt in 1..=PACKET_ATTEMPTS {
         if cancelled(ota) {
-            fail(ota, ui, "用户终止");
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
             return;
         }
         {
             let mut session = protocol.lock().expect("protocol lock");
             session.clear_modbus_responses();
         }
-        if send_air(protocol, write_tx, ota, &[XMODEM_EOT], "EOT")
+        if send_air(protocol, write_tx, &[XMODEM_EOT], "EOT")
             .await
             .is_err()
         {
             continue;
         }
         let (result, _) = wait_control(protocol, ota, XMODEM_ACK, CTRL_WAIT).await;
+        if cancelled(ota) {
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+            return;
+        }
         match result {
             CtrlResult::Match => {
                 eot_ok = true;
@@ -717,9 +829,14 @@ pub async fn run_ble_ota(
         }
     }
     if !eot_ok {
+        if cancelled(ota) {
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
+            return;
+        }
         fail(ota, ui, "蓝牙传输结束符未收到 ACK");
         return;
     }
+    abort_phase = AbortPhase::AfterXmodem;
 
     drop(_guard);
 
@@ -750,7 +867,7 @@ pub async fn run_ble_ota(
 
     loop {
         if cancelled(ota) {
-            fail(ota, ui, "用户终止");
+            finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
             return;
         }
         if tokio::time::Instant::now() >= stall_deadline {
@@ -936,5 +1053,22 @@ mod tests {
         assert!(!is_iot_self_upgrade(1));
         assert!(!is_iot_self_upgrade(2));
         assert!(!is_iot_self_upgrade(11));
+    }
+
+    #[test]
+    fn abort_disconnect_policy() {
+        assert!(abort_should_disconnect(AbortPhase::AwaitingReady, false));
+        assert!(abort_should_disconnect(AbortPhase::AwaitingReady, true));
+        assert!(abort_should_disconnect(AbortPhase::Xmodem, false));
+        assert!(!abort_should_disconnect(AbortPhase::Xmodem, true));
+        assert!(!abort_should_disconnect(AbortPhase::AfterXmodem, false));
+        assert!(!abort_should_disconnect(AbortPhase::AfterXmodem, true));
+    }
+
+    #[test]
+    fn etx_is_xmodem_abort_byte() {
+        assert_eq!(XMODEM_ETX, 0x03);
+        assert_eq!(classify_ota_payload(&[XMODEM_ETX]), "XMODEM-ETX");
+        assert_eq!(classify_ota_payload(&[XMODEM_EOT]), "XMODEM-EOT");
     }
 }

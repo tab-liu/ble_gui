@@ -47,6 +47,7 @@ pub(crate) fn classify_ota_payload(plain: &[u8]) -> &'static str {
             XMODEM_ACK => "XMODEM-ACK",
             XMODEM_NAK => "XMODEM-NAK",
             XMODEM_CAN => "XMODEM-CAN",
+            0x03 => "XMODEM-ETX",
             0x04 => "XMODEM-EOT",
             _ => "short-other",
         };

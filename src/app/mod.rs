@@ -85,15 +85,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let _ = ctx_poll.ble.drain_events();
         let connected = ctx_poll.ble.is_connected();
         if let Some(ui) = ui_weak.upgrade() {
-            if connected {
-                if !was_connected.get() {
+            if connected || ctx_poll.firmware.is_running() {
+                if connected && !was_connected.get() {
                     sync_poll_policy(&ui, &ctx_poll);
                 }
-                was_connected.set(true);
+                was_connected.set(connected);
                 refresh_all(&ui, &ctx_poll);
             } else {
                 if was_connected.get() {
                     sync_poll_policy(&ui, &ctx_poll);
+                    refresh_all(&ui, &ctx_poll);
                 }
                 was_connected.set(false);
             }

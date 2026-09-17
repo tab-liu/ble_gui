@@ -63,6 +63,7 @@ export component FirmwarePage inherits VerticalBox {
     in property <int> firmware-phase;
     in property <int> firmware-progress;
     in property <string> firmware-stage-text;
+    in property <string> firmware-elapsed-text;
     in property <string> firmware-result-text;
     in property <string> firmware-fail-reason;
     in property <bool> firmware-can-start;
@@ -293,6 +294,13 @@ export component FirmwarePage inherits VerticalBox {
                         font-size: 12px;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.firmware-elapsed-text;
+                        color: Theme.text-muted;
+                        font-size: 12px;
+                        vertical-alignment: center;
                     }
                 }
 

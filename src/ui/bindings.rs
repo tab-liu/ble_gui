@@ -561,6 +561,7 @@ pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
     ui.set_firmware_phase(snap.phase);
     ui.set_firmware_progress(snap.progress);
     ui.set_firmware_stage_text(snap.stage_text.clone().into());
+    ui.set_firmware_elapsed_text(snap.elapsed_text.clone().into());
     ui.set_firmware_result_text(snap.result_text.clone().into());
     ui.set_firmware_fail_reason(snap.fail_reason.clone().into());
     ui.set_firmware_can_start(snap.can_start);

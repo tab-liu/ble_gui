@@ -10,6 +10,7 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use md5::{Digest, Md5};
 
@@ -38,6 +39,12 @@ pub struct OtaLive {
     pub result_text: String,
     pub fail_reason: String,
     pub status_text: String,
+    /// 点「开始升级」的时刻；未开始则为 `None`。
+    pub started_at: Option<Instant>,
+    /// 结束时冻结的耗时，避免成功/失败后继续走秒。
+    pub elapsed_frozen: Option<Duration>,
+    /// 停止升级时 ETX 未能让设备退出，由 worker 断开 GATT 以恢复 Wi-Fi。
+    pub request_disconnect: bool,
 }
 
 impl Default for OtaLive {
@@ -53,6 +60,20 @@ impl Default for OtaLive {
             result_text: String::new(),
             fail_reason: String::new(),
             status_text: String::new(),
+            started_at: None,
+            elapsed_frozen: None,
+            request_disconnect: false,
+        }
+    }
+}
+
+impl OtaLive {
+    /// 升级结束时停表；重复调用保持第一次的耗时。
+    pub fn freeze_elapsed(&mut self) {
+        if self.elapsed_frozen.is_none() {
+            if let Some(start) = self.started_at {
+                self.elapsed_frozen = Some(start.elapsed());
+            }
         }
     }
 }
@@ -89,6 +110,7 @@ pub struct FirmwareSnapshot {
     pub phase: i32,
     pub progress: i32,
     pub stage_text: String,
+    pub elapsed_text: String,
     pub result_text: String,
     pub fail_reason: String,
     pub can_start: bool,
@@ -239,6 +261,11 @@ impl FirmwareService {
             inner.stage_text.clone()
         };
 
+        let elapsed_text = ota
+            .as_ref()
+            .map(|g| elapsed_display(g))
+            .unwrap_or_default();
+
         let (result_text, fail_reason) = if ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
             (
                 ota.as_ref()
@@ -270,6 +297,7 @@ impl FirmwareService {
             phase,
             progress: overall_progress(pc, device, ble_only),
             stage_text,
+            elapsed_text,
             result_text,
             fail_reason,
             can_start: parse_ok && version_ok && device_connected && !running,
@@ -373,6 +401,9 @@ impl FirmwareService {
                 result_text: String::new(),
                 fail_reason: String::new(),
                 status_text: String::new(),
+                started_at: Some(Instant::now()),
+                elapsed_frozen: None,
+                request_disconnect: false,
             };
         }
         Some(job)
@@ -569,6 +600,25 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
+fn elapsed_display(live: &OtaLive) -> String {
+    let Some(start) = live.started_at else {
+        return String::new();
+    };
+    format_elapsed(live.elapsed_frozen.unwrap_or_else(|| start.elapsed()))
+}
+
+fn format_elapsed(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    let hours = secs / 3600;
+    let minutes = (secs % 3600) / 60;
+    let seconds = secs % 60;
+    if hours > 0 {
+        format!("用时 {hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("用时 {minutes}:{seconds:02}")
+    }
+}
+
 /// IOT 自升级进度等于蓝牙进度；子设备则蓝牙与 CAN 各占一半。
 fn overall_progress(pc_percent: i32, device_percent: i32, ble_only: bool) -> i32 {
     if ble_only {
@@ -592,6 +642,9 @@ mod tests {
         assert_eq!(overall_progress(40, 0, false), 20);
         assert_eq!(overall_progress(100, 0, true), 100);
         assert_eq!(overall_progress(100, 100, false), 100);
+        assert_eq!(format_elapsed(Duration::from_secs(0)), "用时 0:00");
+        assert_eq!(format_elapsed(Duration::from_secs(65)), "用时 1:05");
+        assert_eq!(format_elapsed(Duration::from_secs(3661)), "用时 1:01:01");
     }
 
     #[test]

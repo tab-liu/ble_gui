@@ -110,6 +110,7 @@ export component MainWindow inherits Window {
     in-out property <int> firmware-phase;
     in-out property <int> firmware-progress;
     in-out property <string> firmware-stage-text;
+    in-out property <string> firmware-elapsed-text;
     in-out property <string> firmware-result-text;
     in-out property <string> firmware-fail-reason;
     in-out property <bool> firmware-can-start;
@@ -440,6 +441,7 @@ export component MainWindow inherits Window {
                             firmware-phase: root.firmware-phase;
                             firmware-progress: root.firmware-progress;
                             firmware-stage-text: root.firmware-stage-text;
+                            firmware-elapsed-text: root.firmware-elapsed-text;
                             firmware-result-text: root.firmware-result-text;
                             firmware-fail-reason: root.firmware-fail-reason;
                             firmware-can-start: root.firmware-can-start;

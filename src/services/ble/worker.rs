@@ -107,6 +107,15 @@ fn abort_session(active: &ActiveSession) {
     active.write_task.abort();
 }
 
+fn take_ota_disconnect_request(ota: &SharedOtaLive) -> bool {
+    let Ok(mut g) = ota.lock() else {
+        return false;
+    };
+    let requested = g.request_disconnect;
+    g.request_disconnect = false;
+    requested
+}
+
 fn on_peer_disconnect(
     poll_abort: &tokio::task::AbortHandle,
     write_abort: &tokio::task::AbortHandle,
@@ -133,6 +142,7 @@ fn on_peer_disconnect(
             g.fail_reason = "升级过程中蓝牙断开".into();
             g.stage_text = "升级失败".into();
             g.status_text = g.fail_reason.clone();
+            g.freeze_elapsed();
         }
     }
     if let Ok(mut inner) = state.lock() {
@@ -630,10 +640,16 @@ pub async fn worker_main(
             continue;
         }
 
-        let maybe_cmd = tokio::select! {
-            cmd = cmd_rx.recv() => cmd,
-            _ = tokio::time::sleep(Duration::from_millis(250)), if session.is_some() => {
-                continue;
+        let ota_wants_drop = take_ota_disconnect_request(&ota_live);
+        let maybe_cmd = if ota_wants_drop && session.is_some() {
+            info!(target: "ble_gui::worker", "OTA 停止后断开蓝牙，让设备恢复 Wi-Fi");
+            Some(BleCommand::Disconnect)
+        } else {
+            tokio::select! {
+                cmd = cmd_rx.recv() => cmd,
+                _ = tokio::time::sleep(Duration::from_millis(250)), if session.is_some() => {
+                    continue;
+                }
             }
         };
         let Some(cmd) = maybe_cmd else {
@@ -990,6 +1006,7 @@ pub async fn worker_main(
                     g.result_text = "升级失败".into();
                     g.fail_reason = "未连接设备".into();
                     g.stage_text = "升级失败".into();
+                    g.freeze_elapsed();
                 }
             }
         }
