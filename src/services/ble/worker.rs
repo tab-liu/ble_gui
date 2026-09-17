@@ -573,6 +573,27 @@ async fn restart_scan(
     ));
 }
 
+/// 停扫描并回到空闲。不断开后自动再扫，避免 Windows 上卡在「扫描中」且列表为空。
+async fn enter_idle(
+    adapter: &Adapter,
+    state: &SharedBleState,
+    ui_refresh: &super::UiRefreshSlot,
+    scan_task: &mut Option<tokio::task::JoinHandle<()>>,
+    detail: impl Into<String>,
+) {
+    if let Some(task) = scan_task.take() {
+        task.abort();
+    }
+    set_phase(state, LinkPhase::Idle, detail);
+    notify_ui_force(ui_refresh, true);
+    if tokio::time::timeout(GATT_DISCONNECT_TIMEOUT, adapter.stop_scan())
+        .await
+        .is_err()
+    {
+        warn!(target: "ble_gui::worker", "停止扫描超时，已回到空闲");
+    }
+}
+
 pub async fn worker_main(
     mut cmd_rx: mpsc::UnboundedReceiver<BleCommand>,
     state: SharedBleState,
@@ -736,14 +757,12 @@ pub async fn worker_main(
                     .await
                     .is_err()
                     {
-                        restart_scan(
+                        enter_idle(
                             &adapter,
                             &state,
-                            &event_tx,
                             &ui_refresh,
-                            &known,
                             &mut scan_task,
-                            "已取消连接，正在重新扫描……",
+                            "已取消连接",
                         )
                         .await;
                         continue;
@@ -762,14 +781,12 @@ pub async fn worker_main(
 
                 if peripheral.is_none() {
                     if connect_cancelled(&cancel_connect) {
-                        restart_scan(
+                        enter_idle(
                             &adapter,
                             &state,
-                            &event_tx,
                             &ui_refresh,
-                            &known,
                             &mut scan_task,
-                            "已取消连接，正在重新扫描……",
+                            "已取消连接",
                         )
                         .await;
                         continue;
@@ -795,14 +812,12 @@ pub async fn worker_main(
                     {
                         Ok(p) => peripheral = Some(p),
                         Err(RediscoverError::Cancelled) => {
-                            restart_scan(
+                            enter_idle(
                                 &adapter,
                                 &state,
-                                &event_tx,
                                 &ui_refresh,
-                                &known,
                                 &mut scan_task,
-                                "已取消连接，正在重新扫描……",
+                                "已取消连接",
                             )
                             .await;
                             continue;
@@ -812,14 +827,12 @@ pub async fn worker_main(
                                 target: "ble_gui::services::ble",
                                 "Connect aborted for {address}: occupied"
                             );
-                            restart_scan(
+                            enter_idle(
                                 &adapter,
                                 &state,
-                                &event_tx,
                                 &ui_refresh,
-                                &known,
                                 &mut scan_task,
-                                format!("连接失败：{MSG_DEVICE_OCCUPIED}，正在重新扫描……"),
+                                format!("连接失败：{MSG_DEVICE_OCCUPIED}"),
                             )
                             .await;
                             continue;
@@ -829,14 +842,12 @@ pub async fn worker_main(
                                 target: "ble_gui::services::ble",
                                 "Connect aborted for {address}: rediscover timeout"
                             );
-                            restart_scan(
+                            enter_idle(
                                 &adapter,
                                 &state,
-                                &event_tx,
                                 &ui_refresh,
-                                &known,
                                 &mut scan_task,
-                                format!("连接失败：{MSG_DEVICE_NOT_NEARBY}，正在重新扫描……"),
+                                format!("连接失败：{MSG_DEVICE_NOT_NEARBY}"),
                             )
                             .await;
                             continue;
@@ -845,14 +856,12 @@ pub async fn worker_main(
                 }
 
                 if connect_cancelled(&cancel_connect) {
-                    restart_scan(
+                    enter_idle(
                         &adapter,
                         &state,
-                        &event_tx,
                         &ui_refresh,
-                        &known,
                         &mut scan_task,
-                        "已取消连接，正在重新扫描……",
+                        "已取消连接",
                     )
                     .await;
                     continue;
@@ -864,14 +873,12 @@ pub async fn worker_main(
                 let _ = adapter.stop_scan().await;
 
                 let Some(peripheral) = peripheral else {
-                    restart_scan(
+                    enter_idle(
                         &adapter,
                         &state,
-                        &event_tx,
                         &ui_refresh,
-                        &known,
                         &mut scan_task,
-                        format!("连接失败：{MSG_DEVICE_NOT_NEARBY}，正在重新扫描……"),
+                        format!("连接失败：{MSG_DEVICE_NOT_NEARBY}"),
                     )
                     .await;
                     continue;
@@ -883,14 +890,12 @@ pub async fn worker_main(
                             target: "ble_gui::services::ble",
                             "Connect aborted for {address}: occupied (from cache)"
                         );
-                        restart_scan(
+                        enter_idle(
                             &adapter,
                             &state,
-                            &event_tx,
                             &ui_refresh,
-                            &known,
                             &mut scan_task,
-                            format!("连接失败：{MSG_DEVICE_OCCUPIED}，正在重新扫描……"),
+                            format!("连接失败：{MSG_DEVICE_OCCUPIED}"),
                         )
                         .await;
                         continue;
@@ -918,16 +923,14 @@ pub async fn worker_main(
                     Err(err) => {
                         warn!(target: "ble_gui::services::ble", "Connect failed for {address}: {err}");
                         let detail = if err == "已取消连接" {
-                            "已取消连接，正在重新扫描……".into()
+                            "已取消连接".into()
                         } else {
-                            format!("连接失败：{err}，正在重新扫描……")
+                            format!("连接失败：{err}")
                         };
-                        restart_scan(
+                        enter_idle(
                             &adapter,
                             &state,
-                            &event_tx,
                             &ui_refresh,
-                            &known,
                             &mut scan_task,
                             detail,
                         )
@@ -953,19 +956,17 @@ pub async fn worker_main(
                 });
                 stop_polling(&poll_policy);
                 clear_live_on_disconnect(&modbus_live);
-                apply_scanning_state(&state, &known, "已断开，正在重新扫描……");
+                set_phase(&state, LinkPhase::Idle, "设备已断开");
                 notify_ui_force(&ui_refresh, true);
                 if let Some(peripheral) = peripheral.as_ref() {
                     disconnect_peripheral(peripheral).await;
                 }
-                restart_scan(
+                enter_idle(
                     &adapter,
                     &state,
-                    &event_tx,
                     &ui_refresh,
-                    &known,
                     &mut scan_task,
-                    "已断开，正在重新扫描……",
+                    "设备已断开",
                 )
                 .await;
             }

@@ -109,7 +109,19 @@ fn tlv_mode_from_iot_status(status_word: u16) -> ModbusReadMode {
     }
 }
 
+/// 无有效探测回复：按不支持 TLV 定论，避免轮询卡在 POST-KEX 重试。
+fn settle_probe_as_standard(live: &SharedModbusLive, reason: &str) {
+    warn!(
+        target: "ble_gui::poll",
+        "探测 Modbus TLV 能力失败（寄存器 1～16 / 3）: {reason}；无有效回复，按不支持 TLV 处理，改用常规读",
+    );
+    let mut inner = live.lock().expect("modbus live lock");
+    inner.read_mode = ModbusReadMode::Standard;
+    inner.capabilities_probed = true;
+}
+
 /// 连接后读寄存器 1～16（仅一次），用寄存器 3 bit3 确定常规读或 TLV 批量读。
+/// 超时或回复无效则视为不支持 TLV，继续后续常规轮询。
 pub async fn probe_modbus_capabilities(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
@@ -137,23 +149,19 @@ pub async fn probe_modbus_capabilities(
                 Ok(regs) => regs,
                 Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
                 Err(err) => {
-                    warn!(
-                        target: "ble_gui::poll",
-                        "探测 Modbus TLV 能力失败（寄存器 1～16 / 3）: {err}，本轮不读后续寄存器，下一轮再试",
-                    );
-                    return false;
+                    settle_probe_as_standard(live, &err.to_string());
+                    return true;
                 }
             }
         }
     };
 
     let Some(&status_word) = regs.get(status_index) else {
-        warn!(
-            target: "ble_gui::poll",
-            "POST-KEX 探测回复过短 len={}，期望寄存器 3",
-            regs.len(),
+        settle_probe_as_standard(
+            live,
+            &format!("回复过短 len={}，期望寄存器 3", regs.len()),
         );
-        return false;
+        return true;
     };
 
     {
@@ -1060,4 +1068,19 @@ pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     inner.ssid_now.clear();
     inner.sta_ip.clear();
     inner.sta_rssi = 0;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::services::modbus::ModbusLive;
+
+    #[test]
+    fn timeout_settles_probe_as_standard_not_retry_forever() {
+        let live: SharedModbusLive = Arc::new(Mutex::new(ModbusLive::default()));
+        settle_probe_as_standard(&live, "Modbus 响应超时");
+        let inner = live.lock().expect("modbus live lock");
+        assert!(inner.capabilities_probed);
+        assert_eq!(inner.read_mode, ModbusReadMode::Standard);
+    }
 }

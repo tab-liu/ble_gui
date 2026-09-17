@@ -138,7 +138,8 @@ impl BleInner {
         let status_text = match self.phase {
             LinkPhase::Idle if connected => "已连接".into(),
             LinkPhase::Idle if self.status_detail.starts_with("连接失败")
-                || self.status_detail.starts_with("已取消") =>
+                || self.status_detail.starts_with("已取消")
+                || self.status_detail.starts_with("设备已断开") =>
             {
                 self.status_detail.clone()
             }
