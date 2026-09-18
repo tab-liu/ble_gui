@@ -40,6 +40,7 @@ mod uuids;
 mod worker;
 mod win_conn;
 mod win_name;
+mod win_radio;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};

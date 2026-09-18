@@ -28,7 +28,7 @@ impl BleScanEntry {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LinkPhase {
     Idle,
     Scanning,
@@ -137,12 +137,7 @@ impl BleInner {
 
         let status_text = match self.phase {
             LinkPhase::Idle if connected => "已连接".into(),
-            LinkPhase::Idle if self.status_detail.starts_with("连接失败")
-                || self.status_detail.starts_with("已取消")
-                || self.status_detail.starts_with("设备已断开") =>
-            {
-                self.status_detail.clone()
-            }
+            LinkPhase::Idle if !self.status_detail.is_empty() => self.status_detail.clone(),
             LinkPhase::Idle => "未连接".into(),
             LinkPhase::Scanning => "扫描中".into(),
             LinkPhase::Connecting => {

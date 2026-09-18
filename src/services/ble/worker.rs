@@ -34,6 +34,9 @@ use super::target::{
     AdvLinkHint,
 };
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
+use super::win_radio::{
+    is_radio_unavailable_detail, message_for_scan_failure, radio_unavailable_reason, NO_ADAPTER_HINT,
+};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 use crate::services::firmware::{HttpOtaJob, OtaJob, SharedOtaLive, PHASE_SUCCESS};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
@@ -623,6 +626,92 @@ async fn enter_idle(
     }
 }
 
+async fn open_ble_adapter() -> Result<(Manager, Adapter), String> {
+    let manager = Manager::new()
+        .await
+        .map_err(|err| format!("蓝牙初始化失败：{err}"))?;
+    let adapters = manager
+        .adapters()
+        .await
+        .map_err(|err| format!("枚举蓝牙适配器失败：{err}"))?;
+    let adapter = adapters
+        .into_iter()
+        .next()
+        .ok_or_else(|| NO_ADAPTER_HINT.to_string())?;
+    Ok((manager, adapter))
+}
+
+async fn refresh_radio_status(
+    adapter: &Adapter,
+    state: &SharedBleState,
+    ui_refresh: &super::UiRefreshSlot,
+    scan_task: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    match radio_unavailable_reason().await {
+        Some(reason) => {
+            let (phase, detail) = {
+                let inner = state.lock().expect("ble state lock");
+                (inner.phase, inner.status_detail.clone())
+            };
+            if matches!(
+                phase,
+                LinkPhase::Connecting
+                    | LinkPhase::GattReady
+                    | LinkPhase::Handshake
+                    | LinkPhase::Encrypted
+            ) {
+                return;
+            }
+            if phase == LinkPhase::Idle && detail == reason && scan_task.is_none() {
+                return;
+            }
+            enter_idle(adapter, state, ui_refresh, scan_task, reason).await;
+        }
+        None => {
+            let should_clear = {
+                let inner = state.lock().expect("ble state lock");
+                inner.phase == LinkPhase::Idle && is_radio_unavailable_detail(&inner.status_detail)
+            };
+            if should_clear {
+                set_phase(state, LinkPhase::Idle, "蓝牙已打开，可以扫描");
+                notify_ui_force(ui_refresh, true);
+            }
+        }
+    }
+}
+
+/// 没有适配器时不要退出 worker，否则之后点「扫描」没有任何反应。
+async fn wait_for_ble_adapter(
+    cmd_rx: &mut mpsc::UnboundedReceiver<BleCommand>,
+    state: &SharedBleState,
+    ui_refresh: &super::UiRefreshSlot,
+) -> Option<(Manager, Adapter)> {
+    loop {
+        match open_ble_adapter().await {
+            Ok(pair) => return Some(pair),
+            Err(msg) => {
+                warn!(target: "ble_gui::worker", "{msg}");
+                set_phase(state, LinkPhase::Idle, msg);
+                notify_ui_force(ui_refresh, true);
+            }
+        }
+        loop {
+            match cmd_rx.recv().await {
+                None => return None,
+                Some(BleCommand::StartScan) => break,
+                Some(_) => {
+                    set_phase(
+                        state,
+                        LinkPhase::Idle,
+                        NO_ADAPTER_HINT,
+                    );
+                    notify_ui_force(ui_refresh, true);
+                }
+            }
+        }
+    }
+}
+
 pub async fn worker_main(
     mut cmd_rx: mpsc::UnboundedReceiver<BleCommand>,
     state: SharedBleState,
@@ -635,41 +724,17 @@ pub async fn worker_main(
     cancel_connect: Arc<AtomicBool>,
     ota_live: SharedOtaLive,
 ) {
-    let manager = match Manager::new().await {
-        Ok(m) => m,
-        Err(err) => {
-            set_phase(&state, LinkPhase::Idle, format!("蓝牙初始化失败：{err}"));
-            notify_ui_force(&ui_refresh, true);
-            return;
-        }
-    };
-
-    let adapters = match manager.adapters().await {
-        Ok(a) => a,
-        Err(err) => {
-            set_phase(
-                &state,
-                LinkPhase::Idle,
-                format!("枚举蓝牙适配器失败：{err}"),
-            );
-            notify_ui_force(&ui_refresh, true);
-            return;
-        }
-    };
-
-    let adapter = match adapters.into_iter().next() {
-        Some(a) => a,
-        None => {
-            set_phase(&state, LinkPhase::Idle, "未找到蓝牙适配器");
-            notify_ui_force(&ui_refresh, true);
-            return;
-        }
+    let Some((_manager, adapter)) =
+        wait_for_ble_adapter(&mut cmd_rx, &state, &ui_refresh).await
+    else {
+        return;
     };
 
     let mut scan_task: Option<tokio::task::JoinHandle<()>> = None;
     let mut session: Option<ActiveSession> = None;
     let known: KnownMap = Arc::new(Mutex::new(HashMap::new()));
     let expect_drop: SharedExpectDrop = Arc::new(Mutex::new(None));
+    refresh_radio_status(&adapter, &state, &ui_refresh, &mut scan_task).await;
 
     loop {
         if session
@@ -700,6 +765,10 @@ pub async fn worker_main(
                 _ = tokio::time::sleep(Duration::from_millis(250)), if session.is_some() => {
                     continue;
                 }
+                _ = tokio::time::sleep(Duration::from_millis(1000)), if session.is_none() => {
+                    refresh_radio_status(&adapter, &state, &ui_refresh, &mut scan_task).await;
+                    continue;
+                }
             }
         };
         let Some(cmd) = maybe_cmd else {
@@ -708,6 +777,10 @@ pub async fn worker_main(
 
         match cmd {
             BleCommand::StartScan => {
+                if let Some(reason) = radio_unavailable_reason().await {
+                    enter_idle(&adapter, &state, &ui_refresh, &mut scan_task, reason).await;
+                    continue;
+                }
                 if state.lock().expect("ble state lock").phase == LinkPhase::Scanning
                     && scan_task.is_some()
                 {
@@ -1066,19 +1139,20 @@ async fn run_scan_loop(
     let mut events = match adapter.events().await {
         Ok(events) => events,
         Err(err) => {
-            set_phase(
-                &state,
-                LinkPhase::Idle,
-                format!("监听扫描事件失败：{err}"),
-            );
+            let msg = message_for_scan_failure(&err).await;
+            set_phase(&state, LinkPhase::Idle, msg);
             notify_ui_force(&ui_refresh, true);
             return;
         }
     };
 
-    if adapter.start_scan(ScanFilter::default()).await.is_err() {
-        warn!(target: "ble_gui::services::ble", "start_scan failed");
-        set_phase(&state, LinkPhase::Idle, "启动扫描失败");
+    if let Err(err) = adapter.start_scan(ScanFilter::default()).await {
+        warn!(target: "ble_gui::services::ble", "start_scan failed: {err}");
+        set_phase(
+            &state,
+            LinkPhase::Idle,
+            message_for_scan_failure(&err).await,
+        );
         notify_ui_force(&ui_refresh, true);
         return;
     }
