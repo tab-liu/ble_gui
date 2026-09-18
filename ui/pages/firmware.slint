@@ -115,12 +115,11 @@ export component FirmwarePage inherits VerticalBox {
         }
     }
 
-    // 上排「选择固件 / 固件信息」按内容高度，余量给进度卡。
-    // 默认窗口 640：状态栏 44 + 内容边距 16 ≈ 固件页 580；标题 28 + 间距 12 → 内区 540。
-    // 当前设备 ≈ 94，选择行 ≈ 170（料号不匹配时 +26），进度卡 ≈ 250，足够放下结果 + 两行失败原因。
+    // 各卡片都按内容定高，窗口拉高时空白留在页面底部，进度条高度不变。
         VerticalLayout {
         vertical-stretch: 1;
         spacing: 12px;
+        alignment: start;
 
         FwCard {
             width: 100%;
@@ -281,11 +280,10 @@ export component FirmwarePage inherits VerticalBox {
 
         FwCard {
             width: 100%;
-            vertical-stretch: 1;
-            min-height: 180px;
             VerticalLayout {
                 padding: 16px;
                 spacing: 10px;
+                alignment: start;
 
                 HorizontalLayout {
                     spacing: 12px;
@@ -315,8 +313,7 @@ export component FirmwarePage inherits VerticalBox {
                 }
 
                 progress-track := Rectangle {
-                    vertical-stretch: 1;
-                    min-height: 56px;
+                    height: 56px;
                     border-radius: 10px;
                     clip: true;
                     background: Theme.bg-panel-alt;
