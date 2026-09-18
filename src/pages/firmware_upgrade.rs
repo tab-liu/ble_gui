@@ -1,4 +1,4 @@
-//! 固件升级页：选文件、识别头，开始后由 BLE worker 做 XMODEM 与分发进度。
+//! 固件升级页：选文件、识别头；BLE XMODEM 或本机 HTTP + `00 09`。
 
 use slint::ComponentHandle;
 
@@ -43,6 +43,30 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             ctx_start.ble.start_ota(job);
         }
         refresh(&ui, &ctx_start);
+    });
+
+    let ui_weak = ui.as_weak();
+    let ctx_http = ctx.clone();
+    ui.on_firmware_start_http(move || {
+        let ui = ui_weak.unwrap();
+        let snap = ctx_http.ble.snapshot();
+        let (wifi_sta, sta_ip, link_status_valid) = ctx_http
+            .modbus
+            .shared_live()
+            .lock()
+            .ok()
+            .map(|l| (l.wifi_sta, l.sta_ip.clone(), l.link_status_valid))
+            .unwrap_or((false, String::new(), false));
+        if let Some(job) = ctx_http.firmware.begin_http_upgrade(
+            snap.connected,
+            snap.encryption_ready,
+            wifi_sta,
+            &sta_ip,
+            link_status_valid,
+        ) {
+            ctx_http.ble.start_http_ota(job);
+        }
+        refresh(&ui, &ctx_http);
     });
 
     let ui_weak = ui.as_weak();

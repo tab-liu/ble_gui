@@ -36,8 +36,8 @@ const XMODEM_C: u8 = 0x43;
 const XMODEM_PAD: u8 = 0x1A;
 
 const OTA_START_REG: u16 = 0x02BC; // 700
-const OTA_DIST_REG: u16 = 720;
-const OTA_DIST_COUNT: u16 = 49;
+pub(crate) const OTA_DIST_REG: u16 = 720;
+pub(crate) const OTA_DIST_COUNT: u16 = 49;
 const GATT_CHUNK: usize = 244;
 const START_ATTEMPTS: u32 = 5;
 const PACKET_ATTEMPTS: u32 = 5;
@@ -90,7 +90,7 @@ pub fn ota_group_word(firmware_type: u8) -> u16 {
 }
 
 /// type=0 且 Group=IOT 时设备走 `iot_ota_end()` + `esp_restart()`，没有 CAN 分发。
-fn is_iot_self_upgrade(firmware_type: u8) -> bool {
+pub(crate) fn is_iot_self_upgrade(firmware_type: u8) -> bool {
     firmware_type == 0
 }
 
@@ -168,11 +168,11 @@ pub fn build_ota_start_request(slave_id: u8, firmware_type: u8, version: u32, fi
     ))
 }
 
-fn cancelled(ota: &SharedOtaLive) -> bool {
+pub(crate) fn cancelled(ota: &SharedOtaLive) -> bool {
     ota.lock().map(|g| g.cancel).unwrap_or(true)
 }
 
-fn publish(
+pub(crate) fn publish(
     ota: &SharedOtaLive,
     ui: &super::UiRefreshSlot,
     stage: impl Into<String>,
@@ -195,7 +195,7 @@ fn publish(
     }
 }
 
-fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl Into<String>) {
+pub(crate) fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl Into<String>) {
     let reason = reason.into();
     if let Ok(mut g) = ota.lock() {
         g.running = false;
@@ -213,7 +213,7 @@ fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl Into<String
     }
 }
 
-fn succeed(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, stage: String) {
+pub(crate) fn succeed(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, stage: String) {
     if let Ok(mut g) = ota.lock() {
         g.running = false;
         g.phase = PHASE_SUCCESS;
@@ -334,7 +334,7 @@ fn expected_name(expected: u8) -> &'static str {
     }
 }
 
-async fn send_air(
+pub(crate) async fn send_air(
     protocol: &Arc<Mutex<ProtocolSession>>,
     write_tx: &UnboundedSender<Vec<u8>>,
     plain: &[u8],
@@ -455,7 +455,7 @@ async fn wait_control_ex(
     }
 }
 
-fn dist_path_text(depth: i32) -> &'static str {
+pub(crate) fn dist_path_text(depth: i32) -> &'static str {
     match depth {
         1 => "IOT → 设备",
         2 => "设备 → 子设备",
@@ -464,14 +464,122 @@ fn dist_path_text(depth: i32) -> &'static str {
     }
 }
 
-struct DistProgress {
-    progress: i32,
-    error_code: i32,
-    depth: i32,
-    slot: i32,
+pub(crate) struct DistProgress {
+    pub progress: i32,
+    pub error_code: i32,
+    pub depth: i32,
+    pub slot: i32,
 }
 
-fn pick_distribution_slot(values: &[u16], firmware_type: u8, locked_slot: i32) -> Option<DistProgress> {
+/// HTTP 下载阶段 `where=3`（服务器→IOT）或已有进度，视为设备已开始处理命令。
+pub(crate) fn dist_started(values: &[u16], firmware_type: u8) -> bool {
+    pick_distribution_slot(values, firmware_type, -1).is_some_and(|found| {
+        found.depth == 3 || found.progress > 0 || found.error_code != 0
+    })
+}
+
+pub(crate) enum DistOutcome {
+    Success { stage: String },
+    Failed { reason: String },
+    Cancelled,
+}
+
+pub(crate) async fn wait_ota_distribution(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &UnboundedSender<Vec<u8>>,
+    ota: &SharedOtaLive,
+    ui: &super::UiRefreshSlot,
+    slave_id: u8,
+    firmware_type: u8,
+) -> DistOutcome {
+    let mut locked_slot = -1i32;
+    let mut last_progress = -1i32;
+    let mut last_depth = -1i32;
+    let mut last_slot = -1i32;
+    let mut ever_seen = false;
+    let mut stall_deadline = tokio::time::Instant::now() + DIST_STALL;
+
+    loop {
+        if cancelled(ota) {
+            return DistOutcome::Cancelled;
+        }
+        if tokio::time::Instant::now() >= stall_deadline {
+            return DistOutcome::Failed {
+                reason: if ever_seen {
+                    "设备内部传输进度长时间无变化".into()
+                } else {
+                    "未找到当前固件的分发进度".into()
+                },
+            };
+        }
+
+        match modbus_read(
+            protocol,
+            write_tx,
+            build_read_holding(slave_id, OTA_DIST_REG, OTA_DIST_COUNT),
+            slave_id,
+            OTA_DIST_COUNT,
+        )
+        .await
+        {
+            Ok(values) => {
+                if let Some(found) = pick_distribution_slot(&values, firmware_type, locked_slot) {
+                    ever_seen = true;
+                    locked_slot = found.slot;
+                    if found.progress != last_progress
+                        || found.depth != last_depth
+                        || found.slot != last_slot
+                    {
+                        stall_deadline = tokio::time::Instant::now() + DIST_STALL;
+                        last_progress = found.progress;
+                        last_depth = found.depth;
+                        last_slot = found.slot;
+                    }
+                    let path = dist_path_text(found.depth);
+                    if found.error_code != 0 {
+                        return DistOutcome::Failed {
+                            reason: format!("{path} 失败 · 故障码 0x{:02X}", found.error_code),
+                        };
+                    }
+                    publish(
+                        ota,
+                        ui,
+                        format!("{path}  {}%", found.progress),
+                        Some(100),
+                        Some(found.progress),
+                    );
+                    if found.progress >= 100 {
+                        return DistOutcome::Success {
+                            stage: dist_path_text(found.depth).to_string(),
+                        };
+                    }
+                } else {
+                    publish(
+                        ota,
+                        ui,
+                        format!("设备内部传输：等待 FileType={firmware_type} 的分发任务"),
+                        Some(100),
+                        Some(0),
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(target: "ble_gui::ota", "读分发进度失败，将重试: {err}");
+                publish(
+                    ota,
+                    ui,
+                    format!("读取分发进度暂时失败，继续等待：{err}"),
+                    None,
+                    None,
+                );
+            }
+        }
+
+        tokio::time::sleep(DIST_POLL).await;
+    }
+}
+
+pub(crate) fn pick_distribution_slot(values: &[u16], firmware_type: u8, locked_slot: i32) -> Option<DistProgress> {
     if values.len() < OTA_DIST_COUNT as usize {
         return None;
     }
@@ -858,104 +966,15 @@ pub async fn run_ble_ota(
         Some(0),
     );
 
-    let mut locked_slot = -1i32;
-    let mut last_progress = -1i32;
-    let mut last_depth = -1i32;
-    let mut last_slot = -1i32;
-    let mut ever_seen = false;
-    let mut stall_deadline = tokio::time::Instant::now() + DIST_STALL;
-
-    loop {
-        if cancelled(ota) {
+    match wait_ota_distribution(protocol, write_tx, ota, ui, slave_id, job.firmware_type).await {
+        DistOutcome::Success { stage: path } => {
+            succeed(ota, ui, format!("升级完成：蓝牙 100% · {path} 100%"));
+            info!(target: "ble_gui::ota", "升级成功 type={}", job.firmware_type);
+        }
+        DistOutcome::Failed { reason } => fail(ota, ui, reason),
+        DistOutcome::Cancelled => {
             finish_user_stop(protocol, write_tx, ota, ui, abort_phase).await;
-            return;
         }
-        if tokio::time::Instant::now() >= stall_deadline {
-            fail(
-                ota,
-                ui,
-                if ever_seen {
-                    "设备内部传输进度长时间无变化".to_string()
-                } else {
-                    "未找到当前固件的分发进度".to_string()
-                },
-            );
-            return;
-        }
-
-        match modbus_read(
-            protocol,
-            write_tx,
-            build_read_holding(slave_id, OTA_DIST_REG, OTA_DIST_COUNT),
-            slave_id,
-            OTA_DIST_COUNT,
-        )
-        .await
-        {
-            Ok(values) => {
-                if let Some(found) = pick_distribution_slot(&values, job.firmware_type, locked_slot)
-                {
-                    ever_seen = true;
-                    locked_slot = found.slot;
-                    if found.progress != last_progress
-                        || found.depth != last_depth
-                        || found.slot != last_slot
-                    {
-                        stall_deadline = tokio::time::Instant::now() + DIST_STALL;
-                        last_progress = found.progress;
-                        last_depth = found.depth;
-                        last_slot = found.slot;
-                    }
-                    let path = dist_path_text(found.depth);
-                    if found.error_code != 0 {
-                        fail(
-                            ota,
-                            ui,
-                            format!(
-                                "{path} 失败 · 故障码 0x{:02X}",
-                                found.error_code
-                            ),
-                        );
-                        return;
-                    }
-                    publish(
-                        ota,
-                        ui,
-                        format!("{path}  {}%", found.progress),
-                        Some(100),
-                        Some(found.progress),
-                    );
-                    if found.progress >= 100 {
-                        succeed(ota, ui, format!("升级完成：蓝牙 100% · {path} 100%"));
-                        info!(target: "ble_gui::ota", "升级成功 type={}", job.firmware_type);
-                        return;
-                    }
-                } else {
-                    publish(
-                        ota,
-                        ui,
-                        format!(
-                            "设备内部传输：等待 FileType={} 的分发任务",
-                            job.firmware_type
-                        ),
-                        Some(100),
-                        Some(0),
-                    );
-                }
-            }
-            Err(err) => {
-                warn!(target: "ble_gui::ota", "读分发进度失败，将重试: {err}");
-                publish(
-                    ota,
-                    ui,
-                    format!("读取分发进度暂时失败，继续等待：{err}"),
-                    None,
-                    None,
-                );
-            }
-        }
-
-        tokio::time::sleep(DIST_POLL).await;
     }
 }
 

@@ -6,6 +6,7 @@ component FwActionButton inherits Rectangle {
     in property <string> text;
     in property <bool> primary: false;
     in property <bool> danger: false;
+    in property <bool> outline: false;
     in property <bool> enabled: true;
     callback clicked();
 
@@ -13,24 +14,32 @@ component FwActionButton inherits Rectangle {
     height: 36px;
     border-radius: 8px;
     opacity: root.enabled ? 1.0 : 0.45;
-    background: root.danger ? (root.enabled ? Theme.error : Theme.bg-panel-alt)
-        : root.primary ? (root.enabled ? Theme.accent : Theme.bg-panel-alt)
-        : Theme.bg-panel-alt;
-    border-width: 1px;
-    border-color: root.danger ? Theme.error
+    background: !root.enabled ? Theme.bg-panel-alt
+        : root.danger ? Theme.error
         : root.primary ? Theme.accent
-        : Theme.border;
+        : ta.has-hover ? Theme.bg-nav-selected
+        : Theme.bg-card;
+    border-width: 1px;
+    border-color: !root.enabled ? Theme.border
+        : root.danger ? Theme.error
+        : (root.primary || root.outline) ? Theme.accent
+        : Theme.border-card;
 
-    TouchArea {
+    ta := TouchArea {
         width: 100%;
         height: 100%;
         enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
         clicked => { root.clicked(); }
 
         Text {
             text: root.text;
-            color: (root.primary || root.danger) && root.enabled ? #ffffff : Theme.text-primary;
+            color: !root.enabled ? Theme.text-muted
+                : (root.primary || root.danger) ? #ffffff
+                : root.outline ? Theme.accent
+                : Theme.text-primary;
             font-size: 13px;
+            font-weight: root.outline || root.primary || root.danger ? 600 : 400;
             horizontal-alignment: center;
             vertical-alignment: center;
         }
@@ -72,6 +81,7 @@ export component FirmwarePage inherits VerticalBox {
     callback pick-file();
     callback clear-file();
     callback start-upgrade();
+    callback start-http-upgrade();
     callback stop-upgrade();
     callback ota-version-edited(string);
     callback copy-text(string);
@@ -105,7 +115,9 @@ export component FirmwarePage inherits VerticalBox {
         }
     }
 
-    // 剩余高度按 5:8 分（约黄金比 0.38 / 0.62）：上排准备区，下排进度主操作。
+    // 上排「选择固件 / 固件信息」按内容高度，余量给进度卡。
+    // 默认窗口 640：状态栏 44 + 内容边距 16 ≈ 固件页 580；标题 28 + 间距 12 → 内区 540。
+    // 当前设备 ≈ 94，选择行 ≈ 170（料号不匹配时 +26），进度卡 ≈ 250，足够放下结果 + 两行失败原因。
         VerticalLayout {
         vertical-stretch: 1;
         spacing: 12px;
@@ -147,16 +159,14 @@ export component FirmwarePage inherits VerticalBox {
         HorizontalLayout {
             width: 100%;
             spacing: 12px;
-            vertical-stretch: 5;
-            min-height: 220px;
 
             FwCard {
                 min-width: 0px;
                 preferred-width: 0px;
                 horizontal-stretch: 1;
                 VerticalLayout {
-                    padding: 16px;
-                    spacing: 10px;
+                    padding: 12px;
+                    spacing: 8px;
                     alignment: start;
 
                     Text {
@@ -164,11 +174,11 @@ export component FirmwarePage inherits VerticalBox {
                         color: Theme.text-primary;
                         font-size: 14px;
                         font-weight: 600;
-                        height: 20px;
+                        height: 18px;
                     }
 
                     Rectangle {
-                        height: 44px;
+                        height: 36px;
                         border-radius: 8px;
                         background: Theme.bg-panel-alt;
                         border-width: 1px;
@@ -216,7 +226,7 @@ export component FirmwarePage inherits VerticalBox {
 
                     HorizontalLayout {
                         spacing: 8px;
-                        min-height: 32px;
+                        height: 28px;
 
                         Text {
                             text: "料号版本";
@@ -234,10 +244,10 @@ export component FirmwarePage inherits VerticalBox {
                         }
                     }
 
-                    if root.firmware-part-mismatch || root.firmware-phase == 4: Text {
+                    if root.firmware-part-mismatch: Text {
                         min-height: 18px;
                         text: root.firmware-status-text;
-                        color: root.firmware-phase == 4 ? Theme.error : Theme.warning;
+                        color: Theme.warning;
                         font-size: 12px;
                         wrap: word-wrap;
                     }
@@ -249,7 +259,7 @@ export component FirmwarePage inherits VerticalBox {
                 preferred-width: 0px;
                 horizontal-stretch: 1;
                 VerticalLayout {
-                    padding: 16px;
+                    padding: 12px;
                     spacing: 4px;
                     alignment: start;
 
@@ -258,7 +268,7 @@ export component FirmwarePage inherits VerticalBox {
                         color: Theme.text-primary;
                         font-size: 14px;
                         font-weight: 600;
-                        height: 20px;
+                        height: 18px;
                     }
 
                     CopyableInfoRow { label: "类型"; value: root.firmware-type-text; copy-text(t) => { root.copy-text(t); } }
@@ -271,11 +281,11 @@ export component FirmwarePage inherits VerticalBox {
 
         FwCard {
             width: 100%;
-            vertical-stretch: 8;
-            min-height: 200px;
+            vertical-stretch: 1;
+            min-height: 180px;
             VerticalLayout {
-                padding: 20px;
-                spacing: 12px;
+                padding: 16px;
+                spacing: 10px;
 
                 HorizontalLayout {
                     spacing: 12px;
@@ -306,7 +316,7 @@ export component FirmwarePage inherits VerticalBox {
 
                 progress-track := Rectangle {
                     vertical-stretch: 1;
-                    min-height: 72px;
+                    min-height: 56px;
                     border-radius: 10px;
                     clip: true;
                     background: Theme.bg-panel-alt;
@@ -360,10 +370,16 @@ export component FirmwarePage inherits VerticalBox {
                     height: 36px;
 
                     FwActionButton {
-                        text: "开始升级";
-                        primary: true;
+                        text: "BLE 升级";
+                        outline: true;
                         enabled: root.firmware-can-start;
                         clicked => { root.start-upgrade(); }
+                    }
+                    FwActionButton {
+                        text: "HTTP 升级";
+                        primary: true;
+                        enabled: root.firmware-can-start;
+                        clicked => { root.start-http-upgrade(); }
                     }
                     FwActionButton {
                         text: "停止";
@@ -374,19 +390,42 @@ export component FirmwarePage inherits VerticalBox {
                     Rectangle { horizontal-stretch: 1; }
                 }
 
-                if root.firmware-phase == 3 || root.firmware-phase == 4: HorizontalLayout {
-                    spacing: 24px;
+                if root.firmware-phase == 3 || root.firmware-phase == 4: VerticalLayout {
+                    spacing: 6px;
                     CopyableInfoRow {
                         label: "结果";
                         value: root.firmware-result-text;
                         value-color: root.result-color;
                         copy-text(t) => { root.copy-text(t); }
                     }
-                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": CopyableInfoRow {
-                        label: "失败原因";
-                        value: root.firmware-fail-reason;
-                        value-color: Theme.error;
-                        copy-text(t) => { root.copy-text(t); }
+                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text {
+                            text: "失败原因";
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            width: 80px;
+                            vertical-alignment: top;
+                        }
+                        Text {
+                            text: root.firmware-fail-reason;
+                            color: Theme.error;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                        }
+                        TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.copy-text(root.firmware-fail-reason); }
+                            Text {
+                                text: "复制";
+                                color: Theme.accent;
+                                font-size: 11px;
+                                vertical-alignment: top;
+                            }
+                        }
                     }
                 }
             }

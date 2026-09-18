@@ -1,12 +1,15 @@
-//! 设备固件升级：本地选文件、自动识别头、MD5；传输由 BLE worker 走 OTA Start + XMODEM-1K。
+//! 设备固件升级：本地选文件、自动识别头、MD5。
+//!
+//! 传输由 BLE worker 走两条路径：OTA Start + XMODEM-1K，或本机 HTTP + BLE `00 09` JSON。
 //!
 //! - `> 1MB`：视为 IOT 整包，不解析 POWEROAK 头，类型固定为 [`header`] 中的 IOT=0
 //! - 否则先按 8 位头、再按 TI 16 位 Word 头识别 `POWEROAK`
 //!
-//! 进度：IOT 自升级只有蓝牙阶段（0–100）；子设备固件蓝牙占 0–50，IOT→CAN 占 50–100。
+//! 进度：IOT 自升级只有传输阶段（0–100）；子设备固件传输占 0–50，IOT→CAN 占 50–100。
 //! 当前阶段写在 `stage_text`。
 
 use std::cell::RefCell;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -15,8 +18,11 @@ use std::time::{Duration, Instant};
 use md5::{Digest, Md5};
 
 pub mod header;
+pub mod http_cmd;
+pub mod lan;
 
 use header::{classify, part_number_wire, FirmwareInfo, FIRMWARE_MAX_BYTES};
+use http_cmd::{check_http_lan, format_not_same_lan, HttpNetCheck};
 
 pub const IOT_DEFAULT_OTA_VERSION: u32 = 100600199;
 pub const PHASE_IDLE: i32 = 0;
@@ -89,6 +95,18 @@ pub struct OtaJob {
     pub firmware: Arc<[u8]>,
     pub firmware_type: u8,
     pub version: u32,
+}
+
+#[derive(Clone)]
+pub struct HttpOtaJob {
+    pub firmware: Arc<[u8]>,
+    pub firmware_type: u8,
+    pub version: u32,
+    pub md5: String,
+    pub model: String,
+    pub sn: String,
+    pub local_ip: Ipv4Addr,
+    pub sta_ip: Ipv4Addr,
 }
 
 #[derive(Clone, Debug)]
@@ -407,6 +425,88 @@ impl FirmwareService {
             };
         }
         Some(job)
+    }
+
+    /// 校验后进入 HTTP 升级；失败只改界面文案，不启动传输。
+    pub fn begin_http_upgrade(
+        &self,
+        device_connected: bool,
+        encryption_ready: bool,
+        wifi_sta: bool,
+        sta_ip: &str,
+        link_status_valid: bool,
+    ) -> Option<HttpOtaJob> {
+        if self.is_running() {
+            return None;
+        }
+        let job = self.begin_upgrade(device_connected, encryption_ready)?;
+        let (model, sn, md5) = {
+            let inner = self.inner.borrow();
+            let model = inner.device_type.trim();
+            let sn = inner.device_sn.trim();
+            if model.is_empty() || model == "—" || sn.is_empty() || sn == "—" {
+                drop(inner);
+                self.fail_precheck("未读到设备机型或序列号，无法组 HTTP 升级命令");
+                return None;
+            }
+            let sel = inner.selected.as_ref()?;
+            (model.to_string(), sn.to_string(), sel.md5.clone())
+        };
+        let ifaces = lan::list_local_ipv4();
+        let (local_ip, device_ip) = if link_status_valid {
+            match check_http_lan(wifi_sta, sta_ip, &ifaces) {
+                HttpNetCheck::Ok {
+                    local_ip,
+                    device_ip,
+                } => (local_ip, device_ip),
+                HttpNetCheck::WifiDown | HttpNetCheck::NoDeviceIp => {
+                    self.fail_precheck(
+                        "设备未连接 WiFi 或还没有 IP，请先配网并与电脑连到同一局域网",
+                    );
+                    return None;
+                }
+                HttpNetCheck::NotSameLan {
+                    device_ip,
+                    local_ips,
+                } => {
+                    self.fail_precheck(format_not_same_lan(device_ip, &local_ips));
+                    return None;
+                }
+            }
+        } else {
+            (Ipv4Addr::UNSPECIFIED, Ipv4Addr::UNSPECIFIED)
+        };
+        if let Ok(mut g) = self.ota.lock() {
+            g.stage_text = "准备 HTTP 升级".into();
+        }
+        Some(HttpOtaJob {
+            firmware: job.firmware,
+            firmware_type: job.firmware_type,
+            version: job.version,
+            md5,
+            model,
+            sn,
+            local_ip,
+            sta_ip: device_ip,
+        })
+    }
+
+    fn fail_precheck(&self, reason: impl Into<String>) {
+        let reason = reason.into();
+        if let Ok(mut g) = self.ota.lock() {
+            g.running = false;
+            g.phase = PHASE_FAILED;
+            g.result_text = "升级失败".into();
+            g.fail_reason = reason.clone();
+            g.stage_text = "升级失败".into();
+            g.status_text = reason.clone();
+            g.freeze_elapsed();
+        }
+        let mut inner = self.inner.borrow_mut();
+        inner.phase = PHASE_FAILED;
+        inner.result_text = "升级失败".into();
+        inner.fail_reason = reason.clone();
+        inner.status_text = reason;
     }
 
     pub fn request_stop(&self) {

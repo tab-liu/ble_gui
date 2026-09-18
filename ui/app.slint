@@ -203,6 +203,7 @@ export component MainWindow inherits Window {
     callback firmware-pick-file();
     callback firmware-clear-file();
     callback firmware-start();
+    callback firmware-start-http();
     callback firmware-stop();
     callback firmware-ota-version-edited(string);
     callback dialog-confirm();
@@ -454,6 +455,7 @@ export component MainWindow inherits Window {
                             pick-file => { root.firmware-pick-file(); }
                             clear-file => { root.firmware-clear-file(); }
                             start-upgrade => { root.firmware-start(); }
+                            start-http-upgrade => { root.firmware-start-http(); }
                             stop-upgrade => { root.firmware-stop(); }
                             ota-version-edited(text) => { root.firmware-ota-version-edited(text); }
                             copy-text(text) => { root.copy-text(text); }

@@ -27,6 +27,7 @@ use super::poll_executor::poll_foreground_once;
 use super::poll_policy::{describe_poll_foreground, ensure_dashboard_poll_if_idle, notify_poll, PollForeground, SharedPollPolicy};
 use super::protocol::{HandshakePhase, ProtocolSession};
 use super::ota::run_ble_ota;
+use super::http_ota::run_http_ota;
 use super::state::{LinkPhase, ScanLinkHint, SharedBleState};
 use super::target::{
     adv_link_hint_from_properties, is_target_manufacturer_data, is_target_properties, matches_ff00,
@@ -34,7 +35,7 @@ use super::target::{
 };
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
-use crate::services::firmware::{OtaJob, SharedOtaLive, PHASE_SUCCESS};
+use crate::services::firmware::{HttpOtaJob, OtaJob, SharedOtaLive, PHASE_SUCCESS};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
@@ -51,6 +52,7 @@ pub enum BleCommand {
         field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
     StartOta { job: OtaJob },
+    StartHttpOta { job: HttpOtaJob },
 }
 
 enum SessionCommand {
@@ -63,6 +65,7 @@ enum SessionCommand {
         field: Option<crate::services::ble::modbus::RegisterFieldPatch>,
     },
     StartOta { job: OtaJob },
+    StartHttpOta { job: HttpOtaJob },
 }
 
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
@@ -98,6 +101,32 @@ fn spawn_tracked(
         g.retain(|h| !h.is_finished());
         g.push(handle.abort_handle());
     }
+}
+
+fn finish_ota_session(
+    policy: &SharedPollPolicy,
+    ota: &SharedOtaLive,
+    expect_drop: &SharedExpectDrop,
+    ui: &super::UiRefreshSlot,
+) {
+    if let Ok(mut p) = policy.lock() {
+        p.ota_busy = false;
+    }
+    notify_poll(policy);
+    let iot_ok = ota
+        .lock()
+        .ok()
+        .is_some_and(|g| g.phase == PHASE_SUCCESS && g.ble_only);
+    if iot_ok {
+        info!(
+            target: "ble_gui::ota",
+            "IOT 升级成功，等待设备重启后刷新连接状态",
+        );
+        if let Ok(mut slot) = expect_drop.lock() {
+            *slot = Some(Instant::now() + Duration::from_secs(2));
+        }
+    }
+    notify_ui_force(ui, true);
 }
 
 fn abort_session(active: &ActiveSession) {
@@ -1010,6 +1039,18 @@ pub async fn worker_main(
                     g.freeze_elapsed();
                 }
             }
+            BleCommand::StartHttpOta { job } => {
+                if let Some(active) = &session {
+                    let _ = active.cmd_tx.send(SessionCommand::StartHttpOta { job });
+                } else if let Ok(mut g) = ota_live.lock() {
+                    g.running = false;
+                    g.phase = crate::services::firmware::PHASE_FAILED;
+                    g.result_text = "升级失败".into();
+                    g.fail_reason = "未连接设备".into();
+                    g.stage_text = "升级失败".into();
+                    g.freeze_elapsed();
+                }
+            }
         }
     }
 }
@@ -1862,23 +1903,29 @@ async fn connect_after_gatt(
                                     &protocol, &write_tx, &gate, &live, &ota, &ui, job,
                                 )
                                 .await;
-                                if let Ok(mut p) = policy.lock() {
-                                    p.ota_busy = false;
-                                }
-                                notify_poll(&policy);
-                                let iot_ok = ota.lock().ok().is_some_and(|g| {
-                                    g.phase == PHASE_SUCCESS && g.ble_only
-                                });
-                                if iot_ok {
-                                    info!(
-                                        target: "ble_gui::ota",
-                                        "IOT 升级成功，等待设备重启后刷新连接状态",
-                                    );
-                                    if let Ok(mut slot) = expect_drop.lock() {
-                                        *slot = Some(Instant::now() + Duration::from_secs(2));
-                                    }
-                                }
-                                notify_ui_force(&ui, true);
+                                finish_ota_session(&policy, &ota, &expect_drop, &ui);
+                            });
+                        }
+                        Some(SessionCommand::StartHttpOta { job }) => {
+                            if let Ok(mut p) = poll_policy_ota.lock() {
+                                p.ota_busy = true;
+                                p.foreground = PollForeground::None;
+                            }
+                            notify_poll(&poll_policy_ota);
+                            let protocol = protocol_for_write.clone();
+                            let write_tx = write_tx.clone();
+                            let gate = gate_for_write.clone();
+                            let live = modbus_live_write.clone();
+                            let ota = ota_live_session.clone();
+                            let ui = ui_refresh_for_notify.clone();
+                            let policy = poll_policy_ota.clone();
+                            let expect_drop = expect_drop_notify.clone();
+                            spawn_tracked(&in_flight_for_notify, async move {
+                                run_http_ota(
+                                    &protocol, &write_tx, &gate, &live, &ota, &ui, job,
+                                )
+                                .await;
+                                finish_ota_session(&policy, &ota, &expect_drop, &ui);
                             });
                         }
                         None => {

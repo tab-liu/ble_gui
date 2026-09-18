@@ -11,7 +11,7 @@
 //! | [`wifi_scan`] | 本机附近 WiFi 扫描（Windows） |
 //! | [`ble_favorites`] | 收藏设备列表 |
 //! | [`theme`] | 明暗主题 |
-//! | [`firmware`] | 固件升级：选文件、识别头、BLE XMODEM 与设备分发进度 |
+//! | [`firmware`] | 固件升级：选文件、识别头、BLE XMODEM 或本机 HTTP + `00 09` |
 
 pub mod ble;
 pub mod ble_favorites;

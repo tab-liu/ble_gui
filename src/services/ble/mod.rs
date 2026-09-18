@@ -31,6 +31,7 @@ mod poll_executor;
 mod poll_policy;
 mod protocol;
 mod ota;
+mod http_ota;
 mod runtime;
 mod state;
 mod target;
@@ -46,7 +47,7 @@ use std::rc::Rc;
 
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::services::firmware::{OtaJob, SharedOtaLive};
+use crate::services::firmware::{HttpOtaJob, OtaJob, SharedOtaLive};
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
 
 use runtime::TokioRuntime;
@@ -256,6 +257,15 @@ impl BleService {
             p.wake.notify_one();
         }
         let _ = self.inner.cmd_tx.send(BleCommand::StartOta { job });
+    }
+
+    pub fn start_http_ota(&self, job: HttpOtaJob) {
+        if let Ok(mut p) = self.inner.poll_policy.lock() {
+            p.ota_busy = true;
+            p.foreground = poll_policy::PollForeground::None;
+            p.wake.notify_one();
+        }
+        let _ = self.inner.cmd_tx.send(BleCommand::StartHttpOta { job });
     }
 
     pub fn is_connected(&self) -> bool {
