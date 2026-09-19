@@ -1418,6 +1418,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if ui.get_wifi_scan_busy() {
             return;
         }
+        // macOS 定位弹窗必须在主线程请求，且进程需经 codesign 绑定 Info.plist。
+        wifi_scan::prepare_platform_access();
         ui.set_wifi_picker_kind(1);
         ui.set_wifi_scan_busy(true);
         ui.set_wifi_scan_message("正在扫描附近 WiFi…".into());

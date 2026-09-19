@@ -34,7 +34,7 @@ use super::target::{
     AdvLinkHint,
 };
 use super::uuids::{notify_uuid, notify_uuid_ff03, write_uuid};
-use super::win_radio::{
+use super::radio::{
     is_radio_unavailable_detail, message_for_scan_failure, radio_unavailable_reason, NO_ADAPTER_HINT,
 };
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
@@ -83,8 +83,8 @@ struct ActiveSession {
     peripheral: Peripheral,
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
     in_flight_writes: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
-    /// 必须持有，丢掉后 Windows 可能把连接间隔改回省电档。
-    _win_throughput: Option<super::win_conn::WinThroughputHold>,
+    /// 必须持有，丢掉后系统可能把连接间隔改回省电档（尤其 Windows）。
+    _throughput_hold: Option<super::conn_opt::ThroughputHold>,
 }
 
 fn abort_in_flight_writes(jobs: &Arc<Mutex<Vec<tokio::task::AbortHandle>>>) {
@@ -647,7 +647,7 @@ async fn refresh_radio_status(
     ui_refresh: &super::UiRefreshSlot,
     scan_task: &mut Option<tokio::task::JoinHandle<()>>,
 ) {
-    match radio_unavailable_reason().await {
+    match radio_unavailable_reason(adapter).await {
         Some(reason) => {
             let (phase, detail) = {
                 let inner = state.lock().expect("ble state lock");
@@ -777,7 +777,7 @@ pub async fn worker_main(
 
         match cmd {
             BleCommand::StartScan => {
-                if let Some(reason) = radio_unavailable_reason().await {
+                if let Some(reason) = radio_unavailable_reason(&adapter).await {
                     enter_idle(&adapter, &state, &ui_refresh, &mut scan_task, reason).await;
                     continue;
                 }
@@ -1139,7 +1139,7 @@ async fn run_scan_loop(
     let mut events = match adapter.events().await {
         Ok(events) => events,
         Err(err) => {
-            let msg = message_for_scan_failure(&err).await;
+            let msg = message_for_scan_failure(&adapter, &err).await;
             set_phase(&state, LinkPhase::Idle, msg);
             notify_ui_force(&ui_refresh, true);
             return;
@@ -1151,7 +1151,7 @@ async fn run_scan_loop(
         set_phase(
             &state,
             LinkPhase::Idle,
-            message_for_scan_failure(&err).await,
+            message_for_scan_failure(&adapter, &err).await,
         );
         notify_ui_force(&ui_refresh, true);
         return;
@@ -1737,7 +1737,7 @@ async fn connect_after_gatt(
 
     let poll_abort = poll_task.abort_handle();
     let peripheral_for_session = peripheral.clone();
-    let win_throughput = super::win_conn::request_throughput(address_text).await;
+    let throughput_hold = super::conn_opt::request_throughput(address_text).await;
     let can_write_without_response = write_char
         .properties
         .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE);
@@ -2092,7 +2092,7 @@ async fn connect_after_gatt(
         peripheral: peripheral_for_session,
         cmd_tx: session_cmd_tx,
         in_flight_writes,
-        _win_throughput: win_throughput,
+        _throughput_hold: throughput_hold,
     })
 }
 

@@ -8,7 +8,7 @@
 //! | [`modbus_query_store`] | Modbus 查询页 TOML 持久化 |
 //! | [`device_config_store`] | 设备配置自定义分组 TOML 持久化 |
 //! | [`wifi_cred_store`] | 配网用过的 WiFi SSID/密码 |
-//! | [`wifi_scan`] | 本机附近 WiFi 扫描（Windows） |
+//! | [`wifi_scan`] | 本机附近 WiFi 扫描（Windows / macOS / Linux，仅 2.4G） |
 //! | [`ble_favorites`] | 收藏设备列表 |
 //! | [`theme`] | 明暗主题 |
 //! | [`firmware`] | 固件升级：选文件、识别头、BLE XMODEM 或本机 HTTP + `00 09` |

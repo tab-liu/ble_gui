@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/app.ico");
+    println!("cargo:rerun-if-changed=assets/macos_info.plist");
     slint_build::compile("ui/app.slint").unwrap();
     write_window_icon_rgba();
 
@@ -21,6 +22,17 @@ fn main() {
         res.set("FileDescription", "BLE Modbus 工具");
         res.set("OriginalFilename", "ble_gui.exe");
         res.compile().expect("embed Windows application icon");
+    }
+
+    // 把定位用途说明嵌进可执行文件，便于 cargo run 时也能弹出定位授权。
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        let plist = PathBuf::from("assets/macos_info.plist")
+            .canonicalize()
+            .expect("assets/macos_info.plist");
+        println!(
+            "cargo:rustc-link-arg=-Wl,-sectcreate,__TEXT,__info_plist,{}",
+            plist.display()
+        );
     }
 }
 

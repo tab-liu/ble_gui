@@ -6,3 +6,11 @@ rustdocflags = ["--document-private-items"]
 # 快捷：cargo docs  →  生成并打开（不含依赖文档）
 [alias]
 docs = "doc --no-deps --open"
+
+# macOS：运行前 ad-hoc 签名，绑定嵌入的 Info.plist，定位授权弹窗才出得来。
+[target.aarch64-apple-darwin]
+runner = ["bash", "scripts/macos-run.sh"]
+
+[target.x86_64-apple-darwin]
+runner = ["bash", "scripts/macos-run.sh"]
+

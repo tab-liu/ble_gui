@@ -22,7 +22,7 @@
 //! - 连接态与扫描列表通过 [`shared_state`](BleService::shared_state) 快照读取。
 //! - 切换页面后务必 [`set_poll_foreground`](BleService::set_poll_foreground)
 //!   （通常由 [`crate::services::poll_sync`] 完成）。
-//! - Windows：Connect 不要先 StopScan；GATT 失败会重试。`win_conn` 尽量把间隔压到 ~15ms。
+//! - Windows：Connect 不要先 StopScan；GATT 失败会重试。`conn_opt` 尽量把间隔压到 ~15ms。
 
 mod crypto;
 pub mod modbus;
@@ -38,9 +38,9 @@ mod target;
 mod transport;
 mod uuids;
 mod worker;
-mod win_conn;
+mod conn_opt;
 mod win_name;
-mod win_radio;
+mod radio;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
