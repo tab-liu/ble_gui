@@ -54,12 +54,6 @@ export component Sidebar inherits Rectangle {
 
         Rectangle { vertical-stretch: 1; }
 
-        NavItem {
-            label: "设置";
-            selected: root.current-page == 2;
-            clicked => { root.navigate(2); }
-        }
-
         Button {
             text: Theme.quick-toggle-label;
             horizontal-stretch: 1;

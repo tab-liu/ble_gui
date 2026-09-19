@@ -7,7 +7,7 @@
 //!
 //! 与侧栏 `navigate`、Slint `current-page` 一致：
 //! [`PAGE_DASHBOARD`] / [`PAGE_MODBUS`] / [`PAGE_DEVICE_CONFIG`] /
-//! [`PAGE_EXTERNAL`] / [`PAGE_FIRMWARE`] / [`PAGE_SETTINGS`]。
+//! [`PAGE_EXTERNAL`] / [`PAGE_FIRMWARE`]。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -35,8 +35,6 @@ pub use dialog::{DIALOG_COPY_QUERY, DIALOG_NEW_TAB, DIALOG_NONE};
 pub const PAGE_DASHBOARD: i32 = 0;
 /// Modbus 查询页（可增删查询项 + 前台轮询）。
 pub const PAGE_MODBUS: i32 = 1;
-/// 应用设置（主题等）。
-pub const PAGE_SETTINGS: i32 = 2;
 /// 固件升级页。
 pub const PAGE_FIRMWARE: i32 = 3;
 /// 设备配置（固定「常用」+ 自定义寄存器表单）。

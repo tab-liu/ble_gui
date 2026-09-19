@@ -76,6 +76,16 @@ pub fn run() -> Result<(), slint::PlatformError> {
     refresh_all(&ui, &ctx);
 
     pages::wire_all(&ui, &ctx);
+
+    // 侧栏主题快捷切换（设置页已移除，主题只保留这一处入口）。
+    let ui_weak_theme = ui.as_weak();
+    let ctx_theme = ctx.clone();
+    ui.on_toggle_theme_quick(move || {
+        let ui = ui_weak_theme.unwrap();
+        ctx_theme.theme.toggle_quick();
+        ctx_theme.theme.apply(&ui);
+    });
+
     // 启动即扫描，省掉主页再点一次「扫描设备」。
     ctx.ble.start_scan();
 

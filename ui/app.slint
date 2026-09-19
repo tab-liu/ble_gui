@@ -23,7 +23,6 @@ import { DashboardPage } from "pages/dashboard.slint";
 import { ModbusPage } from "pages/modbus.slint";
 import { DeviceConfigPage } from "pages/device_config.slint";
 import { ExternalPage } from "pages/external.slint";
-import { SettingsPage } from "pages/settings.slint";
 import { FirmwarePage } from "pages/firmware.slint";
 import { ModbusDndApi } from "components/modbus_dnd.slint";
 
@@ -208,7 +207,6 @@ export component MainWindow inherits Window {
     callback firmware-ota-version-edited(string);
     callback dialog-confirm();
     callback dialog-cancel();
-    callback set-theme-mode(int);
     callback toggle-theme-quick();
 
     callback add-device-config-group-request();
@@ -419,12 +417,6 @@ export component MainWindow inherits Window {
                             }
                             tab-strip-width-changed(width) => {
                                 root.modbus-tab-strip-width-changed(width);
-                            }
-                        }
-
-                        if root.current-page == 2: SettingsPage {
-                            set-theme-mode(mode) => {
-                                root.set-theme-mode(mode);
                             }
                         }
 
