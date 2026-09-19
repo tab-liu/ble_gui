@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # cargo run 的 macOS runner：
 # 1) 把二进制装进临时 .app（TCC 定位服务只稳定认 Bundle）
-# 2) ad-hoc 签名并绑定 Info.plist
-# 否则系统不弹定位窗，定位列表里也不会出现「BLE Modbus 工具」。
+# 2) 嵌入 AppIcon.icns（程序坞图标）
+# 3) ad-hoc 签名并绑定 Info.plist
 set -euo pipefail
 
 BIN="${1:?}"
@@ -10,55 +10,47 @@ shift
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PLIST_SRC="$ROOT/assets/macos_info.plist"
+ICNS_SRC="$ROOT/assets/app.icns"
 APP_DIR="$(dirname "$BIN")/BLE Modbus 工具.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS/MacOS"
+RES_DIR="$CONTENTS/Resources"
 APP_BIN="$MACOS_DIR/ble_gui"
 
-mkdir -p "$MACOS_DIR"
-# 复制可执行文件（保持与 cargo 产物同步）
+mkdir -p "$MACOS_DIR" "$RES_DIR"
 cp -f "$BIN" "$APP_BIN"
 chmod +x "$APP_BIN"
 
-# 完整 Info.plist（Bundle 用）
-cat > "$CONTENTS/Info.plist" <<'EOF'
+if [[ -f "$ICNS_SRC" ]]; then
+  cp -f "$ICNS_SRC" "$RES_DIR/AppIcon.icns"
+elif [[ -f "$ROOT/assets/app_icon.png" ]]; then
+  # 无 icns 时至少放一张 png，部分环境可作回退
+  cp -f "$ROOT/assets/app_icon.png" "$RES_DIR/AppIcon.png"
+fi
+
+if [[ -f "$PLIST_SRC" ]]; then
+  cp -f "$PLIST_SRC" "$CONTENTS/Info.plist"
+else
+  cat > "$CONTENTS/Info.plist" <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>CFBundleDevelopmentRegion</key>
-	<string>zh-Hans</string>
 	<key>CFBundleExecutable</key>
 	<string>ble_gui</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.ble-gui.tool</string>
-	<key>CFBundleInfoDictionaryVersion</key>
-	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>BLE Modbus 工具</string>
-	<key>CFBundleDisplayName</key>
 	<string>BLE Modbus 工具</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
-	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
-	<key>CFBundleVersion</key>
-	<string>1</string>
-	<key>LSMinimumSystemVersion</key>
-	<string>11.0</string>
-	<key>NSHighResolutionCapable</key>
-	<true/>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>需要定位权限以扫描附近 WiFi 名称（SSID），用于设备配网。</string>
-	<key>NSLocationUsageDescription</key>
 	<string>需要定位权限以扫描附近 WiFi 名称（SSID），用于设备配网。</string>
 </dict>
 </plist>
 EOF
-
-# 同步一份到仓库模板（若存在）
-if [[ -f "$PLIST_SRC" ]]; then
-  :
 fi
 
 if command -v codesign >/dev/null 2>&1; then

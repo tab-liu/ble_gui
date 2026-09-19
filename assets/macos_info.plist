@@ -24,6 +24,8 @@
 	<string>11.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>需要定位权限以扫描附近 WiFi 名称（SSID），用于设备配网。</string>
 	<key>NSLocationUsageDescription</key>

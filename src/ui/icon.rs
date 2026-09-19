@@ -1,9 +1,9 @@
-//! 窗口标题栏图标。
+//! 窗口 / 任务栏图标。
 //!
 //! 像素来自 `build.rs`：从 `app.ico` 解出 PNG，再写成 `OUT_DIR/window_icon.rgba`。
-//! 这样不读独立 `.png`（本机透明加密会破坏签名），也让 Slint 的 `icon` 非空，
-//! 避免 winit 用 `None` 把标题栏清成系统默认图。
-//! Windows 上 HWND 就绪后再补一次 `WM_SETICON`，与任务栏同一份资源图标对齐。
+//! - Windows：HWND 就绪后 `WM_SETICON`，与 exe 资源图标对齐
+//! - macOS：程序坞主要靠 `.app` 内 `AppIcon.icns`；此处仍设置窗口图标
+//! - Linux：靠 Slint/winit 窗口图标显示在任务栏
 
 use slint::{ComponentHandle, Image, Rgba8Pixel, SharedPixelBuffer};
 
@@ -32,7 +32,7 @@ pub fn load_window_icon() -> Image {
     ))
 }
 
-/// 尝试把 exe 资源图标设到标题栏。`true` = 已处理完（成功或无需再试）。
+/// 窗口句柄就绪后再补一次图标。`true` = 已处理完（成功或无需再试）。
 pub fn apply_after_window_ready(ui: &MainWindow) -> bool {
     #[cfg(windows)]
     {
@@ -40,7 +40,8 @@ pub fn apply_after_window_ready(ui: &MainWindow) -> bool {
     }
     #[cfg(not(windows))]
     {
-        let _ = ui;
+        // macOS / Linux：再设一次窗口图标，避免首帧被默认图标覆盖。
+        ui.set_window_icon(load_window_icon());
         true
     }
 }

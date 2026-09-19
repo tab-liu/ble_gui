@@ -41,3 +41,4 @@ objc2-foundation = "0.3.2"
 slint-build = "1.17"
 winres = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
+icns = "0.3"

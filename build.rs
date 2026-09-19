@@ -1,9 +1,9 @@
 //! 编译期把 `ui/app.slint` 编进 crate（生成 `MainWindow` 等 Rust 绑定）。
 //!
 //! 修改任意 `ui/**/*.slint` 后需重新 `cargo build`；绑定类型在 [`crate::ui`]。
-//! Windows 还会把 `assets/app.ico` 嵌进 exe，资源管理器 / 任务栏才能显示图标。
-//! 同时从 ICO 解出 RGBA 像素写到 `OUT_DIR`，供运行时标题栏图标使用
-//! （避免直接 `include_bytes` 独立 `.png`，本机透明加密会破坏其签名）。
+//! - Windows：`winres` 把 `assets/app.ico` 嵌进 exe（资源管理器 / 任务栏）
+//! - macOS：从 ico 生成 `assets/app.icns`，由 `scripts/macos-run.sh` 打进 `.app`（程序坞）
+//! - 各平台：写出 `OUT_DIR/window_icon.rgba`，供运行时标题栏 / 任务栏窗口图标
 
 use std::env;
 use std::fs;
@@ -13,7 +13,9 @@ fn main() {
     println!("cargo:rerun-if-changed=assets/app.ico");
     println!("cargo:rerun-if-changed=assets/macos_info.plist");
     slint_build::compile("ui/app.slint").unwrap();
-    write_window_icon_rgba();
+    let png = write_window_icon_rgba();
+    write_app_icns(&png);
+    write_app_png(&png);
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         let mut res = winres::WindowsResource::new();
@@ -36,7 +38,8 @@ fn main() {
     }
 }
 
-fn write_window_icon_rgba() {
+/// 返回 ico 内最大 PNG 帧，并写 `window_icon.rgba`。
+fn write_window_icon_rgba() -> Vec<u8> {
     let ico = fs::read("assets/app.ico").expect("read assets/app.ico");
     let png = png_payload_from_ico(&ico).expect("app.ico 中没有 PNG 帧");
     let decoded = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
@@ -51,6 +54,53 @@ fn write_window_icon_rgba() {
 
     let path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("window_icon.rgba");
     fs::write(&path, out).expect("write window_icon.rgba");
+    png
+}
+
+/// 生成 macOS 程序坞用的 `assets/app.icns`。
+fn write_app_icns(png: &[u8]) {
+    use icns::{IconFamily, IconType, Image as IcnsImage};
+
+    let base = image::load_from_memory_with_format(png, image::ImageFormat::Png)
+        .expect("decode png for icns")
+        .into_rgba8();
+
+    let mut family = IconFamily::new();
+    // 常用尺寸；缺的会由系统缩放。
+    for &(ty, size) in &[
+        (IconType::RGBA32_16x16, 16u32),
+        (IconType::RGBA32_32x32, 32),
+        (IconType::RGBA32_64x64, 64),
+        (IconType::RGBA32_128x128, 128),
+        (IconType::RGBA32_256x256, 256),
+        (IconType::RGBA32_512x512, 512),
+    ] {
+        let resized = image::imageops::resize(
+            &base,
+            size,
+            size,
+            image::imageops::FilterType::Lanczos3,
+        );
+        let icns_img = IcnsImage::from_data(
+            icns::PixelFormat::RGBA,
+            size,
+            size,
+            resized.into_raw(),
+        )
+        .expect("icns image from rgba");
+        if let Err(err) = family.add_icon_with_type(&icns_img, ty) {
+            eprintln!("cargo:warning=icns skip {size}x{size}: {err}");
+        }
+    }
+
+    let out = PathBuf::from("assets/app.icns");
+    let mut file = fs::File::create(&out).expect("create assets/app.icns");
+    family.write(&mut file).expect("write assets/app.icns");
+}
+
+/// Linux 等可用的 PNG（窗口图标已走 rgba；此文件便于桌面入口 / 分享）。
+fn write_app_png(png: &[u8]) {
+    fs::write("assets/app_icon.png", png).expect("write assets/app_icon.png");
 }
 
 fn png_payload_from_ico(ico: &[u8]) -> Option<Vec<u8>> {
