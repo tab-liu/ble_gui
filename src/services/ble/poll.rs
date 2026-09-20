@@ -135,7 +135,6 @@ pub async fn probe_modbus_capabilities(
     }
 
     let slave_id = live.lock().expect("modbus live lock").slave_id;
-    let status_index = (REG_IOT_STATUS - POST_KEX_PROBE_START) as usize;
 
     let regs = match read_post_kex_probe(protocol, write_tx, slave_id).await {
         Ok(regs) => regs,
@@ -156,20 +155,23 @@ pub async fn probe_modbus_capabilities(
         }
     };
 
+    apply_probe_regs(live, &regs);
+    true
+}
+
+fn apply_probe_regs(live: &SharedModbusLive, regs: &[u16]) {
+    let status_index = (REG_IOT_STATUS - POST_KEX_PROBE_START) as usize;
     let Some(&status_word) = regs.get(status_index) else {
         settle_probe_as_standard(
             live,
             &format!("回复过短 len={}，期望寄存器 3", regs.len()),
         );
-        return true;
+        return;
     };
 
-    {
-        let mut inner = live.lock().expect("modbus live lock");
-        inner.read_mode = tlv_mode_from_iot_status(status_word);
-        inner.capabilities_probed = true;
-    }
-    true
+    let mut inner = live.lock().expect("modbus live lock");
+    inner.read_mode = tlv_mode_from_iot_status(status_word);
+    inner.capabilities_probed = true;
 }
 
 /// 连接会话内读一次机型 / SN / IoT 身份 / 服务器地址 / WiFi 密码。
@@ -1127,5 +1129,30 @@ mod tests {
         let inner = live.lock().expect("modbus live lock");
         assert!(inner.capabilities_probed);
         assert_eq!(inner.read_mode, ModbusReadMode::Standard);
+    }
+
+    #[test]
+    fn short_reply_settles_probe_as_standard() {
+        let live: SharedModbusLive = Arc::new(Mutex::new(ModbusLive::default()));
+        apply_probe_regs(&live, &[0, 0]);
+        let inner = live.lock().expect("modbus live lock");
+        assert!(inner.capabilities_probed);
+        assert_eq!(inner.read_mode, ModbusReadMode::Standard);
+    }
+
+    #[test]
+    fn iot_status_bit3_selects_tlv_or_standard() {
+        assert_eq!(tlv_mode_from_iot_status(0), ModbusReadMode::Standard);
+        assert_eq!(tlv_mode_from_iot_status(0b0111), ModbusReadMode::Standard);
+        assert_eq!(tlv_mode_from_iot_status(1 << 3), ModbusReadMode::Tlv);
+        assert_eq!(tlv_mode_from_iot_status(0xFFFF), ModbusReadMode::Tlv);
+
+        let live: SharedModbusLive = Arc::new(Mutex::new(ModbusLive::default()));
+        let mut regs = vec![0u16; 16];
+        regs[(REG_IOT_STATUS - POST_KEX_PROBE_START) as usize] = 1 << 3;
+        apply_probe_regs(&live, &regs);
+        let inner = live.lock().expect("modbus live lock");
+        assert!(inner.capabilities_probed);
+        assert_eq!(inner.read_mode, ModbusReadMode::Tlv);
     }
 }

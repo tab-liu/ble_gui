@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 const CONFIG_VERSION: u32 = 1;
 
 /// 自定义配置项的可持久化定义（不含读回值）。
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigItemSchema {
     pub name: String,
     pub register: String,
@@ -26,7 +26,7 @@ pub struct ConfigItemSchema {
 }
 
 /// 一个自定义配置分组。
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigGroupSchema {
     pub title: String,
     pub slave_id: String,
@@ -67,25 +67,43 @@ fn config_path() -> Option<PathBuf> {
     }
 }
 
-pub fn load() -> Option<LoadedDeviceConfig> {
-    let path = config_path()?;
-    let text = fs::read_to_string(&path).ok()?;
-    let cfg: SavedConfig = toml::from_str(&text).ok()?;
+fn parse_config(text: &str) -> Option<LoadedDeviceConfig> {
+    let cfg: SavedConfig = toml::from_str(text).ok()?;
     if cfg.version != CONFIG_VERSION {
         return None;
     }
-
-    info!(
-        target: "ble_gui::config_store",
-        "已加载设备配置: {} 个自定义分组, 激活={active_group}, 路径={}",
-        cfg.groups.len(),
-        path.display(),
-        active_group = cfg.active_group,
-    );
     Some(LoadedDeviceConfig {
         active_group: cfg.active_group,
         groups: cfg.groups,
     })
+}
+
+fn format_config(
+    custom_groups: &[ConfigGroupSchema],
+    active_group: i32,
+    group_count: usize,
+) -> Result<String, toml::ser::Error> {
+    let max_group = group_count.saturating_sub(1) as i32;
+    let cfg = SavedConfig {
+        version: CONFIG_VERSION,
+        active_group: active_group.clamp(0, max_group.max(0)),
+        groups: custom_groups.to_vec(),
+    };
+    toml::to_string_pretty(&cfg)
+}
+
+pub fn load() -> Option<LoadedDeviceConfig> {
+    let path = config_path()?;
+    let text = fs::read_to_string(&path).ok()?;
+    let loaded = parse_config(&text)?;
+    info!(
+        target: "ble_gui::config_store",
+        "已加载设备配置: {} 个自定义分组, 激活={}, 路径={}",
+        loaded.groups.len(),
+        loaded.active_group,
+        path.display(),
+    );
+    Some(loaded)
 }
 
 pub fn save(
@@ -97,20 +115,72 @@ pub fn save(
         std::io::Error::new(std::io::ErrorKind::NotFound, "无法确定配置目录")
     })?;
 
-    // 仅常用组时也写入，以便记住 active_group=0
-    let max_group = group_count.saturating_sub(1) as i32;
-    let cfg = SavedConfig {
-        version: CONFIG_VERSION,
-        active_group: active_group.clamp(0, max_group.max(0)),
-        groups: custom_groups.to_vec(),
-    };
+    let text = format_config(custom_groups, active_group, group_count).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+    })?;
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let text = toml::to_string_pretty(&cfg).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-    })?;
     fs::write(&path, text)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_group() -> ConfigGroupSchema {
+        ConfigGroupSchema {
+            title: "自定义".into(),
+            slave_id: "0".into(),
+            items: vec![ConfigItemSchema {
+                name: "开关".into(),
+                register: "2011".into(),
+                value_type: "integer".into(),
+                register_count: 1,
+                widget_kind: 0,
+            }],
+        }
+    }
+
+    #[test]
+    fn roundtrip_custom_groups_without_builtin() {
+        let groups = vec![sample_group()];
+        let text = format_config(&groups, 1, 2).expect("encode");
+        let loaded = parse_config(&text).expect("decode");
+        assert_eq!(loaded.active_group, 1);
+        assert_eq!(loaded.groups, groups);
+        assert!(!text.contains("常用"));
+    }
+
+    #[test]
+    fn builtin_only_still_writes_active_group_zero() {
+        let text = format_config(&[], 0, 1).expect("encode");
+        let loaded = parse_config(&text).expect("decode");
+        assert_eq!(loaded.active_group, 0);
+        assert!(loaded.groups.is_empty());
+    }
+
+    #[test]
+    fn active_group_clamps_to_group_count() {
+        let text = format_config(&[sample_group()], 99, 2).expect("encode");
+        let loaded = parse_config(&text).expect("decode");
+        assert_eq!(loaded.active_group, 1);
+    }
+
+    #[test]
+    fn wrong_version_is_rejected() {
+        let text = r#"
+version = 9
+active_group = 0
+groups = []
+"#;
+        assert!(parse_config(text).is_none());
+    }
+
+    #[test]
+    fn garbage_toml_is_rejected() {
+        assert!(parse_config("not toml").is_none());
+    }
 }

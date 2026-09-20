@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 const CONFIG_VERSION: u32 = 1;
 pub const MAX_NETWORKS: usize = 30;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WifiNetwork {
     pub ssid: String,
     pub password: String,
@@ -51,19 +51,34 @@ pub fn load() -> Vec<WifiNetwork> {
     let Ok(text) = fs::read_to_string(&path) else {
         return Vec::new();
     };
-    let Ok(cfg) = toml::from_str::<SavedWifi>(&text) else {
+    let networks = parse_config(&text);
+    if !networks.is_empty() {
+        info!(
+            target: "ble_gui::wifi_store",
+            "已加载 {} 条 WiFi 记录, 路径={}",
+            networks.len(),
+            path.display(),
+        );
+    }
+    networks
+}
+
+fn parse_config(text: &str) -> Vec<WifiNetwork> {
+    let Ok(cfg) = toml::from_str::<SavedWifi>(text) else {
         return Vec::new();
     };
     if cfg.version != CONFIG_VERSION {
         return Vec::new();
     }
-    info!(
-        target: "ble_gui::wifi_store",
-        "已加载 {} 条 WiFi 记录, 路径={}",
-        cfg.networks.len(),
-        path.display(),
-    );
     cfg.networks
+}
+
+fn format_config(networks: &[WifiNetwork]) -> Result<String, toml::ser::Error> {
+    let cfg = SavedWifi {
+        version: CONFIG_VERSION,
+        networks: networks.to_vec(),
+    };
+    toml::to_string_pretty(&cfg)
 }
 
 pub fn save(networks: &[WifiNetwork]) -> std::io::Result<()> {
@@ -73,12 +88,45 @@ pub fn save(networks: &[WifiNetwork]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let cfg = SavedWifi {
-        version: CONFIG_VERSION,
-        networks: networks.to_vec(),
-    };
-    let text = toml::to_string_pretty(&cfg).map_err(|e| {
+    let text = format_config(networks).map_err(|e| {
         std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
     })?;
     fs::write(&path, text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_keeps_order() {
+        let nets = vec![
+            WifiNetwork {
+                ssid: "Home".into(),
+                password: "secret".into(),
+            },
+            WifiNetwork {
+                ssid: "Open".into(),
+                password: String::new(),
+            },
+        ];
+        let text = format_config(&nets).expect("encode");
+        assert_eq!(parse_config(&text), nets);
+    }
+
+    #[test]
+    fn wrong_version_yields_empty() {
+        let text = r#"
+version = 2
+[[networks]]
+ssid = "x"
+password = "y"
+"#;
+        assert!(parse_config(text).is_empty());
+    }
+
+    #[test]
+    fn garbage_yields_empty() {
+        assert!(parse_config("???").is_empty());
+    }
 }
