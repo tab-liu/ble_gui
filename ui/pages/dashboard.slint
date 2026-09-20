@@ -68,18 +68,20 @@ export component DashboardPage inherits VerticalBox {
             font-weight: 700;
         }
 
-        LineEdit {
-            text <=> root.scan-filter;
-            placeholder-text: "按名称过滤扫描列表（不区分大小写）";
-            enabled: !root.ble-connecting;
-            edited => {
-                root.scan-filters-changed();
-            }
-        }
-
         HorizontalBox {
             spacing: 12px;
-            alignment: start;
+            alignment: stretch;
+
+            LineEdit {
+                horizontal-stretch: 1;
+                min-width: 160px;
+                text <=> root.scan-filter;
+                placeholder-text: "按名称过滤扫描列表（不区分大小写）";
+                enabled: !root.ble-connecting;
+                edited => {
+                    root.scan-filters-changed();
+                }
+            }
 
             CheckBox {
                 text: "按信号强度过滤";
@@ -91,7 +93,8 @@ export component DashboardPage inherits VerticalBox {
             }
 
             LineEdit {
-                width: 100px;
+                width: 72px;
+                horizontal-stretch: 0;
                 enabled: root.scan-rssi-filter-enabled && !root.ble-connecting;
                 text <=> root.scan-rssi-min;
                 placeholder-text: "-70";
@@ -106,31 +109,16 @@ export component DashboardPage inherits VerticalBox {
                 font-size: 13px;
                 vertical-alignment: center;
             }
-        }
-
-        HorizontalBox {
-            spacing: 12px;
-            alignment: start;
 
             Button {
                 text: root.ble-connecting ? "连接中…" : "连接所选设备";
                 primary: true;
                 min-width: 120px;
+                horizontal-stretch: 0;
                 enabled: !root.ble-connecting && root.selected-scan-address != "";
                 clicked => {
                     root.connect-selected-clicked();
                 }
-            }
-
-            Text {
-                text: root.ble-connecting
-                    ? "正在连接/查找，可点顶部「取消」终止"
-                    : (root.selected-scan-address != ""
-                        ? ("已选: " + root.selected-scan-address)
-                        : "选中设备后点「连接所选设备」；右侧扫描结果点 ★ 收藏");
-                color: Theme.text-secondary;
-                font-size: 13px;
-                vertical-alignment: center;
             }
         }
 

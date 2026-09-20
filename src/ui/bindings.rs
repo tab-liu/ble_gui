@@ -374,6 +374,7 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
             Vec::new(),
         )
     };
+    ctx.firmware.sync_connection(connected);
     ctx.firmware
         .apply_device_info(versions, iot_ver, dev_type, sn, software);
     refresh_firmware(ui, &ctx.firmware.snapshot(connected));

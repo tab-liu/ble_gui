@@ -162,6 +162,8 @@ struct FirmwareInner {
     result_text: String,
     fail_reason: String,
     status_text: String,
+    /// 用于在「未连接 → 已连接」时清掉上次升级进度，保留已选固件。
+    ble_connected: bool,
 }
 
 #[derive(Clone)]
@@ -188,6 +190,7 @@ impl FirmwareService {
                 result_text: "—".into(),
                 fail_reason: String::new(),
                 status_text: String::new(),
+                ble_connected: false,
             })),
             ota,
         }
@@ -203,6 +206,43 @@ impl FirmwareService {
                 return;
             }
             *g = OtaLive::default();
+        }
+    }
+
+    /// 每次 UI 刷新同步连接边沿：重新连上时清进度和结果，不丢已选固件。
+    pub fn sync_connection(&self, connected: bool) {
+        let rising = {
+            let mut inner = self.inner.borrow_mut();
+            let rising = connected && !inner.ble_connected;
+            inner.ble_connected = connected;
+            rising
+        };
+        if rising {
+            self.clear_progress_keep_file();
+        }
+    }
+
+    fn clear_progress_keep_file(&self) {
+        if self.is_running() {
+            return;
+        }
+        self.reset_ota_outcome();
+        let mut inner = self.inner.borrow_mut();
+        if inner.parse_error.is_some() {
+            return;
+        }
+        if inner.selected.is_some() {
+            inner.phase = PHASE_READY;
+            inner.stage_text = "已验证，等待升级".into();
+            inner.result_text = "待升级".into();
+            inner.fail_reason.clear();
+            inner.status_text.clear();
+        } else {
+            inner.phase = PHASE_IDLE;
+            inner.stage_text = "等待选择固件".into();
+            inner.result_text = "—".into();
+            inner.fail_reason.clear();
+            inner.status_text.clear();
         }
     }
 
