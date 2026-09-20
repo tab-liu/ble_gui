@@ -3,21 +3,16 @@
 //! [`AppContext`] 是 UI 线程上的「服务总线」：克隆成本低（内部 `Rc`/`Arc`），
 //! 各页面 `wire` 闭包捕获它即可调用 BLE / Modbus / 持久化。
 //!
-//! ## 页面 ID
-//!
-//! 与侧栏 `navigate`、Slint `current-page` 一致：
-//! [`PAGE_DASHBOARD`] / [`PAGE_MODBUS`] / [`PAGE_DEVICE_CONFIG`] /
-//! [`PAGE_EXTERNAL`] / [`PAGE_FIRMWARE`]。
+//! 查询/配置的 **UI 状态** 放在本模块（[`query`] / [`device_config`]），
+//! 不再由 `pages` 拥有，避免 state → pages 反向依赖。
 
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 use log::warn;
-use slint::{ModelRc, VecModel};
+use slint::{Model, ModelRc, VecModel};
 
-use crate::pages::device_config::DeviceConfigState;
-use crate::pages::modbus_query::ModbusQueryState;
 use crate::services::ble::BleService;
 use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::device_config_store;
@@ -27,9 +22,14 @@ use crate::services::modbus_query_store;
 use crate::services::theme::ThemeService;
 use crate::ui::MainWindow;
 
+pub mod device_config;
 pub mod dialog;
+pub mod query;
+pub mod wifi_provision;
 
+pub use device_config::DeviceConfigState;
 pub use dialog::{DIALOG_COPY_QUERY, DIALOG_NEW_TAB, DIALOG_NONE};
+pub use query::ModbusQueryState;
 
 /// 主页（仪表板 SOC/功率）。
 pub const PAGE_DASHBOARD: i32 = 0;
@@ -72,23 +72,21 @@ impl AppContext {
         let query_generation = modbus.shared_query_poll_generation();
 
         let (tabs, initial_modbus_tab) = match modbus_query_store::load() {
-            Some(loaded) => (loaded.tabs, loaded.active_tab),
+            Some(loaded) => (query::tabs_from_schema(loaded.tabs), loaded.active_tab),
             None => (
-                Rc::new(VecModel::from(vec![ModbusQueryState::default_tab(
-                    "默认分组",
-                    false,
-                )])),
+                Rc::new(VecModel::from(vec![ModbusQueryState::empty_tab("默认分组")])),
                 0,
             ),
         };
 
         let (config_groups, config_builtin, initial_device_config_group) =
             match device_config_store::load() {
-                Some(loaded) => (
-                    loaded.groups,
-                    DeviceConfigState::sample_builtin(),
-                    loaded.active_group,
-                ),
+                Some(loaded) => {
+                    let groups = device_config::groups_from_schema(loaded.groups);
+                    let max_group = groups.row_count().saturating_sub(1) as i32;
+                    let active = loaded.active_group.clamp(0, max_group);
+                    (groups, DeviceConfigState::sample_builtin(), active)
+                }
                 None => (
                     DeviceConfigState::sample_groups(),
                     DeviceConfigState::sample_builtin(),

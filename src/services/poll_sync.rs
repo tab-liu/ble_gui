@@ -1,11 +1,10 @@
 //! UI → BLE worker：同步前台轮询策略。
 //!
-//! 在换页、换标签/分组、改查询列表后调用 [`sync_poll_policy`]，
-//! 使 worker 只服务当前可见页（见 [`crate::services::ble::PollForeground`]）。
+//! 在换页、换标签/分组、改查询列表后调用 [`sync_poll_policy`]。
+//! 换页时的 Slint 列表同步见 [`crate::pages::set_app_page`]（服务层不依赖 pages）。
 
 use slint::Model;
 
-use crate::pages::modbus_query;
 use crate::services::ble::modbus::{
     parse_register_address, parse_scale, parse_value_type, BUILTIN_SETTINGS, QueryValueType,
     REG_LINK_STATUS, REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_WIFI_DISCONNECT,
@@ -17,20 +16,6 @@ use crate::state::{
     AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_EXTERNAL, PAGE_FIRMWARE, PAGE_MODBUS,
 };
 use crate::ui::MainWindow;
-
-/// 切换页面并同步至 Slint 与 worker 轮询策略。
-pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
-    ctx.ble.set_ui_page(page);
-    ui.set_current_page(page);
-    sync_poll_policy(ui, ctx);
-    if page == PAGE_MODBUS {
-        modbus_query::sync_active_query_items_to_ui(ui, ctx);
-        modbus_query::sync_layout_from_window(ui, ctx);
-    }
-    if page == PAGE_DEVICE_CONFIG {
-        crate::pages::device_config::sync_layout_from_window(ui, ctx);
-    }
-}
 
 /// 根据当前页面与激活列表，更新 worker 的 [`PollForeground`]。
 pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {

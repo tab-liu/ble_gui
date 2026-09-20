@@ -10,9 +10,25 @@ pub mod device_config;
 pub mod external;
 pub mod firmware_upgrade;
 pub mod modbus_query;
+pub mod wifi_provision;
 
-use crate::state::AppContext;
+use crate::services::poll_sync::sync_poll_policy;
+use crate::state::{AppContext, PAGE_DEVICE_CONFIG, PAGE_MODBUS};
 use crate::ui::{clipboard, MainWindow};
+
+/// 切换页面并同步至 Slint 与 worker 轮询策略。
+pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
+    ctx.ble.set_ui_page(page);
+    ui.set_current_page(page);
+    sync_poll_policy(ui, ctx);
+    if page == PAGE_MODBUS {
+        modbus_query::sync_active_query_items_to_ui(ui, ctx);
+        modbus_query::sync_layout_from_window(ui, ctx);
+    }
+    if page == PAGE_DEVICE_CONFIG {
+        device_config::sync_layout_from_window(ui, ctx);
+    }
+}
 
 /// 为所有页面注册 Slint 回调（启动时调用一次）。
 pub fn wire_all(ui: &MainWindow, ctx: &AppContext) {

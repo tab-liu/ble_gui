@@ -109,12 +109,6 @@
 // GUI 子系统双击不再弹窗；若已在终端里启动（如 cargo run），再挂到父控制台输出日志。
 #![windows_subsystem = "windows"]
 
-mod app;
-mod pages;
-mod services;
-mod state;
-mod ui;
-
 fn main() -> Result<(), slint::PlatformError> {
     #[cfg(windows)]
     attach_parent_console();
@@ -136,7 +130,7 @@ fn main() -> Result<(), slint::PlatformError> {
         )
     })
     .init();
-    app::run()
+    ble_gui::app::run()
 }
 
 /// 若父进程已有控制台（`cargo run`、cmd 里启动），把 stdout/stderr 接到那里。

@@ -23,6 +23,7 @@ use crate::services::ble::modbus::{
 use crate::services::modbus_query_store;
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
+use crate::state::query::tabs_to_schema;
 use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
 
 const CARD_WIDTH: f32 = 180.0;
@@ -39,61 +40,28 @@ struct QueryDragPayload {
     source_index: usize,
 }
 
-pub(crate) struct GridLayoutState {
-    pub(crate) width: f32,
-    pub(crate) tab_strip_width: f32,
-}
-
-pub struct ModbusQueryState {
-    pub tabs: Rc<VecModel<ModbusTab>>,
-    pub pending_query_tab: i32,
-    pub grid_layout: GridLayoutState,
-    pub pending_copy_src_tab: i32,
-    pub pending_copy_src_items: Vec<usize>,
-    pub copy_target_tabs: Vec<usize>,
-    pub selected_indices: Vec<usize>,
-}
-
-impl ModbusQueryState {
-    pub fn new(tabs: Rc<VecModel<ModbusTab>>) -> Self {
-        Self {
-            tabs,
-            pending_query_tab: -1,
-            grid_layout: GridLayoutState {
-                // 与默认窗口 980 对齐，先按 4 列排；真正宽度由网格 init/changed 再校正。
-                width: 788.0,
-                tab_strip_width: 804.0,
-            },
-            pending_copy_src_tab: -1,
-            pending_copy_src_items: Vec::new(),
-            copy_target_tabs: Vec::new(),
-            selected_indices: Vec::new(),
-        }
-    }
-
-    pub fn default_tab(title: &str, with_sample: bool) -> ModbusTab {
-        let items = if with_sample {
-            vec![enrich_query_item(ModbusQueryItem {
-                name: "室内温度".into(),
-                register: "40001".into(),
-                value_type: "integer".into(),
-                register_count: 1,
-                scale: 1,
-                status: "正常".into(),
-                result: "24.6 °C".into(),
-                result_display: SharedString::default(),
-                result_hex: SharedString::default(),
-                result_hex_below: false,
-                result_font_size: 20,
-            })]
-        } else {
-            vec![]
-        };
-        ModbusTab {
-            title: title.into(),
-            slave_id: "0".into(),
-            items: ModelRc::new(VecModel::from(items)),
-        }
+fn default_tab(title: &str, with_sample: bool) -> ModbusTab {
+    let items = if with_sample {
+        vec![enrich_query_item(ModbusQueryItem {
+            name: "室内温度".into(),
+            register: "40001".into(),
+            value_type: "integer".into(),
+            register_count: 1,
+            scale: 1,
+            status: "正常".into(),
+            result: "24.6 °C".into(),
+            result_display: SharedString::default(),
+            result_hex: SharedString::default(),
+            result_hex_below: false,
+            result_font_size: 20,
+        })]
+    } else {
+        vec![]
+    };
+    ModbusTab {
+        title: title.into(),
+        slave_id: "0".into(),
+        items: ModelRc::new(VecModel::from(items)),
     }
 }
 
@@ -385,7 +353,7 @@ fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
 fn persist_modbus_query(ctx: &AppContext, ui: &MainWindow) {
     let tabs = ctx.state.borrow().modbus_query.tabs.clone();
     let active_tab = ui.get_active_modbus_tab();
-    if let Err(e) = modbus_query_store::save(&tabs, active_tab) {
+    if let Err(e) = modbus_query_store::save(&tabs_to_schema(&tabs), active_tab) {
         warn!(
             target: "ble_gui::query_store",
             "保存 Modbus 查询配置失败: {e}",
@@ -1026,7 +994,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         }
         close_dialog(&ui);
         let st = ctx_confirm.state.borrow();
-        st.modbus_query.tabs.push(ModbusQueryState::default_tab(
+        st.modbus_query.tabs.push(default_tab(
             &name,
             false,
         ));

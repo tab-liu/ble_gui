@@ -21,10 +21,9 @@ use std::time::Duration;
 
 use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 
-use crate::pages;
-use crate::pages::{device_config, modbus_query};
+use crate::pages::{self, device_config, modbus_query, set_app_page, wifi_provision};
 use crate::services::ble::ensure_dashboard_poll_if_idle;
-use crate::services::poll_sync::{set_app_page, sync_poll_policy};
+use crate::services::poll_sync::sync_poll_policy;
 use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD, PAGE_EXTERNAL};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_external_devices_from_live, refresh_modbus_dashboard_from_live};
@@ -94,6 +93,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
     let was_connected = Rc::new(Cell::new(false));
     let query_gen_applied = Rc::new(Cell::new(0u64));
     let poll_timer = Timer::default();
+    // worker 钩子负责扫描列表/连接阶段立即刷新；本定时器负责 OTA 用时、
+    // 设备信息、查询 generation 与配网相位。两条路径都走 bindings::refresh_*，语义不变。
     poll_timer.start(TimerMode::Repeated, Duration::from_millis(50), move || {
         let _ = ctx_poll.ble.drain_events();
         let connected = ctx_poll.ble.is_connected();
@@ -119,7 +120,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 device_config::apply_config_poll_results(&ui, &ctx_poll);
                 query_gen_applied.set(poll_gen);
             }
-            device_config::tick_wifi_provision(&ui, &ctx_poll);
+            wifi_provision::tick_wifi_provision(&ui, &ctx_poll);
         }
     });
 
