@@ -26,6 +26,29 @@ struct ScanListCache {
     addresses: Vec<String>,
 }
 
+#[derive(Default)]
+struct RssiFilterHold {
+    /// `None` 表示过滤关闭或阈值刚改过，下一轮按硬阈值重新入列。
+    min_rssi: Option<i32>,
+    addresses: Vec<String>,
+}
+
+impl RssiFilterHold {
+    fn reset(&mut self) {
+        self.min_rssi = None;
+        self.addresses.clear();
+    }
+
+    fn apply(&mut self, min_rssi: i32, devices: &mut Vec<BleScanEntry>) {
+        if self.min_rssi != Some(min_rssi) {
+            self.min_rssi = Some(min_rssi);
+            self.addresses.clear();
+        }
+        apply_rssi_latch(devices, min_rssi, &self.addresses);
+        self.addresses = devices.iter().map(|d| d.address.clone()).collect();
+    }
+}
+
 struct FavoriteListCache {
     rows: Rc<VecModel<BleFavoriteDevice>>,
     addresses: Vec<String>,
@@ -46,6 +69,10 @@ thread_local! {
         favorites_fingerprint: String::new(),
     });
     static SUB_DEVICE_FP: RefCell<String> = RefCell::new(String::new());
+    static RSSI_FILTER_HOLD: RefCell<RssiFilterHold> = RefCell::new(RssiFilterHold {
+        min_rssi: None,
+        addresses: Vec::new(),
+    });
 }
 
 fn parse_rssi_min(text: &str) -> i32 {
@@ -56,12 +83,24 @@ fn parse_rssi_min(text: &str) -> i32 {
         .unwrap_or(DEFAULT_RSSI_MIN)
 }
 
+fn rssi_held(addresses: &[String], address: &str) -> bool {
+    addresses
+        .iter()
+        .any(|held| ble_favorites::addresses_equal(held, address))
+}
+
+/// 达到阈值才入列；入列后不因 RSSI 变弱踢走（扫描里没了、改阈值、关过滤才去掉）。
+fn apply_rssi_latch(devices: &mut Vec<BleScanEntry>, min_rssi: i32, previously_visible: &[String]) {
+    devices.retain(|d| rssi_held(previously_visible, &d.address) || d.rssi >= min_rssi);
+}
+
 fn prepare_scan_devices(
     devices: &[BleScanEntry],
     name_filter: &str,
     rssi_filter_enabled: bool,
     rssi_min_text: &str,
     favorites: &[FavoriteDevice],
+    rssi_hold: &mut RssiFilterHold,
 ) -> Vec<BleScanEntry> {
     let mut result: Vec<BleScanEntry> = devices
         .iter()
@@ -78,8 +117,9 @@ fn prepare_scan_devices(
     }
 
     if rssi_filter_enabled {
-        let min_rssi = parse_rssi_min(rssi_min_text);
-        result.retain(|d| d.rssi >= min_rssi);
+        rssi_hold.apply(parse_rssi_min(rssi_min_text), &mut result);
+    } else {
+        rssi_hold.reset();
     }
 
     result
@@ -300,13 +340,17 @@ fn sync_scan_devices(ui: &MainWindow, filtered: &[BleScanEntry]) {
 }
 
 fn refresh_ble_scan_list(ui: &MainWindow, snap: &BleSnapshot, favorites: &[FavoriteDevice]) {
-    let filtered = prepare_scan_devices(
-        &snap.scan_devices,
-        ui.get_ble_scan_filter().as_str(),
-        ui.get_ble_scan_rssi_filter_enabled(),
-        ui.get_ble_scan_rssi_min().as_str(),
-        favorites,
-    );
+    let filtered = RSSI_FILTER_HOLD.with(|cell| {
+        let mut hold = cell.borrow_mut();
+        prepare_scan_devices(
+            &snap.scan_devices,
+            ui.get_ble_scan_filter().as_str(),
+            ui.get_ble_scan_rssi_filter_enabled(),
+            ui.get_ble_scan_rssi_min().as_str(),
+            favorites,
+            &mut hold,
+        )
+    });
 
     ui.set_scan_device_total(filtered.len() as i32);
     sync_scan_devices(ui, &filtered);
@@ -635,4 +679,87 @@ pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
 pub fn close_dialog(ui: &MainWindow) {
     ui.set_dialog_kind(crate::state::DIALOG_NONE);
     ui.set_dialog_name("".into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(address: &str, rssi: i32) -> BleScanEntry {
+        BleScanEntry {
+            name: "dev".into(),
+            address: address.into(),
+            rssi,
+            is_target: true,
+            link_hint: ScanLinkHint::Unknown,
+        }
+    }
+
+    fn addrs(devices: &[BleScanEntry]) -> Vec<&str> {
+        devices.iter().map(|d| d.address.as_str()).collect()
+    }
+
+    #[test]
+    fn new_device_must_meet_min_rssi() {
+        let mut devices = vec![entry("AA:BB", -71), entry("CC:DD", -70)];
+        apply_rssi_latch(&mut devices, -70, &[]);
+        assert_eq!(addrs(&devices), vec!["CC:DD"]);
+    }
+
+    #[test]
+    fn held_device_stays_even_when_rssi_plunges() {
+        let hold = vec!["AA:BB".into()];
+        let mut devices = vec![entry("AA:BB", -95)];
+        apply_rssi_latch(&mut devices, -70, &hold);
+        assert_eq!(addrs(&devices), vec!["AA:BB"]);
+    }
+
+    #[test]
+    fn hold_state_adds_but_does_not_drop() {
+        let mut hold = RssiFilterHold::default();
+        let favorites: [FavoriteDevice; 0] = [];
+
+        let shown = prepare_scan_devices(
+            &[entry("AA:BB", -70)],
+            "",
+            true,
+            "-70",
+            &favorites,
+            &mut hold,
+        );
+        assert_eq!(addrs(&shown), vec!["AA:BB"]);
+
+        let shown = prepare_scan_devices(
+            &[entry("AA:BB", -90), entry("CC:DD", -80)],
+            "",
+            true,
+            "-70",
+            &favorites,
+            &mut hold,
+        );
+        assert_eq!(addrs(&shown), vec!["AA:BB"]);
+    }
+
+    #[test]
+    fn changing_threshold_resets_hold() {
+        let mut hold = RssiFilterHold::default();
+        let favorites: [FavoriteDevice; 0] = [];
+        let _ = prepare_scan_devices(
+            &[entry("AA:BB", -70)],
+            "",
+            true,
+            "-70",
+            &favorites,
+            &mut hold,
+        );
+        let shown = prepare_scan_devices(
+            &[entry("AA:BB", -68)],
+            "",
+            true,
+            "-60",
+            &favorites,
+            &mut hold,
+        );
+        assert!(shown.is_empty());
+    }
 }
