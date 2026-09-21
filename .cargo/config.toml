@@ -3,6 +3,11 @@
 [build]
 rustdocflags = ["--document-private-items"]
 
+# Windows：用 rustc 自带的 LLD 替换 MSVC link.exe。
+# 干净 release 的链接阶段通常能快一截，不影响 macOS。
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld"
+
 # 快捷：cargo docs  →  生成并打开（不含依赖文档）
 [alias]
 docs = "doc --no-deps --open"
