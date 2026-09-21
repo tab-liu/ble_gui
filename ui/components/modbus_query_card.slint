@@ -61,6 +61,14 @@ export component ModbusQueryCard inherits Rectangle {
             enabled: !delete-hover.has-hover;
             opacity: self.dragging ? 0.45 : 1.0;
 
+            changed dragging => {
+                if self.dragging {
+                    ModbusDndApi.dragging-index = root.source-index;
+                } else if ModbusDndApi.dragging-index == root.source-index {
+                    ModbusDndApi.dragging-index = -1;
+                }
+            }
+
             select-touch := TouchArea {
                 width: 100%;
                 height: 100%;

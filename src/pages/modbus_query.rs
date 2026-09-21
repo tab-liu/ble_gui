@@ -630,6 +630,10 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         DragAction::None
     });
 
+    dnd.on_drop_index(|hover_x, hover_y, grid_width, count| {
+        drop_index_from_position(hover_x, hover_y, grid_width, count.max(0) as usize) as i32
+    });
+
     let ui_weak = ui.as_weak();
     let ctx_reorder = ctx.clone();
     dnd.on_dropped(move |event: DropEvent, hover_x, hover_y, grid_width| {
@@ -1010,4 +1014,27 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.on_dialog_cancel(move || {
         close_dialog(&ui_weak.unwrap());
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_index_left_half_inserts_before_card() {
+        // 3 列时卡片 0 的左半：插入到 0
+        assert_eq!(drop_index_from_position(40.0, 20.0, 600.0, 5), 0);
+    }
+
+    #[test]
+    fn drop_index_right_half_inserts_after_card() {
+        // 卡片 0 的右半（宽 180）：插入到 1
+        assert_eq!(drop_index_from_position(100.0, 20.0, 600.0, 5), 1);
+    }
+
+    #[test]
+    fn drop_index_second_row_clamps_to_count() {
+        // 第 2 行第 1 列左半 → index 3；只有 3 张时夹到 3
+        assert_eq!(drop_index_from_position(40.0, 140.0, 600.0, 3), 3);
+    }
 }

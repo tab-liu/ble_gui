@@ -14,6 +14,19 @@ export component ModbusQueryGrid inherits Rectangle {
 
     property <length> hover-x: 0;
     property <length> hover-y: 0;
+    property <int> drop-slot: 0;
+    // 与 src/pages/modbus_query.rs 的 CARD_WIDTH / CARD_HEIGHT / CARD_SPACING 对齐。
+    property <int> grid-cols: max(1, floor((root.width / 1px + 12) / 192));
+    property <int> marker-col: mod(root.drop-slot, root.grid-cols);
+    property <int> marker-row: root.drop-slot / root.grid-cols;
+    property <length> marker-x: root.marker-col == 0 ? 2px : (root.marker-col * 192px - 8px);
+    property <length> marker-y: root.marker-row * 136px;
+    property <bool> drop-is-noop: ModbusDndApi.dragging-index >= 0
+        && (root.drop-slot == ModbusDndApi.dragging-index
+            || root.drop-slot == ModbusDndApi.dragging-index + 1);
+    property <bool> show-drop-marker: drop-area.current-action != DragAction.none
+        && root.items.length > 0
+        && !root.drop-is-noop;
     // 与 src/pages/modbus_query.rs 的 CARD_HEIGHT / CARD_SPACING 对齐；底部多留一行空隙，避免最后一行被 ScrollView 裁半。
     property <int> row-count: root.layout-rows.length;
     property <length> content-height: root.items.length == 0 ? 120px
@@ -39,6 +52,7 @@ export component ModbusQueryGrid inherits Rectangle {
         can-drop(event) => {
             root.hover-x = event.position.x;
             root.hover-y = event.position.y;
+            root.drop-slot = ModbusDndApi.drop-index(event.position.x, event.position.y, root.width, root.items.length);
             return ModbusDndApi.can-drop(event);
         }
         dropped(event) => {
@@ -90,6 +104,34 @@ export component ModbusQueryGrid inherits Rectangle {
                         root.edit-item(idx);
                     }
                 }
+            }
+        }
+
+        if root.show-drop-marker: Rectangle {
+            x: root.marker-x;
+            y: root.marker-y;
+            width: 4px;
+            height: 124px;
+            border-radius: 2px;
+            background: Theme.accent;
+            z: 10;
+
+            Rectangle {
+                x: -4px;
+                y: -3px;
+                width: 12px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
+            }
+
+            Rectangle {
+                x: -4px;
+                y: parent.height - 3px;
+                width: 12px;
+                height: 6px;
+                border-radius: 3px;
+                background: Theme.accent;
             }
         }
     }

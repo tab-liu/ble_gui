@@ -1,5 +1,7 @@
 export global ModbusDndApi {
+    in-out property <int> dragging-index: -1;
     pure callback make-data(source-index: int) -> data-transfer;
     pure callback can-drop(event: DropEvent) -> DragAction;
+    pure callback drop-index(hover-x: length, hover-y: length, grid-width: length, count: int) -> int;
     callback dropped(event: DropEvent, hover-x: length, hover-y: length, grid-width: length);
 }
