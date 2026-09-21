@@ -2,6 +2,10 @@
 //!
 //! btleplug 0.11 尚未暴露跨平台的「请求连接参数」API（0.12 也仅 Windows/Android）。
 //! 因此这里只在 Windows 上走 WinRT；其它平台由系统协商，不做额外分支。
+//!
+//! Windows 上 `FromBluetoothAddressAsync` 会再拿一份 `BluetoothLEDevice`。
+//! 必须 [`Close`](https://learn.microsoft.com/windows/uwp/devices-sensors/gatt-client)
+//! 才能让系统把引用计数减掉，否则点断开后 ACL 仍可能挂到进程退出。
 
 #[cfg(windows)]
 mod windows_imp {
@@ -16,7 +20,26 @@ mod windows_imp {
     };
 
     pub struct ThroughputHold {
-        _request: BluetoothLEPreferredConnectionParametersRequest,
+        request: BluetoothLEPreferredConnectionParametersRequest,
+        device: BluetoothLEDevice,
+    }
+
+    impl Drop for ThroughputHold {
+        fn drop(&mut self) {
+            // 先放连接参数请求，再关这份额外的 LE 设备句柄。
+            if let Err(err) = self.request.Close() {
+                log::debug!(
+                    target: "ble_gui::conn_opt",
+                    "关闭连接参数请求失败: {err}",
+                );
+            }
+            if let Err(err) = self.device.Close() {
+                log::debug!(
+                    target: "ble_gui::conn_opt",
+                    "关闭吞吐优化用 BluetoothLEDevice 失败: {err}",
+                );
+            }
+        }
     }
 
     pub async fn request_throughput(address: &str) -> Option<ThroughputHold> {
@@ -30,7 +53,13 @@ mod windows_imp {
 
         log_connection_params(&device, "请求吞吐前");
 
-        let params = BluetoothLEPreferredConnectionParameters::ThroughputOptimized().ok()?;
+        let params = match BluetoothLEPreferredConnectionParameters::ThroughputOptimized() {
+            Ok(p) => p,
+            Err(_) => {
+                close_le_device(&device);
+                return None;
+            }
+        };
         let request = match device.RequestPreferredConnectionParameters(&params) {
             Ok(req) => req,
             Err(err) => {
@@ -38,10 +67,17 @@ mod windows_imp {
                     target: "ble_gui::conn_opt",
                     "Windows 不支持请求吞吐优先连接参数（常见于 Win10）: {err}",
                 );
+                close_le_device(&device);
                 return None;
             }
         };
-        let status = request.Status().ok()?;
+        let status = match request.Status() {
+            Ok(s) => s,
+            Err(_) => {
+                close_hold_parts(&request, &device);
+                return None;
+            }
+        };
         info!(
             target: "ble_gui::conn_opt",
             "Windows 吞吐优先连接参数 status={}",
@@ -51,10 +87,23 @@ mod windows_imp {
         if status == BluetoothLEPreferredConnectionParametersRequestStatus::Success
             || status == BluetoothLEPreferredConnectionParametersRequestStatus::Unspecified
         {
-            Some(ThroughputHold { _request: request })
+            Some(ThroughputHold { request, device })
         } else {
+            close_hold_parts(&request, &device);
             None
         }
+    }
+
+    fn close_le_device(device: &BluetoothLEDevice) {
+        let _ = device.Close();
+    }
+
+    fn close_hold_parts(
+        request: &BluetoothLEPreferredConnectionParametersRequest,
+        device: &BluetoothLEDevice,
+    ) {
+        let _ = request.Close();
+        let _ = device.Close();
     }
 
     fn log_connection_params(device: &BluetoothLEDevice, when: &str) {

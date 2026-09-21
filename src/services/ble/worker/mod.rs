@@ -6,6 +6,9 @@
 //! Windows 上 `connect()` 实为 Uncached GetGattServices；刚停扫描时常
 //! `Unreachable`→`Not connected`。[`connect_gatt_with_retry`] 先等待再重试，
 //! UI 侧不要在 Connect 之前单独发 StopScan。
+//!
+//! 断开走 `end_session`：先退订 CCCD、Close 吞吐优化多开的 WinRT 句柄，
+//! 再 `peripheral.disconnect()`。界面在 GATT 清理完成之后才标「已断开」。
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -196,8 +199,7 @@ pub async fn worker_main(
         {
             info!(target: "ble_gui::worker", "会话已结束，刷新连接状态");
             if let Some(active) = session.take() {
-                abort_session(&active);
-                disconnect_peripheral(&active.peripheral).await;
+                end_session(active).await;
             }
             stop_polling(&poll_policy);
             clear_live_on_disconnect(&modbus_live);
@@ -240,10 +242,9 @@ pub async fn worker_main(
                     continue;
                 }
                 if let Some(active) = session.take() {
-                    abort_session(&active);
                     stop_polling(&poll_policy);
                     clear_live_on_disconnect(&modbus_live);
-                    disconnect_peripheral(&active.peripheral).await;
+                    end_session(active).await;
                 }
                 restart_scan(
                     &adapter,
@@ -296,10 +297,9 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
 
                 let had_session = if let Some(active) = session.take() {
-                    abort_session(&active);
                     stop_polling(&poll_policy);
                     clear_live_on_disconnect(&modbus_live);
-                    disconnect_peripheral(&active.peripheral).await;
+                    end_session(active).await;
                     true
                 } else {
                     false
@@ -505,16 +505,10 @@ pub async fn worker_main(
                 if let Ok(mut p) = poll_policy.lock() {
                     p.ota_busy = false;
                 }
-                let peripheral = session.take().map(|active| {
-                    abort_session(&active);
-                    active.peripheral
-                });
                 stop_polling(&poll_policy);
                 clear_live_on_disconnect(&modbus_live);
-                set_phase(&state, LinkPhase::Idle, "设备已断开");
-                notify_ui_force(&ui_refresh, true);
-                if let Some(peripheral) = peripheral.as_ref() {
-                    disconnect_peripheral(peripheral).await;
+                if let Some(active) = session.take() {
+                    end_session(active).await;
                 }
                 enter_idle(
                     &adapter,

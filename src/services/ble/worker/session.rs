@@ -623,6 +623,6 @@ async fn connect_after_gatt(
         peripheral: peripheral_for_session,
         cmd_tx: session_cmd_tx,
         in_flight_writes,
-        _throughput_hold: throughput_hold,
+        throughput_hold,
     })
 }

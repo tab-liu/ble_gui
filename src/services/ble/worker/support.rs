@@ -11,7 +11,8 @@ struct ActiveSession {
     cmd_tx: tokio::sync::mpsc::UnboundedSender<SessionCommand>,
     in_flight_writes: Arc<Mutex<Vec<tokio::task::AbortHandle>>>,
     /// 必须持有，丢掉后系统可能把连接间隔改回省电档（尤其 Windows）。
-    _throughput_hold: Option<super::conn_opt::ThroughputHold>,
+    /// 断开时要先 Drop（内部 Close 额外的 WinRT 句柄），再关 GATT。
+    throughput_hold: Option<super::conn_opt::ThroughputHold>,
 }
 
 fn abort_in_flight_writes(jobs: &Arc<Mutex<Vec<tokio::task::AbortHandle>>>) {
@@ -59,11 +60,39 @@ fn finish_ota_session(
     notify_ui_force(ui, true);
 }
 
-fn abort_session(active: &ActiveSession) {
+/// 停会话任务 → 关掉吞吐优化占用的额外 WinRT 句柄 → 退订 CCCD → `disconnect`。
+/// Windows 上顺序反了或漏 Close，ACL 会一直挂到进程退出。
+async fn end_session(active: ActiveSession) {
     abort_in_flight_writes(&active.in_flight_writes);
     active.poll_task.abort();
     active.notify_task.abort();
     active.write_task.abort();
+
+    let ActiveSession {
+        notify_task,
+        poll_task,
+        write_task,
+        peripheral,
+        throughput_hold,
+        cmd_tx: _,
+        in_flight_writes: _,
+    } = active;
+    drop(throughput_hold);
+
+    if tokio::time::timeout(SESSION_TASK_JOIN_TIMEOUT, async {
+        let _ = tokio::join!(notify_task, poll_task, write_task);
+    })
+    .await
+    .is_err()
+    {
+        warn!(
+            target: "ble_gui::worker",
+            "会话任务结束超时（{}ms），继续断开 GATT",
+            SESSION_TASK_JOIN_TIMEOUT.as_millis()
+        );
+    }
+
+    disconnect_peripheral(&peripheral).await;
 }
 
 fn take_ota_disconnect_request(ota: &SharedOtaLive) -> bool {
@@ -326,6 +355,7 @@ fn notify_ui_force(
 }
 
 async fn disconnect_peripheral(peripheral: &Peripheral) {
+    unsubscribe_notifies(peripheral).await;
     match tokio::time::timeout(GATT_DISCONNECT_TIMEOUT, peripheral.disconnect()).await {
         Ok(Ok(())) => {}
         Ok(Err(err)) => {
@@ -337,6 +367,40 @@ async fn disconnect_peripheral(peripheral: &Peripheral) {
                 "GATT 断开超时（{}s），继续清理会话",
                 GATT_DISCONNECT_TIMEOUT.as_secs()
             );
+        }
+    }
+}
+
+async fn unsubscribe_notifies(peripheral: &Peripheral) {
+    let want = [notify_uuid(), notify_uuid_ff03()];
+    let chars: Vec<_> = peripheral
+        .characteristics()
+        .into_iter()
+        .filter(|c| want.contains(&c.uuid))
+        .collect();
+    for ch in chars {
+        match tokio::time::timeout(NOTIFY_UNSUBSCRIBE_TIMEOUT, peripheral.unsubscribe(&ch)).await {
+            Ok(Ok(())) => {
+                debug!(
+                    target: "ble_gui::worker",
+                    "已退订通知 {}",
+                    ch.uuid
+                );
+            }
+            Ok(Err(err)) => {
+                debug!(
+                    target: "ble_gui::worker",
+                    "退订通知失败 {}: {err}",
+                    ch.uuid
+                );
+            }
+            Err(_) => {
+                warn!(
+                    target: "ble_gui::worker",
+                    "退订通知超时 {}",
+                    ch.uuid
+                );
+            }
         }
     }
 }
@@ -368,11 +432,13 @@ const SCAN_SYNC_INTERVAL_MS: u64 = 1000;
 const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(12);
 /// Windows 停扫描后 radio 尚未释放时，立刻 GetGattServices 常返回 Unreachable（Not connected）。
 const CONNECT_SETTLE_MS: u64 = 400;
+/// Windows GATT 断开可能挂起；超时后继续清理，避免「断开」按钮无响应。
+const GATT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const SESSION_TASK_JOIN_TIMEOUT: Duration = Duration::from_millis(800);
+const NOTIFY_UNSUBSCRIBE_TIMEOUT: Duration = Duration::from_millis(800);
 const CONNECT_RETRY_ATTEMPTS: u32 = 4;
 const CONNECT_RETRY_BASE_MS: u64 = 400;
 const LINK_WATCH_MS: u64 = 500;
-/// Windows GATT 断开可能挂起；超时后继续清理，避免「断开」按钮无响应。
-const GATT_DISCONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 
 const MSG_DEVICE_NOT_NEARBY: &str =
     "附近未发现该设备（可能已关机、距离过远，或已被其它设备连接后停止广播）";
