@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use log::info;
 use serde::{Deserialize, Serialize};
 
+use super::config_dir;
+
 const CONFIG_VERSION: u32 = 1;
 pub const MAX_NETWORKS: usize = 30;
 
@@ -25,23 +27,7 @@ struct SavedWifi {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(|p| {
-            PathBuf::from(p)
-                .join("ble_gui")
-                .join("wifi_networks.toml")
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(|h| {
-            PathBuf::from(h)
-                .join(".config")
-                .join("ble_gui")
-                .join("wifi_networks.toml")
-        })
-    }
+    config_dir::config_file("wifi_networks.toml")
 }
 
 pub fn load() -> Vec<WifiNetwork> {

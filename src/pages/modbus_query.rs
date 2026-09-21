@@ -29,9 +29,9 @@ use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow,
 const CARD_WIDTH: f32 = 180.0;
 const CARD_HEIGHT: f32 = 124.0;
 const CARD_SPACING: f32 = 12.0;
-/// 窗口客户区 → 查询网格：侧栏 160 + 内容区 padding 16 + 面板 padding 16。
+/// 窗口客户区 → 查询网格：侧栏 160 + 内容区左右 8+8 + 面板左右 8+8。
 const GRID_WINDOW_CHROME: f32 = 192.0;
-/// 窗口客户区 → 标签条：侧栏 160 + 内容区 padding 16。
+/// 窗口客户区 → 标签条：侧栏 160 + 内容区左右 8+8（标签在面板外）。
 const TAB_WINDOW_CHROME: f32 = 176.0;
 
 #[derive(Clone)]
@@ -284,6 +284,9 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
     let active = ui.get_active_modbus_tab() as usize;
 
     if snapshot.items.is_empty() {
+        if !ctx.ble.is_connected() {
+            reset_active_query_runtime(ui, ctx);
+        }
         return;
     }
 
@@ -359,6 +362,37 @@ fn persist_modbus_query(ctx: &AppContext, ui: &MainWindow) {
             "保存 Modbus 查询配置失败: {e}",
         );
     }
+}
+
+fn reset_active_query_runtime(ui: &MainWindow, ctx: &AppContext) {
+    let tabs = ctx.state.borrow().modbus_query.tabs.clone();
+    let active = ui.get_active_modbus_tab() as usize;
+    let Some(tab) = tabs.row_data(active) else {
+        return;
+    };
+    let items_model = tab.items.clone();
+    let mut items_vec: Vec<ModbusQueryItem> = (0..items_model.row_count())
+        .filter_map(|i| items_model.row_data(i))
+        .collect();
+    let mut changed = false;
+    for item in &mut items_vec {
+        if item.status.as_str() != "等待查询" {
+            crate::state::query::reset_item_runtime(item);
+            changed = true;
+        }
+    }
+    if !changed {
+        return;
+    }
+    tabs.set_row_data(
+        active,
+        ModbusTab {
+            title: tab.title,
+            slave_id: tab.slave_id,
+            items: ModelRc::new(VecModel::from(items_vec)),
+        },
+    );
+    sync_active_query_items_from_tabs(ui, &tabs);
 }
 
 fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
@@ -520,6 +554,7 @@ fn reorder_modbus_query(
         return;
     }
 
+    let to_orig = to;
     let mut items_vec: Vec<ModbusQueryItem> = (0..count)
         .filter_map(|i| items.row_data(i))
         .collect();
@@ -531,7 +566,35 @@ fn reorder_modbus_query(
     items_vec.insert(to, item);
 
     drop(st);
+    {
+        let mut st = ctx.state.borrow_mut();
+        st.modbus_query.selected_indices = st
+            .modbus_query
+            .selected_indices
+            .iter()
+            .map(|&i| remap_index_after_reorder(i, from, to_orig))
+            .collect();
+    }
     update_tab_items(ctx, ui, tab_index, items_vec);
+}
+
+/// `to` 为插入前下标（与 [`drop_index_from_position`] 相同）。
+fn remap_index_after_reorder(i: usize, from: usize, to: usize) -> usize {
+    if from == to || from + 1 == to {
+        return i;
+    }
+    let dest = if to > from { to - 1 } else { to };
+    if i == from {
+        return dest;
+    }
+    let mut j = i;
+    if i > from {
+        j -= 1;
+    }
+    if j >= dest {
+        j += 1;
+    }
+    j
 }
 
 fn open_copy_dialog(ui: &MainWindow, ctx: &AppContext, src_tab: usize, src_items: &[usize]) {
@@ -725,6 +788,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         sync_query_layout(&ui, &ctx_rm);
         sync_tab_strip_layout(&ui, &ctx_rm);
         sync_active_tab_slave_id(&ui, &ctx_rm);
+        sync_active_query_items_to_ui(&ui, &ctx_rm);
+        sync_selection_ui(&ctx_rm, &ui);
         touch_poll_policy(&ui, &ctx_rm);
         persist_modbus_query(&ctx_rm, &ui);
     });
@@ -1003,9 +1068,12 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             false,
         ));
         ui.set_active_modbus_tab(st.modbus_query.tabs.row_count() as i32 - 1);
+        drop(st);
+        clear_selection(&ctx_confirm, &ui);
         sync_query_layout(&ui, &ctx_confirm);
         sync_tab_strip_layout(&ui, &ctx_confirm);
         sync_active_tab_slave_id(&ui, &ctx_confirm);
+        sync_active_query_items_to_ui(&ui, &ctx_confirm);
         touch_poll_policy(&ui, &ctx_confirm);
         persist_modbus_query(&ctx_confirm, &ui);
     });
@@ -1036,5 +1104,38 @@ mod tests {
     fn drop_index_second_row_clamps_to_count() {
         // 第 2 行第 1 列左半 → index 3；只有 3 张时夹到 3
         assert_eq!(drop_index_from_position(40.0, 140.0, 600.0, 3), 3);
+    }
+
+    #[test]
+    fn layout_constants_match_slint_modbus_layout() {
+        assert_eq!(CARD_WIDTH + CARD_SPACING, 192.0);
+        assert_eq!(CARD_HEIGHT + CARD_SPACING, 136.0);
+        assert_eq!(cards_per_row(600.0), 3);
+    }
+
+    #[test]
+    fn remap_selection_after_moving_forward() {
+        // [0,1,2,3,4] 把 1 插到 4 前 → [0,2,3,1,4]
+        assert_eq!(remap_index_after_reorder(0, 1, 4), 0);
+        assert_eq!(remap_index_after_reorder(1, 1, 4), 3);
+        assert_eq!(remap_index_after_reorder(2, 1, 4), 1);
+        assert_eq!(remap_index_after_reorder(3, 1, 4), 2);
+        assert_eq!(remap_index_after_reorder(4, 1, 4), 4);
+    }
+
+    #[test]
+    fn remap_selection_after_moving_backward() {
+        // [0,1,2,3,4] 把 3 插到 1 前 → [0,3,1,2,4]
+        assert_eq!(remap_index_after_reorder(0, 3, 1), 0);
+        assert_eq!(remap_index_after_reorder(1, 3, 1), 2);
+        assert_eq!(remap_index_after_reorder(2, 3, 1), 3);
+        assert_eq!(remap_index_after_reorder(3, 3, 1), 1);
+        assert_eq!(remap_index_after_reorder(4, 3, 1), 4);
+    }
+
+    #[test]
+    fn remap_noop_when_drop_on_self() {
+        assert_eq!(remap_index_after_reorder(2, 2, 2), 2);
+        assert_eq!(remap_index_after_reorder(2, 2, 3), 2);
     }
 }

@@ -19,7 +19,7 @@ pub const UI_PAGE_DASHBOARD: i32 = 0;
 /// UI 告诉 worker「此刻该轮询什么」。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PollForeground {
-    /// 非 Modbus 相关页（设置、固件等）或未连接。
+    /// 非 Modbus 相关页（固件升级等）或未连接。
     None,
     /// 主页仪表板（功率 + 链路状态）。
     Dashboard,

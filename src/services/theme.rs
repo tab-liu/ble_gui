@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use slint::ComponentHandle;
 
+use crate::services::config_dir;
 use crate::ui::{MainWindow, Theme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -151,19 +152,7 @@ fn windows_system_dark() -> Option<bool> {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("ble_gui").join("theme"))
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(|home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("ble_gui")
-                .join("theme")
-        })
-    }
+    config_dir::config_file("theme")
 }
 
 fn load_mode() -> Option<ThemeMode> {

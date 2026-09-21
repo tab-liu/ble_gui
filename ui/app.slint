@@ -15,6 +15,7 @@ import {
 } from "types.slint";
 
 import { Theme } from "theme.slint";
+import { AppPages } from "app_pages.slint";
 import { BleStatusBar } from "components/ble_status_bar.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { NewTabDialog } from "components/new_tab_dialog.slint";
@@ -293,7 +294,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         min-width: 0px;
 
-                        if root.current-page == 0: DashboardPage {
+                        if root.current-page == AppPages.dashboard: DashboardPage {
                             device-connected: root.device-connected;
                             scanning: root.scanning;
                             ble-connecting: root.ble-connecting;
@@ -354,7 +355,7 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        if root.current-page == 1: ModbusPage {
+                        if root.current-page == AppPages.modbus: ModbusPage {
                             device-connected: root.device-connected;
                             modbus-tabs: root.modbus-tabs;
                             active-modbus-tab: root.active-modbus-tab;
@@ -420,7 +421,7 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        if root.current-page == 3: FirmwarePage {
+                        if root.current-page == AppPages.firmware: FirmwarePage {
                             device-connected: root.device-connected;
                             device-name: root.ble-device-name;
                             firmware-status-text: root.firmware-status-text;
@@ -453,7 +454,7 @@ export component MainWindow inherits Window {
                             copy-text(text) => { root.copy-text(text); }
                         }
 
-                        if root.current-page == 4: DeviceConfigPage {
+                        if root.current-page == AppPages.device-config: DeviceConfigPage {
                             device-connected: root.device-connected;
                             config-groups: root.config-groups;
                             active-config-group: root.active-config-group;
@@ -503,7 +504,7 @@ export component MainWindow inherits Window {
                             wifi-scan => { root.wifi-scan(); }
                         }
 
-                        if root.current-page == 5: ExternalPage {
+                        if root.current-page == AppPages.external: ExternalPage {
                             device-connected: root.device-connected;
                             external-devices-valid: root.external-devices-valid;
                             external-devices: root.external-devices;

@@ -95,7 +95,7 @@ impl BleInner {
         if let Some(existing) = self
             .scan_devices
             .iter_mut()
-            .find(|d| d.address == address)
+            .find(|d| crate::services::ble_favorites::addresses_equal(&d.address, address))
         {
             let mut changed = existing.rssi != rssi || existing.link_hint != link_hint;
             existing.rssi = rssi;
@@ -160,7 +160,7 @@ impl BleInner {
             device_name: self.device_name.clone(),
             device_address: self.device_address.clone(),
             rssi_text: if connected {
-                format!("{} dBm", self.rssi)
+                format_connected_rssi(self.rssi)
             } else {
                 String::new()
             },
@@ -186,7 +186,38 @@ fn placeholder_name(address: &str) -> String {
     format!("蓝牙设备 ({address})")
 }
 
+/// 连接后 GATT 往往不再更新广播 RSSI；0 / ≤-100 视为未知，避免画出假的 -100 dBm。
+fn format_connected_rssi(rssi: i32) -> String {
+    if rssi == 0 || rssi <= -100 {
+        "—".into()
+    } else {
+        format!("{rssi} dBm")
+    }
+}
+
 /// 尚未解析到广播名称时的占位显示名。
 pub fn is_placeholder_scan_name(name: &str) -> bool {
     name.starts_with("蓝牙设备 (") && name.ends_with(')')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upsert_merges_same_mac_with_different_separators() {
+        let mut inner = BleInner::default();
+        inner.upsert_advertisement("A", "aa-bb-cc-dd-ee-ff", -60, true, ScanLinkHint::Available);
+        inner.upsert_advertisement("B", "AA:BB:CC:DD:EE:FF", -55, true, ScanLinkHint::Available);
+        assert_eq!(inner.scan_devices.len(), 1);
+        assert_eq!(inner.scan_devices[0].name, "B");
+        assert_eq!(inner.scan_devices[0].rssi, -55);
+    }
+
+    #[test]
+    fn connected_rssi_hides_placeholder() {
+        assert_eq!(format_connected_rssi(0), "—");
+        assert_eq!(format_connected_rssi(-100), "—");
+        assert_eq!(format_connected_rssi(-67), "-67 dBm");
+    }
 }

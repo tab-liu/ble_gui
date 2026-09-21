@@ -12,6 +12,8 @@ use std::path::PathBuf;
 use log::info;
 use serde::{Deserialize, Serialize};
 
+use super::config_dir;
+
 const CONFIG_VERSION: u32 = 1;
 
 /// 查询卡片的可持久化定义（不含读回值）。
@@ -45,23 +47,7 @@ pub struct LoadedModbusQuery {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(|p| {
-            PathBuf::from(p)
-                .join("ble_gui")
-                .join("modbus_query.toml")
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(|h| {
-            PathBuf::from(h)
-                .join(".config")
-                .join("ble_gui")
-                .join("modbus_query.toml")
-        })
-    }
+    config_dir::config_file("modbus_query.toml")
 }
 
 fn parse_config(text: &str) -> Option<LoadedModbusQuery> {

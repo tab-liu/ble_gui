@@ -8,6 +8,7 @@
 //! | [`modbus_query_store`] | Modbus 查询页 TOML 持久化 |
 //! | [`device_config_store`] | 设备配置自定义分组 TOML 持久化 |
 //! | [`wifi_cred_store`] | 配网用过的 WiFi SSID/密码 |
+//! | [`config_dir`] | 本机配置目录（各 TOML 共用） |
 //! | [`wifi_scan`] | 本机附近 WiFi 扫描（Windows / macOS / Linux，仅 2.4G） |
 //! | [`ble_favorites`] | 收藏设备列表 |
 //! | [`theme`] | 明暗主题 |
@@ -15,6 +16,7 @@
 
 pub mod ble;
 pub mod ble_favorites;
+pub mod config_dir;
 pub mod device_config_store;
 pub mod firmware;
 pub mod modbus;

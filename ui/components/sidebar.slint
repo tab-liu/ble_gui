@@ -1,6 +1,7 @@
 import { VerticalBox, Button } from "std-widgets.slint";
 import { NavItem } from "nav_item.slint";
 import { Theme } from "../theme.slint";
+import { AppPages } from "../app_pages.slint";
 
 export component Sidebar inherits Rectangle {
     in property <int> current-page;
@@ -28,28 +29,28 @@ export component Sidebar inherits Rectangle {
 
         NavItem {
             label: "主页";
-            selected: root.current-page == 0;
-            clicked => { root.navigate(0); }
+            selected: root.current-page == AppPages.dashboard;
+            clicked => { root.navigate(AppPages.dashboard); }
         }
         NavItem {
             label: "Modbus";
-            selected: root.current-page == 1;
-            clicked => { root.navigate(1); }
+            selected: root.current-page == AppPages.modbus;
+            clicked => { root.navigate(AppPages.modbus); }
         }
         NavItem {
             label: "设备配置";
-            selected: root.current-page == 4;
-            clicked => { root.navigate(4); }
+            selected: root.current-page == AppPages.device-config;
+            clicked => { root.navigate(AppPages.device-config); }
         }
         NavItem {
             label: "外部设备";
-            selected: root.current-page == 5;
-            clicked => { root.navigate(5); }
+            selected: root.current-page == AppPages.external;
+            clicked => { root.navigate(AppPages.external); }
         }
         NavItem {
             label: "固件升级";
-            selected: root.current-page == 3;
-            clicked => { root.navigate(3); }
+            selected: root.current-page == AppPages.firmware;
+            clicked => { root.navigate(AppPages.firmware); }
         }
 
         Rectangle { vertical-stretch: 1; }

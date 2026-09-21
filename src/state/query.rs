@@ -34,21 +34,32 @@ fn result_font_size(char_count: usize) -> i32 {
 }
 
 fn schema_item_to_query_item(item: QueryItemSchema) -> ModbusQueryItem {
-    let result: SharedString = "（Modbus 轮询后将自动填充）".into();
-    let display = result.to_string();
-    ModbusQueryItem {
+    let mut mapped = ModbusQueryItem {
         name: item.name.into(),
         register: item.register.into(),
         value_type: item.value_type.into(),
         register_count: item.register_count,
         scale: item.scale,
-        status: "等待查询".into(),
-        result: result.clone(),
-        result_display: display.clone().into(),
+        status: SharedString::default(),
+        result: SharedString::default(),
+        result_display: SharedString::default(),
         result_hex: SharedString::default(),
         result_hex_below: false,
-        result_font_size: result_font_size(display.chars().count()),
-    }
+        result_font_size: 20,
+    };
+    reset_item_runtime(&mut mapped);
+    mapped
+}
+
+pub(crate) fn reset_item_runtime(item: &mut ModbusQueryItem) {
+    let result: SharedString = "（Modbus 轮询后将自动填充）".into();
+    let display = result.to_string();
+    item.status = "等待查询".into();
+    item.result = result.clone();
+    item.result_display = display.clone().into();
+    item.result_hex = SharedString::default();
+    item.result_hex_below = false;
+    item.result_font_size = result_font_size(display.chars().count());
 }
 
 fn schema_tab_to_modbus_tab(tab: QueryTabSchema) -> ModbusTab {

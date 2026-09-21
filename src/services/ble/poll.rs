@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use log::{debug, info, warn};
 
-use crate::services::modbus::{DashboardData, ModbusReadMode, SharedModbusLive};
+use crate::services::modbus::{ModbusReadMode, SharedModbusLive};
 
 use super::modbus::{
     build_read_holding, build_write_multiple, build_write_single, iot_status_supports_tlv,
@@ -1056,65 +1056,13 @@ async fn modbus_transaction(
 /// 连接建立后初始化 live 状态。
 pub fn init_live_on_connect(live: &SharedModbusLive) {
     let mut inner = live.lock().expect("modbus live lock");
-    inner.dashboard = DashboardData::default();
-    inner.output_busy = false;
+    inner.clear_session();
     inner.slave_id = DEFAULT_SLAVE_ID;
-    inner.modbus_online = false;
-    inner.read_mode = ModbusReadMode::Unknown;
-    inner.capabilities_probed = false;
-    inner.device_info_loaded = false;
-    inner.device_type.clear();
-    inner.device_sn.clear();
-    inner.device_versions_text.clear();
-    inner.iot_software_version = None;
-    inner.device_software.clear();
-    inner.identity_loaded = false;
-    inner.iot_type.clear();
-    inner.iot_sn.clear();
-    inner.safe_code.clear();
-    inner.cloud_url.clear();
-    inner.wifi_mac.clear();
-    inner.ble_mac.clear();
-    inner.wifi_password.clear();
-    inner.link_status_valid = false;
-    inner.wifi_sta = false;
-    inner.mqtt_ok = false;
-    inner.ssid_now.clear();
-    inner.sta_ip.clear();
-    inner.sta_rssi = 0;
-    inner.sub_devices.clear();
-    inner.sub_devices_valid = false;
 }
 
 pub fn clear_live_on_disconnect(live: &SharedModbusLive) {
     let mut inner = live.lock().expect("modbus live lock");
-    inner.dashboard = DashboardData::default();
-    inner.output_busy = false;
-    inner.modbus_online = false;
-    inner.read_mode = ModbusReadMode::Unknown;
-    inner.capabilities_probed = false;
-    inner.device_info_loaded = false;
-    inner.device_type.clear();
-    inner.device_sn.clear();
-    inner.device_versions_text.clear();
-    inner.iot_software_version = None;
-    inner.device_software.clear();
-    inner.identity_loaded = false;
-    inner.iot_type.clear();
-    inner.iot_sn.clear();
-    inner.safe_code.clear();
-    inner.cloud_url.clear();
-    inner.wifi_mac.clear();
-    inner.ble_mac.clear();
-    inner.wifi_password.clear();
-    inner.link_status_valid = false;
-    inner.wifi_sta = false;
-    inner.mqtt_ok = false;
-    inner.ssid_now.clear();
-    inner.sta_ip.clear();
-    inner.sta_rssi = 0;
-    inner.sub_devices.clear();
-    inner.sub_devices_valid = false;
+    inner.clear_session();
 }
 
 #[cfg(test)]

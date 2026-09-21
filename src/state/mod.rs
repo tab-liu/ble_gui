@@ -35,7 +35,7 @@ pub use query::ModbusQueryState;
 pub const PAGE_DASHBOARD: i32 = 0;
 /// Modbus 查询页（可增删查询项 + 前台轮询）。
 pub const PAGE_MODBUS: i32 = 1;
-/// 固件升级页。
+/// 固件升级页。`2` 曾为设置页，已删除，勿复用以免旧窗口状态错页。
 pub const PAGE_FIRMWARE: i32 = 3;
 /// 设备配置（固定「常用」+ 自定义寄存器表单）。
 pub const PAGE_DEVICE_CONFIG: i32 = 4;

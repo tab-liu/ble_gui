@@ -1,6 +1,7 @@
 //! BLE 异步 worker：扫描、连接、GATT 与协议通知处理。
 //!
-//! 实现按职责拆在同模块的 `support` / `scan` / `session` / `connect`（`include!`，逻辑不变）。
+//! 实现按职责拆在同模块的 `support` / `scan` / `session` / `connect`（`include!`）。
+//! 子文件不是独立模块：其中的 `#[cfg(test)]` 不会单独注册，测试写在可 `mod` 的层。
 //!
 //! Windows 上 `connect()` 实为 Uncached GetGattServices；刚停扫描时常
 //! `Unreachable`→`Not connected`。[`connect_gatt_with_retry`] 先等待再重试，

@@ -314,6 +314,9 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
         .unwrap_or_default();
 
     if snapshot.items.is_empty() {
+        if !ctx.ble.is_connected() {
+            reset_config_readback(ui, ctx);
+        }
         return;
     }
 
@@ -418,6 +421,58 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
     }
 
     write_group_items(ctx, group_index, slave_id, title, group_builtin, items);
+    sync_active_to_ui(ui, ctx);
+}
+
+fn reset_config_readback(ui: &MainWindow, ctx: &AppContext) {
+    let (empty_result, empty_display, empty_hex, font) = empty_read();
+    {
+        let st = ctx.state.borrow();
+        for i in 0..st.device_config.builtin_items.row_count() {
+            let Some(mut item) = st.device_config.builtin_items.row_data(i) else {
+                continue;
+            };
+            if item.status.as_str() == "等待读取" {
+                continue;
+            }
+            item.status = "等待读取".into();
+            item.result_display = empty_display.clone();
+            item.result_hex = empty_hex.clone();
+            st.device_config.builtin_items.set_row_data(i, item);
+        }
+    }
+
+    let active = ui.get_active_config_group() as usize;
+    let st = ctx.state.borrow();
+    let Some(group) = st.device_config.groups.row_data(active) else {
+        return;
+    };
+    if group.builtin {
+        drop(st);
+        sync_active_to_ui(ui, ctx);
+        return;
+    }
+    let mut items = items_vec(&group);
+    let title = group.title.clone();
+    let slave_id = group.slave_id.clone();
+    let group_builtin = group.builtin;
+    drop(st);
+
+    let mut changed = false;
+    for item in &mut items {
+        if item.status.as_str() == "等待读取" {
+            continue;
+        }
+        item.status = "等待读取".into();
+        item.result = empty_result.clone();
+        item.result_display = empty_display.clone();
+        item.result_hex = empty_hex.clone();
+        item.result_font_size = font;
+        changed = true;
+    }
+    if changed {
+        write_group_items(ctx, active, slave_id, title, group_builtin, items);
+    }
     sync_active_to_ui(ui, ctx);
 }
 

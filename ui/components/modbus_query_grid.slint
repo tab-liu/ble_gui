@@ -2,6 +2,7 @@ import { ModbusQueryItem, ModbusQueryLayoutRow } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ModbusQueryCard } from "modbus_query_card.slint";
 import { ModbusDndApi } from "modbus_dnd.slint";
+import { ModbusLayout } from "modbus_layout.slint";
 
 export component ModbusQueryGrid inherits Rectangle {
     in property <[ModbusQueryItem]> items;
@@ -16,11 +17,11 @@ export component ModbusQueryGrid inherits Rectangle {
     property <length> hover-y: 0;
     property <int> drop-slot: 0;
     // 与 src/pages/modbus_query.rs 的 CARD_WIDTH / CARD_HEIGHT / CARD_SPACING 对齐。
-    property <int> grid-cols: max(1, floor((root.width / 1px + 12) / 192));
+    property <int> grid-cols: max(1, floor((root.width / 1px + ModbusLayout.card-spacing / 1px) / (ModbusLayout.stride-x / 1px)));
     property <int> marker-col: mod(root.drop-slot, root.grid-cols);
     property <int> marker-row: root.drop-slot / root.grid-cols;
-    property <length> marker-x: root.marker-col == 0 ? 2px : (root.marker-col * 192px - 8px);
-    property <length> marker-y: root.marker-row * 136px;
+    property <length> marker-x: root.marker-col == 0 ? 2px : (root.marker-col * ModbusLayout.stride-x - 8px);
+    property <length> marker-y: root.marker-row * ModbusLayout.stride-y;
     property <bool> drop-is-noop: ModbusDndApi.dragging-index >= 0
         && (root.drop-slot == ModbusDndApi.dragging-index
             || root.drop-slot == ModbusDndApi.dragging-index + 1);
@@ -30,7 +31,7 @@ export component ModbusQueryGrid inherits Rectangle {
     // 与 src/pages/modbus_query.rs 的 CARD_HEIGHT / CARD_SPACING 对齐；底部多留一行空隙，避免最后一行被 ScrollView 裁半。
     property <int> row-count: root.layout-rows.length;
     property <length> content-height: root.items.length == 0 ? 120px
-        : root.row-count * 124px + max(0, root.row-count - 1) * 12px + 56px;
+        : root.row-count * ModbusLayout.card-height + max(0, root.row-count - 1) * ModbusLayout.card-spacing + 56px;
 
     horizontal-stretch: 1;
     vertical-stretch: 0;
@@ -56,7 +57,7 @@ export component ModbusQueryGrid inherits Rectangle {
             return ModbusDndApi.can-drop(event);
         }
         dropped(event) => {
-            ModbusDndApi.dropped(event, root.hover-x, root.hover-y, root.width);
+            ModbusDndApi.dropped(event, event.position.x, event.position.y, root.width);
             return event.proposed-action;
         }
 
@@ -73,14 +74,14 @@ export component ModbusQueryGrid inherits Rectangle {
         }
 
         if root.items.length > 0: VerticalLayout {
-            spacing: 12px;
+            spacing: ModbusLayout.card-spacing;
             alignment: start;
             padding-bottom: 56px;
             padding-right: 8px;
             min-width: 0px;
 
             for row in root.layout-rows: HorizontalLayout {
-                spacing: 12px;
+                spacing: ModbusLayout.card-spacing;
                 alignment: start;
                 min-width: 0px;
 
@@ -111,7 +112,7 @@ export component ModbusQueryGrid inherits Rectangle {
             x: root.marker-x;
             y: root.marker-y;
             width: 4px;
-            height: 124px;
+            height: ModbusLayout.card-height;
             border-radius: 2px;
             background: Theme.accent;
             z: 10;

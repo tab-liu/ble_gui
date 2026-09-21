@@ -268,5 +268,5 @@ async fn find_peripheral(
 }
 
 fn normalize_address(addr: &str) -> String {
-    addr.replace('-', ":").to_ascii_uppercase()
+    crate::services::ble_favorites::normalize_address(addr)
 }

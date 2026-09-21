@@ -2,11 +2,11 @@
 //!
 //! 基于 **Rust + Slint + btleplug** 的跨平台 GUI：扫描/连接 BLUETTI 类设备，
 //! 经加密 BLE 链路做 Modbus 轮询与写入。页面包括主页仪表、Modbus 查询、
-//! 设备配置、外部设备、固件升级、设置。
+//! 设备配置、外部设备、固件升级。
 //!
 //! ## 生成文档（rustdoc）
 //!
-//! 本仓库是 **binary crate**（入口在 [`main`]），多数模块为 `mod` 私有。
+//! 库 crate 在 `src/lib.rs`，可执行入口在本文件。
 //! 项目已在 `.cargo/config.toml` 默认开启 `--document-private-items`，直接：
 //!
 //! ```bash
@@ -60,8 +60,9 @@
 //! |------|----------|
 //! | 主页 | SOC@102 + 功率@140～147 + AC/DC 2011/2012 |
 //! | Modbus 查询 | 当前标签内查询项 |
-//! | 设备配置 | 常用映射或当前自定义分组项 |
-//! | 固件升级 / 设置 | 停止 Modbus 轮询 |
+//! | 设备配置 | 常用映射或当前自定义分组项 + WiFi 链路 |
+//! | 外部设备 | 写 21000=1 取组网配件列表 |
+//! | 固件升级 | 停止 Modbus 轮询 |
 //!
 //! 读回结果只更新界面，正常路径不再打「卡片更新」一类 info 日志。
 //!
@@ -84,11 +85,13 @@
 //!
 //! ### 配置落盘
 //!
-//! - Modbus 查询：`~/.config/ble_gui/modbus_query.toml`
-//! - 设备配置：`~/.config/ble_gui/device_config.toml`
-//! - 收藏设备（以 MAC 为键，广播名仅展示）/ 主题：同目录下其它文件
+//! - Modbus 查询：`modbus_query.toml`
+//! - 设备配置：`device_config.toml`
+//! - WiFi 凭据：`wifi_networks.toml`
+//! - 收藏设备（以 MAC 为键，广播名仅展示）：`favorites.toml`
+//! - 主题：`theme`
 //!
-//! Windows 使用 `%APPDATA%\ble_gui\`。
+//! Unix：`~/.config/ble_gui/`；Windows：`%APPDATA%\ble_gui\`。
 //!
 //! ### 参考实现
 //!
@@ -100,7 +103,7 @@
 //! | 模块 | 职责 |
 //! |------|------|
 //! | [`app`] | 组装 UI、定时器、事件循环入口 |
-//! | [`pages`] | 各页面回调接线（dashboard / modbus / device_config / external / firmware …） |
+//! | [`pages`] | 各页面回调接线（dashboard / modbus / device_config / external / firmware / wifi_provision） |
 //! | [`services`] | BLE、Modbus、固件 OTA、持久化、主题 |
 //! | [`state`] | `AppContext`、页面 ID、对话框常量 |
 //! | [`ui`] | Slint 生成类型 + 属性刷新辅助 |

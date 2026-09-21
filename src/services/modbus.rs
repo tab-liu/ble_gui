@@ -168,6 +168,36 @@ pub struct ModbusLive {
     pub sub_devices_valid: bool,
 }
 
+impl ModbusLive {
+    /// 清仪表、身份、链路。保留 `slave_id`（断开后从站号仍有意义）。
+    pub fn clear_session(&mut self) {
+        let slave_id = self.slave_id;
+        *self = Self {
+            slave_id,
+            ..Self::default()
+        };
+    }
+}
+
+#[cfg(test)]
+mod live_tests {
+    use super::*;
+
+    #[test]
+    fn clear_session_keeps_slave_id() {
+        let mut live = ModbusLive {
+            slave_id: 7,
+            modbus_online: true,
+            device_sn: "x".into(),
+            ..ModbusLive::default()
+        };
+        live.clear_session();
+        assert_eq!(live.slave_id, 7);
+        assert!(!live.modbus_online);
+        assert!(live.device_sn.is_empty());
+    }
+}
+
 pub type SharedModbusLive = Arc<Mutex<ModbusLive>>;
 
 /// Modbus 查询页 / 设备配置页轮询结果目标（共用一份 live，前台页互斥）。
@@ -254,33 +284,7 @@ impl ModbusService {
         let mut inner = self.inner.borrow_mut();
         inner.session_active = false;
         if let Ok(mut live) = inner.live.lock() {
-            live.dashboard = DashboardData::default();
-            live.output_busy = false;
-            live.modbus_online = false;
-            live.read_mode = ModbusReadMode::Unknown;
-            live.capabilities_probed = false;
-            live.device_info_loaded = false;
-            live.device_type.clear();
-            live.device_sn.clear();
-            live.device_versions_text.clear();
-            live.iot_software_version = None;
-            live.device_software.clear();
-            live.identity_loaded = false;
-            live.iot_type.clear();
-            live.iot_sn.clear();
-            live.safe_code.clear();
-            live.cloud_url.clear();
-            live.wifi_mac.clear();
-            live.ble_mac.clear();
-            live.wifi_password.clear();
-            live.link_status_valid = false;
-            live.wifi_sta = false;
-            live.mqtt_ok = false;
-            live.ssid_now.clear();
-            live.sta_ip.clear();
-            live.sta_rssi = 0;
-            live.sub_devices.clear();
-            live.sub_devices_valid = false;
+            live.clear_session();
         }
         if let Ok(mut query) = inner.query_live.lock() {
             *query = QueryPollSnapshot::default();

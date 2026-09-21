@@ -1,6 +1,7 @@
 import { VerticalBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { ModbusDndApi } from "modbus_dnd.slint";
+import { ModbusLayout } from "modbus_layout.slint";
 
 export component ModbusQueryCard inherits Rectangle {
     in property <string> name;
@@ -17,8 +18,8 @@ export component ModbusQueryCard inherits Rectangle {
     callback select-clicked(bool);
     callback edit-clicked();
 
-    width: 180px;
-    height: 124px;
+    width: ModbusLayout.card-width;
+    height: ModbusLayout.card-height;
     border-radius: 10px;
     background: Theme.bg-card;
     border-width: root.selected ? 2px : 1px;
@@ -27,7 +28,7 @@ export component ModbusQueryCard inherits Rectangle {
     card-hover := TouchArea {
         width: 100%;
         height: 100%;
-        mouse-cursor: default;
+        mouse-cursor: move;
 
         Tooltip {
             VerticalBox {

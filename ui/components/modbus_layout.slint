@@ -1,0 +1,9 @@
+// 查询卡片几何。Rust 侧 CARD_*（src/pages/modbus_query.rs）必须同步，
+// 否则拖拽落点与插入指示条会对不齐。
+export global ModbusLayout {
+    out property <length> card-width: 180px;
+    out property <length> card-height: 124px;
+    out property <length> card-spacing: 12px;
+    out property <length> stride-x: 192px;
+    out property <length> stride-y: 136px;
+}

@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use log::info;
 use serde::{Deserialize, Serialize};
 
+use crate::services::config_dir;
+
 const CONFIG_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -24,23 +26,7 @@ struct SavedFavorites {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(|p| {
-            PathBuf::from(p)
-                .join("ble_gui")
-                .join("favorites.toml")
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(|h| {
-            PathBuf::from(h)
-                .join(".config")
-                .join("ble_gui")
-                .join("favorites.toml")
-        })
-    }
+    config_dir::config_file("favorites.toml")
 }
 
 pub fn normalize_address(addr: &str) -> String {

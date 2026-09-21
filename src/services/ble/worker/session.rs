@@ -138,14 +138,14 @@ async fn connect_after_gatt(
         .as_ref()
         .map(|p| format_address(p.address))
         .unwrap_or_else(|| address_text.to_string());
-    let device_rssi = props.as_ref().and_then(|p| p.rssi).unwrap_or(-100);
+    let device_rssi = props.as_ref().and_then(|p| p.rssi).map(|r| r as i32).unwrap_or(0);
 
     {
         let mut inner = state.lock().expect("ble state lock");
         inner.phase = LinkPhase::GattReady;
         inner.device_name = device_name;
         inner.device_address = device_address;
-        inner.rssi = device_rssi as i32;
+        inner.rssi = device_rssi;
         inner.status_detail = "GATT 已连接，等待设备鉴权……".into();
     }
     notify_ui_force(ui_refresh, true);

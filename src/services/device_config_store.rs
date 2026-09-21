@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use log::info;
 use serde::{Deserialize, Serialize};
 
+use super::config_dir;
+
 const CONFIG_VERSION: u32 = 1;
 
 /// 自定义配置项的可持久化定义（不含读回值）。
@@ -48,23 +50,7 @@ pub struct LoadedDeviceConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("APPDATA").map(|p| {
-            PathBuf::from(p)
-                .join("ble_gui")
-                .join("device_config.toml")
-        })
-    }
-    #[cfg(not(windows))]
-    {
-        std::env::var_os("HOME").map(|h| {
-            PathBuf::from(h)
-                .join(".config")
-                .join("ble_gui")
-                .join("device_config.toml")
-        })
-    }
+    config_dir::config_file("device_config.toml")
 }
 
 fn parse_config(text: &str) -> Option<LoadedDeviceConfig> {

@@ -89,7 +89,8 @@ fn rssi_held(addresses: &[String], address: &str) -> bool {
         .any(|held| ble_favorites::addresses_equal(held, address))
 }
 
-/// 达到阈值才入列；入列后不因 RSSI 变弱踢走（扫描里没了、改阈值、关过滤才去掉）。
+/// 达到阈值才入列；入列后不因 RSSI 变弱踢走。
+/// 设备从扫描列表消失后 hold 会丢掉，弱信号再出现需重新达标。
 fn apply_rssi_latch(devices: &mut Vec<BleScanEntry>, min_rssi: i32, previously_visible: &[String]) {
     devices.retain(|d| rssi_held(previously_visible, &d.address) || d.rssi >= min_rssi);
 }
@@ -761,5 +762,52 @@ mod tests {
             &mut hold,
         );
         assert!(shown.is_empty());
+    }
+
+    #[test]
+    fn occupied_and_favorites_never_enter_hold() {
+        let mut hold = RssiFilterHold::default();
+        let mut occupied = entry("AA:BB", -40);
+        occupied.link_hint = ScanLinkHint::Occupied;
+        let favorites = [FavoriteDevice {
+            address: "CC:DD".into(),
+            name: "fav".into(),
+        }];
+        let shown = prepare_scan_devices(
+            &[occupied, entry("CC:DD", -40), entry("EE:FF", -40)],
+            "",
+            true,
+            "-70",
+            &favorites,
+            &mut hold,
+        );
+        assert_eq!(addrs(&shown), vec!["EE:FF"]);
+        assert_eq!(hold.addresses, vec!["EE:FF".to_string()]);
+    }
+
+    #[test]
+    fn leaving_scan_clears_hold_so_weak_return_stays_hidden() {
+        let mut hold = RssiFilterHold::default();
+        let favorites: [FavoriteDevice; 0] = [];
+        let _ = prepare_scan_devices(&[entry("AA:BB", -70)], "", true, "-70", &favorites, &mut hold);
+        let _ = prepare_scan_devices(&[], "", true, "-70", &favorites, &mut hold);
+        let shown = prepare_scan_devices(&[entry("AA:BB", -90)], "", true, "-70", &favorites, &mut hold);
+        assert!(shown.is_empty());
+    }
+
+    #[test]
+    fn disabling_filter_resets_hold() {
+        let mut hold = RssiFilterHold::default();
+        let favorites: [FavoriteDevice; 0] = [];
+        let _ = prepare_scan_devices(&[entry("AA:BB", -70)], "", true, "-70", &favorites, &mut hold);
+        let _ = prepare_scan_devices(&[entry("AA:BB", -90)], "", false, "-70", &favorites, &mut hold);
+        let shown = prepare_scan_devices(&[entry("AA:BB", -90)], "", true, "-70", &favorites, &mut hold);
+        assert!(shown.is_empty());
+    }
+
+    #[test]
+    fn parse_rssi_min_accepts_dbm_suffix() {
+        assert_eq!(parse_rssi_min(" -70 dBm "), -70);
+        assert_eq!(parse_rssi_min("abc"), DEFAULT_RSSI_MIN);
     }
 }
