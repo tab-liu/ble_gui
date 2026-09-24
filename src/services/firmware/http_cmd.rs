@@ -53,21 +53,24 @@ pub fn build_http_ota_cmd_json(
     download_url: &str,
     file_md5: &str,
     record_id: &str,
+    force: bool,
 ) -> String {
     let model_e = json_escape(model.trim());
     let sn_e = json_escape(&ota_sn_field(model, sn));
     let url_e = json_escape(download_url);
     let md5_e = json_escape(file_md5.trim());
     let rid_e = json_escape(record_id.trim());
+    let force_e = if force { "true" } else { "false" };
     format!(
         concat!(
-            "[{{\"sn\":\"{sn}\",\"model\":\"{model}\",\"force\":true,\"details\":[",
+            "[{{\"sn\":\"{sn}\",\"model\":\"{model}\",\"force\":{force},\"details\":[",
             "{{\"firmwareType\":{ty},\"fileSize\":{size},\"version\":\"{ver}\",",
             "\"downloadUrl\":\"{url}\",\"fileMd5\":\"{md5}\",\"encrypted\":false,",
             "\"recordId\":\"{rid}\"}}]}}]"
         ),
         sn = sn_e,
         model = model_e,
+        force = force_e,
         ty = firmware_type,
         size = file_size,
         ver = version,
@@ -186,6 +189,7 @@ mod tests {
             "http://192.168.1.10:54321/ab.bin",
             "aabbccddeeff00112233445566778899",
             "local-http-ota",
+            true,
         );
         assert!(json.starts_with('['));
         assert!(json.contains("\"sn\":\"EP6002326000001749\""));
@@ -199,6 +203,19 @@ mod tests {
         let frame = build_http_ota_frame(&json).unwrap();
         let declared = u16::from_be_bytes([frame[2], frame[3]]) as usize;
         assert_eq!(declared, json.len());
+        let json_off = build_http_ota_cmd_json(
+            "EP600",
+            "2326000001749",
+            0,
+            1870580,
+            100600199,
+            "http://192.168.1.10:54321/ab.bin",
+            "aabbccddeeff00112233445566778899",
+            "local-http-ota",
+            false,
+        );
+        assert!(json_off.contains("\"force\":false"));
+        assert!(!json_off.contains("\"force\":true"));
     }
 
     #[test]

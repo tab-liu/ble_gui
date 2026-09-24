@@ -1,4 +1,4 @@
-import { VerticalBox, LineEdit } from "std-widgets.slint";
+import { VerticalBox, LineEdit, CheckBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { CopyableInfoRow, CopyFmt } from "../components/copyable_info_row.slint";
 
@@ -77,6 +77,7 @@ export component FirmwarePage inherits VerticalBox {
     in property <string> firmware-fail-reason;
     in property <bool> firmware-can-start;
     in property <bool> firmware-can-stop;
+    in-out property <bool> firmware-force;
 
     callback pick-file();
     callback clear-file();
@@ -84,6 +85,7 @@ export component FirmwarePage inherits VerticalBox {
     callback start-http-upgrade();
     callback stop-upgrade();
     callback ota-version-edited(string);
+    callback force-toggled(bool);
     callback copy-text(string);
 
     property <color> result-color: root.firmware-phase == 3 ? Theme.success
@@ -366,6 +368,13 @@ export component FirmwarePage inherits VerticalBox {
                     spacing: 8px;
                     height: 36px;
 
+                    CheckBox {
+                        text: "强制升级";
+                        checked <=> root.firmware-force;
+                        enabled: root.firmware-phase != 2;
+                        vertical-stretch: 0;
+                        toggled => { root.force-toggled(self.checked); }
+                    }
                     FwActionButton {
                         text: "BLE 升级";
                         outline: true;

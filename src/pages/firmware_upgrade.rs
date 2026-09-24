@@ -32,6 +32,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     });
 
     let ui_weak = ui.as_weak();
+    let ctx_force = ctx.clone();
+    ui.on_firmware_force_toggled(move |on| {
+        let ui = ui_weak.unwrap();
+        ctx_force.firmware.set_force(on);
+        refresh(&ui, &ctx_force);
+    });
+
+    let ui_weak = ui.as_weak();
     let ctx_start = ctx.clone();
     ui.on_firmware_start(move || {
         let ui = ui_weak.unwrap();

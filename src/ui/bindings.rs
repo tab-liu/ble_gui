@@ -675,6 +675,9 @@ pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
     ui.set_firmware_fail_reason(snap.fail_reason.clone().into());
     ui.set_firmware_can_start(snap.can_start);
     ui.set_firmware_can_stop(snap.can_stop);
+    if ui.get_firmware_force() != snap.force {
+        ui.set_firmware_force(snap.force);
+    }
 }
 
 pub fn close_dialog(ui: &MainWindow) {

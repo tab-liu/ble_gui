@@ -120,6 +120,7 @@ export component MainWindow inherits Window {
     in-out property <string> firmware-fail-reason;
     in-out property <bool> firmware-can-start;
     in-out property <bool> firmware-can-stop;
+    in-out property <bool> firmware-force;
 
     in-out property <int> current-page: 0;
     in-out property <int> dialog-kind: 0;
@@ -206,6 +207,7 @@ export component MainWindow inherits Window {
     callback firmware-start-http();
     callback firmware-stop();
     callback firmware-ota-version-edited(string);
+    callback firmware-force-toggled(bool);
     callback dialog-confirm();
     callback dialog-cancel();
     callback toggle-theme-quick();
@@ -445,12 +447,14 @@ export component MainWindow inherits Window {
                             firmware-fail-reason: root.firmware-fail-reason;
                             firmware-can-start: root.firmware-can-start;
                             firmware-can-stop: root.firmware-can-stop;
+                            firmware-force <=> root.firmware-force;
                             pick-file => { root.firmware-pick-file(); }
                             clear-file => { root.firmware-clear-file(); }
                             start-upgrade => { root.firmware-start(); }
                             start-http-upgrade => { root.firmware-start-http(); }
                             stop-upgrade => { root.firmware-stop(); }
                             ota-version-edited(text) => { root.firmware-ota-version-edited(text); }
+                            force-toggled(on) => { root.firmware-force-toggled(on); }
                             copy-text(text) => { root.copy-text(text); }
                         }
 

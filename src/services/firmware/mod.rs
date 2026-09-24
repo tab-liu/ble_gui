@@ -21,7 +21,10 @@ pub mod header;
 pub mod http_cmd;
 pub mod lan;
 
-use header::{classify, part_number_wire, FirmwareInfo, FIRMWARE_MAX_BYTES};
+use header::{
+    classify, part_number_wire, part_revision, same_part_family, wire_version_for_device,
+    FirmwareInfo, FIRMWARE_MAX_BYTES,
+};
 use http_cmd::{check_http_lan, format_not_same_lan, HttpNetCheck};
 
 pub const IOT_DEFAULT_OTA_VERSION: u32 = 100600199;
@@ -107,6 +110,8 @@ pub struct HttpOtaJob {
     pub sn: String,
     pub local_ip: Ipv4Addr,
     pub sta_ip: Ipv4Addr,
+    /// 对应 JSON `force`：跳过「新版本必须比当前高」的下载前判断。
+    pub force: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -134,6 +139,7 @@ pub struct FirmwareSnapshot {
     pub can_start: bool,
     pub can_stop: bool,
     pub part_mismatch: bool,
+    pub force: bool,
 }
 
 struct SelectedFile {
@@ -157,6 +163,8 @@ struct FirmwareInner {
     ota_version_text: String,
     /// 自动填入的料号可被后续设备信息覆盖；用户手改后不再覆盖。
     ota_version_auto: bool,
+    /// 下载前版本判断：false=默认 0，版本不够新则不开传。
+    force: bool,
     phase: i32,
     stage_text: String,
     result_text: String,
@@ -185,6 +193,7 @@ impl FirmwareService {
                 parse_error: None,
                 ota_version_text: String::new(),
                 ota_version_auto: true,
+                force: false,
                 phase: PHASE_IDLE,
                 stage_text: "等待选择固件".into(),
                 result_text: "—".into(),
@@ -299,6 +308,15 @@ impl FirmwareService {
         let mismatch = inner.selected.as_ref().and_then(|sel| {
             part_mismatch_message(sel.info.type_code, sel.info.version, &inner.device_software)
         });
+        let stale = inner.selected.as_ref().and_then(|sel| {
+            version_not_newer_message(
+                sel.info.type_code,
+                upgrade_compare_version(sel.info.version, &inner.ota_version_text),
+                &inner.device_software,
+                inner.device_iot_version,
+                inner.force,
+            )
+        });
         let status_text = if let Some(err) = &inner.parse_error {
             err.clone()
         } else if running || ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
@@ -306,6 +324,8 @@ impl FirmwareService {
                 .map(|g| g.status_text.clone())
                 .unwrap_or_default()
         } else if let Some(msg) = &mismatch {
+            msg.clone()
+        } else if let Some(msg) = &stale {
             msg.clone()
         } else {
             inner.status_text.clone()
@@ -358,13 +378,14 @@ impl FirmwareService {
             elapsed_text,
             result_text,
             fail_reason,
-            can_start: parse_ok && version_ok && device_connected && !running,
+            can_start: parse_ok && version_ok && device_connected && !running && stale.is_none(),
             can_stop: running,
-            part_mismatch: mismatch.is_some()
+            part_mismatch: (mismatch.is_some() || stale.is_some())
                 && inner.parse_error.is_none()
                 && !running
                 && ota_phase != PHASE_SUCCESS
                 && ota_phase != PHASE_FAILED,
+            force: inner.force,
         }
     }
 
@@ -437,10 +458,22 @@ impl FirmwareService {
                 return None;
             }
         }
+        if let Some(reason) = self.version_precheck_reason() {
+            self.fail_precheck(reason);
+            return None;
+        }
         let job = {
             let inner = self.inner.borrow();
             let sel = inner.selected.as_ref()?;
-            let version = parse_ota_version_text(&inner.ota_version_text).ok()?;
+            let mut version = parse_ota_version_text(&inner.ota_version_text).ok()?;
+            if let Some(dev) = matching_device_version(
+                sel.info.type_code,
+                upgrade_compare_version(sel.info.version, &inner.ota_version_text),
+                &inner.device_software,
+                inner.device_iot_version,
+            ) {
+                version = wire_version_for_device(version, dev);
+            }
             OtaJob {
                 firmware: sel.bytes.clone(),
                 firmware_type: sel.info.type_code,
@@ -528,6 +561,7 @@ impl FirmwareService {
             sn,
             local_ip,
             sta_ip: device_ip,
+            force: self.inner.borrow().force,
         })
     }
 
@@ -568,6 +602,25 @@ impl FirmwareService {
         inner.ota_version_text = text;
     }
 
+    pub fn set_force(&self, force: bool) {
+        if self.is_running() {
+            return;
+        }
+        self.inner.borrow_mut().force = force;
+    }
+
+    fn version_precheck_reason(&self) -> Option<String> {
+        let inner = self.inner.borrow();
+        let sel = inner.selected.as_ref()?;
+        version_not_newer_message(
+            sel.info.type_code,
+            upgrade_compare_version(sel.info.version, &inner.ota_version_text),
+            &inner.device_software,
+            inner.device_iot_version,
+            inner.force,
+        )
+    }
+
     /// 连接后 1100 / 11000 段读到的机型、SN、软件版本。
     /// IOT 文件在用户未手改料号时，用设备当前版本自动填 xx99。
     pub fn apply_device_info(
@@ -600,12 +653,13 @@ impl FirmwareService {
         if running {
             return;
         }
-        let iot_file = inner.selected.as_ref().is_some_and(|s| {
-            s.info.layout == header::HeaderLayout::IotRaw || s.info.version == 0
-        });
-        if iot_file && inner.ota_version_auto {
-            if let Some(v) = iot_version {
-                inner.ota_version_text = part_number_wire(v).to_string();
+        if inner.ota_version_auto {
+            if let Some(sel) = inner.selected.as_ref() {
+                inner.ota_version_text = auto_ota_version_text(
+                    &sel.info,
+                    inner.device_iot_version,
+                    &inner.device_software,
+                );
             }
         }
     }
@@ -616,7 +670,11 @@ impl FirmwareService {
             Ok(selected) => {
                 let mut inner = self.inner.borrow_mut();
                 inner.ota_version_auto = true;
-                inner.ota_version_text = auto_ota_version_text(&selected.info, inner.device_iot_version);
+                inner.ota_version_text = auto_ota_version_text(
+                    &selected.info,
+                    inner.device_iot_version,
+                    &inner.device_software,
+                );
                 inner.selected = Some(selected);
                 inner.parse_error = None;
                 inner.phase = PHASE_READY;
@@ -668,7 +726,19 @@ fn inspect_file(path: &Path) -> Result<SelectedFile, String> {
     })
 }
 
-fn auto_ota_version_text(info: &FirmwareInfo, device_iot: Option<u32>) -> String {
+fn auto_ota_version_text(
+    info: &FirmwareInfo,
+    device_iot: Option<u32>,
+    device_software: &[(u16, u32)],
+) -> String {
+    if let Some(dev) = matching_device_version(
+        info.type_code,
+        info.version,
+        device_software,
+        device_iot,
+    ) {
+        return part_number_wire(dev).to_string();
+    }
     if info.version != 0 {
         part_number_wire(info.version).to_string()
     } else if let Some(v) = device_iot {
@@ -678,7 +748,68 @@ fn auto_ota_version_text(info: &FirmwareInfo, device_iot: Option<u32>) -> String
     }
 }
 
-/// ARM / DSP / BMS：设备上报了同类（含 BOOT 对 BOOT）版本时，按 version/100 核对产品线。
+fn upgrade_compare_version(file_version: u32, ota_version_text: &str) -> u32 {
+    if file_version != 0 {
+        file_version
+    } else {
+        parse_ota_version_text(ota_version_text).unwrap_or(0)
+    }
+}
+
+fn matching_device_version(
+    file_type: u8,
+    file_version: u32,
+    device_software: &[(u16, u32)],
+    device_iot: Option<u32>,
+) -> Option<u32> {
+    if file_type == 0 {
+        return device_iot.or_else(|| {
+            device_software
+                .iter()
+                .find(|(type_code, _)| *type_code == 0)
+                .map(|(_, version)| *version)
+        });
+    }
+    if file_version == 0 {
+        return None;
+    }
+    let file_boot = header::software_is_boot(u16::from(file_type), file_version);
+    device_software
+        .iter()
+        .filter(|(type_code, version)| {
+            header::software_base_type(*type_code) == file_type
+                && header::software_is_boot(*type_code, *version) == file_boot
+                && same_part_family(*version, file_version)
+        })
+        .map(|(_, version)| *version)
+        .next()
+}
+
+/// 与设备 HTTP OTA 下载前判断同语义：同一产品线内，未强制则要求版本更高。
+/// 新料号（≥1000000）按 `/10000` 和 `%10000`；旧料号按 `/100` 和 `%100`。
+fn version_not_newer_message(
+    file_type: u8,
+    new_version: u32,
+    device_software: &[(u16, u32)],
+    device_iot: Option<u32>,
+    force: bool,
+) -> Option<String> {
+    if new_version == 0 {
+        return None;
+    }
+    let old_version = matching_device_version(file_type, new_version, device_software, device_iot)?;
+    if !same_part_family(new_version, old_version) {
+        return None;
+    }
+    if force || part_revision(new_version) > part_revision(old_version) {
+        return None;
+    }
+    Some(format!(
+        "当前版本 {old_version} 不低于固件 {new_version}，未勾选强制升级。同版本或降级请先勾选「强制升级」。"
+    ))
+}
+
+/// ARM / DSP / BMS：设备上报了同类（含 BOOT 对 BOOT）版本时，按新/旧料号规则核对产品线。
 fn part_mismatch_message(
     file_type: u8,
     file_version: u32,
@@ -699,8 +830,7 @@ fn part_mismatch_message(
     if peers.is_empty() {
         return None;
     }
-    let file_family = file_version / 100;
-    if peers.iter().any(|version| *version / 100 == file_family) {
+    if peers.iter().any(|version| same_part_family(*version, file_version)) {
         return None;
     }
     let name = header::format_software_name(u16::from(file_type), file_version);
@@ -799,11 +929,18 @@ mod tests {
             esp_version: String::new(),
             parse_source: String::new(),
         };
-        assert_eq!(auto_ota_version_text(&info, None), "100650199");
+        assert_eq!(auto_ota_version_text(&info, None, &[]), "100650199");
         info.version = 0;
         info.layout = header::HeaderLayout::IotRaw;
-        assert_eq!(auto_ota_version_text(&info, Some(100600108)), "100600199");
-        assert_eq!(auto_ota_version_text(&info, None), IOT_DEFAULT_OTA_VERSION.to_string());
+        assert_eq!(auto_ota_version_text(&info, Some(100600108), &[]), "100600199");
+        assert_eq!(auto_ota_version_text(&info, None, &[]), IOT_DEFAULT_OTA_VERSION.to_string());
+        info.layout = header::HeaderLayout::Packed8;
+        info.type_code = 2;
+        info.version = 100620311;
+        assert_eq!(
+            auto_ota_version_text(&info, None, &[(2, 100620205)]),
+            "100620299"
+        );
     }
 
     #[test]
@@ -820,5 +957,23 @@ mod tests {
         assert!(part_mismatch_message(3, 8026103, &[(3, 8026108)]).is_none());
         assert!(part_mismatch_message(3, 8026103, &[(3, 9026108)]).is_some());
         assert!(part_mismatch_message(0, 100600108, &[(0, 200600108)]).is_none());
+        assert!(part_mismatch_message(2, 100620311, &[(2, 100620205)]).is_none());
+        assert!(part_mismatch_message(2, 100620311, &[(2, 100630205)]).is_some());
+    }
+
+    #[test]
+    fn force_skips_not_newer_precheck() {
+        let device = [(1u16, 100650108u32)];
+        let msg = version_not_newer_message(1, 100650103, &device, None, false).unwrap();
+        assert!(msg.contains("强制升级"));
+        assert!(version_not_newer_message(1, 100650103, &device, None, true).is_none());
+        assert!(version_not_newer_message(1, 100650108, &device, None, false).is_some());
+        assert!(version_not_newer_message(1, 100650109, &device, None, false).is_none());
+        assert!(version_not_newer_message(1, 100650103, &[], None, false).is_none());
+        assert!(version_not_newer_message(0, 100600108, &[], Some(100600108), false).is_some());
+        assert!(version_not_newer_message(0, 100600109, &[], Some(100600108), false).is_none());
+        assert!(version_not_newer_message(2, 100620311, &[(2, 100620205)], None, false).is_none());
+        assert!(version_not_newer_message(2, 100620205, &[(2, 100620311)], None, false).is_some());
+        assert!(version_not_newer_message(2, 100620205, &[(2, 100620311)], None, true).is_none());
     }
 }

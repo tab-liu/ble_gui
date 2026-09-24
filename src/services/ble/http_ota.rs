@@ -139,6 +139,7 @@ pub async fn run_http_ota(
         &url,
         &job.md5,
         "local-http-ota",
+        job.force,
     );
     let frame = match build_http_ota_frame(&json) {
         Ok(f) => f,

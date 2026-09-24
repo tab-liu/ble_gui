@@ -128,6 +128,39 @@ pub fn part_number_wire(version: u32) -> u32 {
     version / 100 * 100 + 99
 }
 
+/// 新料号 ≥ 1000000：前缀 `/10000` 为产品，末四位为版本。旧料号 `/100` + 末两位。
+pub fn is_new_part_number(version: u32) -> bool {
+    version >= 1_000_000
+}
+
+pub fn same_part_family(a: u32, b: u32) -> bool {
+    if is_new_part_number(a) && is_new_part_number(b) {
+        a / 10_000 == b / 10_000
+    } else {
+        a / 100 == b / 100
+    }
+}
+
+pub fn part_revision(version: u32) -> u32 {
+    if is_new_part_number(version) {
+        version % 10_000
+    } else {
+        version % 100
+    }
+}
+
+/// 设备 BLE/HTTP 开传前仍用 `/100` 找槽位。新料号末四位进位会改变 `/100`，
+/// 此时改下发设备当前料号的 xx99，文件内容仍是新固件。
+pub fn wire_version_for_device(requested: u32, device_version: u32) -> u32 {
+    if requested / 100 == device_version / 100 {
+        part_number_wire(requested)
+    } else if same_part_family(requested, device_version) {
+        part_number_wire(device_version)
+    } else {
+        part_number_wire(requested)
+    }
+}
+
 /// 按文件大小 + 开头字节分类。`data` 至少应覆盖头区（IOT 建议 ≥256 字节）。
 pub fn classify(file_size: u64, data: &[u8]) -> Result<FirmwareInfo, String> {
     if file_size == 0 {
@@ -479,6 +512,14 @@ mod tests {
         assert_eq!(format_software_name(1001, 100650103), "ARM-BOOT");
         assert_eq!(part_number_wire(100650103), 100650199);
         assert_eq!(part_number_wire(100650100), 100650199);
+        assert!(same_part_family(100620205, 100620311));
+        assert!(!same_part_family(100620205, 100630311));
+        assert_eq!(part_revision(100620205), 205);
+        assert_eq!(part_revision(100620311), 311);
+        assert_eq!(part_revision(802616), 16);
+        assert_eq!(wire_version_for_device(100620311, 100620205), 100620299);
+        assert_eq!(wire_version_for_device(100620399, 100620205), 100620299);
+        assert_eq!(wire_version_for_device(100650109, 100650108), 100650199);
     }
 
     #[test]
