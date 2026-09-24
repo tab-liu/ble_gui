@@ -13,7 +13,7 @@ pub fn list_local_ipv4() -> Vec<LocalIpv4> {
 
     let mut out = Vec::new();
     for iface in ifaces {
-        if iface.is_loopback() || !iface.is_up() {
+        if iface.is_loopback() || !iface.is_oper_up() {
             continue;
         }
         let if_addrs::IfAddr::V4(v4) = iface.addr else {
