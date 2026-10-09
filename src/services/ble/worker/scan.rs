@@ -91,7 +91,7 @@ async fn run_scan_loop(
 
     let mut name_resolve_pending: HashSet<String> = HashSet::new();
 
-    // 立即同步一次 btleplug 已缓存的外设（重复点扫描能显示，往往是因为触发了这类同步）。
+    // 只登记适配器里已有的句柄，不把上次扫描的缓存设备显示出来。
     sync_all_peripherals(
         &adapter,
         &state,
@@ -99,6 +99,7 @@ async fn run_scan_loop(
         &ui_refresh,
         &known,
         &mut name_resolve_pending,
+        false,
         true,
     )
     .await;
@@ -122,8 +123,17 @@ async fn run_scan_loop(
                     &ui_refresh,
                     &known,
                     &mut name_resolve_pending,
+                    false,
                     true,
                 ).await;
+                let pruned = state
+                    .lock()
+                    .expect("ble state lock")
+                    .prune_stale_scan_devices(SCAN_STALE_AFTER);
+                if pruned {
+                    update_scan_status_detail(&state);
+                    notify_ui_force(&ui_refresh, true);
+                }
             }
             maybe_event = events.next() => {
                 match maybe_event {
@@ -144,6 +154,7 @@ async fn run_scan_loop(
                                     &mut name_resolve_pending,
                                     false,
                                     true,
+                                    true,
                                 )
                                 .await
                                 {
@@ -161,6 +172,7 @@ async fn run_scan_loop(
                                     &known,
                                     &mut name_resolve_pending,
                                     force_target,
+                                    true,
                                     true,
                                 )
                                 .await
@@ -181,6 +193,7 @@ async fn run_scan_loop(
                                         &ui_refresh,
                                         &known,
                                         &mut name_resolve_pending,
+                                        true,
                                         true,
                                         true,
                                     )
@@ -212,6 +225,7 @@ async fn sync_all_peripherals(
     ui_refresh: &super::UiRefreshSlot,
     known: &KnownMap,
     name_resolve_pending: &mut HashSet<String>,
+    live: bool,
     require_scanning: bool,
 ) {
     let Ok(peripherals) = adapter.peripherals().await else {
@@ -229,6 +243,7 @@ async fn sync_all_peripherals(
             known,
             name_resolve_pending,
             false,
+            live,
             require_scanning,
         )
         .await
@@ -274,6 +289,7 @@ async fn ingest_peripheral(
     known: &KnownMap,
     name_resolve_pending: &mut HashSet<String>,
     force_target: bool,
+    live: bool,
     require_scanning: bool,
 ) -> bool {
     let Ok(peripheral) = find_peripheral_by_id(adapter, id).await else {
@@ -310,11 +326,11 @@ async fn ingest_peripheral(
         let before_len = inner.scan_devices.len();
         let gen_before = inner.scan_list_generation;
         let link_hint = to_scan_link_hint(adv_link_hint_from_properties(&props));
-        inner.upsert_advertisement(&name, &address, rssi as i32, is_target, link_hint);
+        inner.upsert_advertisement(&name, &address, rssi as i32, is_target, link_hint, live);
         inner.scan_list_generation > gen_before || inner.scan_devices.len() > before_len
     };
 
-    if name.is_empty() && name_resolve_pending.insert(address.clone()) {
+    if live && name.is_empty() && name_resolve_pending.insert(address.clone()) {
         let peripheral = peripheral.clone();
         let state = state.clone();
         let event_tx = event_tx.clone();
@@ -352,6 +368,7 @@ async fn resolve_device_name(
                 rssi as i32,
                 is_target_properties(&props),
                 hint,
+                false,
             );
         }
         update_scan_status_detail(&state);
@@ -391,7 +408,7 @@ async fn resolve_device_name(
                 return;
             }
             let hint = to_scan_link_hint(adv_link_hint_from_properties(&props));
-            inner.upsert_advertisement(&name, &address, rssi as i32, is_target, hint);
+            inner.upsert_advertisement(&name, &address, rssi as i32, is_target, hint, false);
         }
         update_scan_status_detail(&state);
         notify_ui_force(&ui_refresh, true);

@@ -274,6 +274,7 @@ pub async fn worker_main(
                     &known,
                     &mut name_resolve_pending,
                     false,
+                    false,
                 )
                 .await;
                 let count = state.lock().expect("ble state lock").scan_devices.len();

@@ -1,6 +1,8 @@
 //! 蓝牙 UI 状态（主线程读取，worker 写入）。
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// 扫描时从厂商广播推断的占用提示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -59,6 +61,8 @@ pub struct BleInner {
     pub device_address: String,
     pub rssi: i32,
     pub scan_devices: Vec<BleScanEntry>,
+    /// 本次扫描里最近一次真正收到广播的时刻。适配器缓存里的旧设备没有这项。
+    scan_seen_at: HashMap<String, Instant>,
     pub scan_list_generation: u64,
     pub status_detail: String,
     pub encryption_ready: bool,
@@ -72,6 +76,7 @@ impl Default for BleInner {
             device_address: String::new(),
             rssi: 0,
             scan_devices: Vec::new(),
+            scan_seen_at: HashMap::new(),
             scan_list_generation: 0,
             status_detail: String::new(),
             encryption_ready: false,
@@ -80,6 +85,13 @@ impl Default for BleInner {
 }
 
 impl BleInner {
+    pub fn clear_scan_results(&mut self) {
+        self.scan_devices.clear();
+        self.scan_seen_at.clear();
+    }
+
+    /// `live` 为真才表示这次扫描刚收到广播。缓存里的旧外设传 `false`：
+    /// 不新增、不刷新“仍在附近”的时间，只补已在列表中的设备名。
     pub fn upsert_advertisement(
         &mut self,
         name: &str,
@@ -87,44 +99,77 @@ impl BleInner {
         rssi: i32,
         is_target: bool,
         link_hint: ScanLinkHint,
+        live: bool,
     ) {
         if !is_target {
             return;
         }
         let name = name.trim();
-        if let Some(existing) = self
+        let existing_idx = self
             .scan_devices
-            .iter_mut()
-            .find(|d| crate::services::ble_favorites::addresses_equal(&d.address, address))
-        {
-            let mut changed = existing.rssi != rssi || existing.link_hint != link_hint;
-            existing.rssi = rssi;
-            existing.link_hint = link_hint;
-            if is_target {
-                existing.is_target = true;
+            .iter()
+            .position(|d| crate::services::ble_favorites::addresses_equal(&d.address, address));
+        if let Some(idx) = existing_idx {
+            let mut changed = false;
+            if live {
+                changed = self.scan_devices[idx].rssi != rssi
+                    || self.scan_devices[idx].link_hint != link_hint;
+                self.scan_devices[idx].rssi = rssi;
+                self.scan_devices[idx].link_hint = link_hint;
+                self.scan_devices[idx].is_target = true;
+                let key = self.scan_devices[idx].address.clone();
+                self.scan_seen_at.insert(key, Instant::now());
             }
-            if !name.is_empty() && existing.name != name {
-                existing.name = name.to_string();
+            if !name.is_empty() && self.scan_devices[idx].name != name {
+                self.scan_devices[idx].name = name.to_string();
                 changed = true;
             }
             if changed {
                 self.scan_list_generation += 1;
             }
-        } else {
+        } else if live {
             let display_name = if !name.is_empty() {
                 name.to_string()
             } else {
                 placeholder_name(address)
             };
+            let stored = address.to_string();
+            self.scan_seen_at.insert(stored.clone(), Instant::now());
             self.scan_devices.push(BleScanEntry {
                 name: display_name,
-                address: address.to_string(),
+                address: stored,
                 rssi,
                 is_target,
                 link_hint,
             });
             self.scan_list_generation += 1;
         }
+    }
+
+    /// 去掉本次扫描里一段时间没有新广播的设备。
+    pub fn prune_stale_scan_devices(&mut self, max_age: Duration) -> bool {
+        let now = Instant::now();
+        let stale: Vec<String> = self
+            .scan_devices
+            .iter()
+            .filter(|d| {
+                self.scan_seen_at
+                    .get(&d.address)
+                    .map(|seen| now.duration_since(*seen) > max_age)
+                    .unwrap_or(true)
+            })
+            .map(|d| d.address.clone())
+            .collect();
+        if stale.is_empty() {
+            return false;
+        }
+        self.scan_devices
+            .retain(|d| !stale.iter().any(|address| address == &d.address));
+        for address in &stale {
+            self.scan_seen_at.remove(address);
+        }
+        self.scan_list_generation += 1;
+        true
     }
 
     pub fn snapshot(&self) -> BleSnapshot {
@@ -207,11 +252,28 @@ mod tests {
     #[test]
     fn upsert_merges_same_mac_with_different_separators() {
         let mut inner = BleInner::default();
-        inner.upsert_advertisement("A", "aa-bb-cc-dd-ee-ff", -60, true, ScanLinkHint::Available);
-        inner.upsert_advertisement("B", "AA:BB:CC:DD:EE:FF", -55, true, ScanLinkHint::Available);
+        inner.upsert_advertisement("A", "aa-bb-cc-dd-ee-ff", -60, true, ScanLinkHint::Available, true);
+        inner.upsert_advertisement("B", "AA:BB:CC:DD:EE:FF", -55, true, ScanLinkHint::Available, true);
         assert_eq!(inner.scan_devices.len(), 1);
         assert_eq!(inner.scan_devices[0].name, "B");
         assert_eq!(inner.scan_devices[0].rssi, -55);
+    }
+
+    #[test]
+    fn cached_advertisement_does_not_add_or_refresh_presence() {
+        let mut inner = BleInner::default();
+        inner.upsert_advertisement("A", "aa:bb", -50, true, ScanLinkHint::Available, false);
+        assert!(inner.scan_devices.is_empty());
+
+        inner.upsert_advertisement("A", "aa:bb", -50, true, ScanLinkHint::Available, true);
+        let seen = inner.scan_seen_at.get("aa:bb").copied().unwrap();
+        let backdated = seen.checked_sub(Duration::from_secs(30)).unwrap_or(seen);
+        inner.scan_seen_at.insert("aa:bb".into(), backdated);
+        inner.upsert_advertisement("A2", "aa:bb", -20, true, ScanLinkHint::Available, false);
+        assert_eq!(inner.scan_devices[0].rssi, -50);
+        assert_eq!(inner.scan_devices[0].name, "A2");
+        assert!(inner.prune_stale_scan_devices(Duration::from_secs(8)));
+        assert!(inner.scan_devices.is_empty());
     }
 
     #[test]

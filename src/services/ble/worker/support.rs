@@ -417,7 +417,7 @@ fn apply_scanning_state(
         inner.device_address.clear();
         inner.rssi = 0;
         inner.encryption_ready = false;
-        inner.scan_devices.clear();
+        inner.clear_scan_results();
         inner.scan_list_generation += 1;
         inner.status_detail = detail.into();
     }
@@ -428,6 +428,8 @@ fn apply_scanning_state(
 const UI_REFRESH_INTERVAL_MS: u64 = 1000;
 /// 轮询 btleplug 已缓存外设的间隔（补充事件流未送达的广播）。
 const SCAN_SYNC_INTERVAL_MS: u64 = 1000;
+/// 这次扫描里超过该时间没有新广播，就从列表拿掉，收藏行随之变为不可选。
+const SCAN_STALE_AFTER: Duration = Duration::from_secs(8);
 /// 连接前句柄失效时，定向找回目标设备的超时。
 const REDISCOVER_TIMEOUT: Duration = Duration::from_secs(12);
 /// Windows 停扫描后 radio 尚未释放时，立刻 GetGattServices 常返回 Unreachable（Not connected）。
