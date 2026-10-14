@@ -1,6 +1,7 @@
 type KnownMap = Arc<Mutex<HashMap<String, PeripheralId>>>;
 
-/// IOT 升级成功后 Windows 可能仍报已连接；到期则按离线处理，不自动重连。
+/// 预留：若写入到期时间，链路轮询会把仍显示已连接的会话当成离线。
+/// IOT 升级成功不再走这条等待，而是主动断开。
 type SharedExpectDrop = Arc<Mutex<Option<Instant>>>;
 
 struct ActiveSession {
@@ -37,7 +38,6 @@ fn spawn_tracked(
 fn finish_ota_session(
     policy: &SharedPollPolicy,
     ota: &SharedOtaLive,
-    expect_drop: &SharedExpectDrop,
     ui: &super::UiRefreshSlot,
 ) {
     if let Ok(mut p) = policy.lock() {
@@ -51,10 +51,11 @@ fn finish_ota_session(
     if iot_ok {
         info!(
             target: "ble_gui::ota",
-            "IOT 升级成功，等待设备重启后刷新连接状态",
+            "IOT 升级成功，主动断开并重新扫描",
         );
-        if let Ok(mut slot) = expect_drop.lock() {
-            *slot = Some(Instant::now() + Duration::from_secs(2));
+        if let Ok(mut g) = ota.lock() {
+            g.request_disconnect = true;
+            g.rescan_after_disconnect = true;
         }
     }
     notify_ui_force(ui, true);
@@ -93,6 +94,46 @@ async fn end_session(active: ActiveSession) {
     }
 
     disconnect_peripheral(&peripheral).await;
+}
+
+fn take_rescan_after_disconnect(ota: &SharedOtaLive) -> bool {
+    let Ok(mut g) = ota.lock() else {
+        return false;
+    };
+    let requested = g.rescan_after_disconnect;
+    g.rescan_after_disconnect = false;
+    requested
+}
+
+/// IOT 升级成功断开后立刻开扫。返回 true 表示已经处理过这次请求。
+async fn start_scan_after_ota(
+    adapter: &Adapter,
+    state: &SharedBleState,
+    event_tx: &std::sync::mpsc::Sender<()>,
+    ui_refresh: &super::UiRefreshSlot,
+    known: &KnownMap,
+    scan_task: &mut Option<tokio::task::JoinHandle<()>>,
+    ota: &SharedOtaLive,
+) -> bool {
+    if !take_rescan_after_disconnect(ota) {
+        return false;
+    }
+    if let Some(reason) = radio_unavailable_reason(adapter).await {
+        enter_idle(adapter, state, ui_refresh, scan_task, reason).await;
+    } else {
+        info!(target: "ble_gui::worker", "升级后已断开，开始扫描");
+        restart_scan(
+            adapter,
+            state,
+            event_tx,
+            ui_refresh,
+            known,
+            scan_task,
+            "正在扫描附近蓝牙设备……",
+        )
+        .await;
+    }
+    true
 }
 
 fn take_ota_disconnect_request(ota: &SharedOtaLive) -> bool {

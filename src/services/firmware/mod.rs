@@ -53,7 +53,10 @@ pub struct OtaLive {
     /// 结束时冻结的耗时，避免成功/失败后继续走秒。
     pub elapsed_frozen: Option<Duration>,
     /// 停止升级时 ETX 未能让设备退出，由 worker 断开 GATT 以恢复 Wi-Fi。
+    /// IOT 升级成功后也会置位，用来主动拆掉即将重启的连接。
     pub request_disconnect: bool,
+    /// 主动断开完成后立刻重新扫描，不等设备自己掉线。
+    pub rescan_after_disconnect: bool,
 }
 
 impl Default for OtaLive {
@@ -72,6 +75,7 @@ impl Default for OtaLive {
             started_at: None,
             elapsed_frozen: None,
             request_disconnect: false,
+            rescan_after_disconnect: false,
         }
     }
 }
@@ -495,6 +499,7 @@ impl FirmwareService {
                 started_at: Some(Instant::now()),
                 elapsed_frozen: None,
                 request_disconnect: false,
+                rescan_after_disconnect: false,
             };
         }
         Some(job)

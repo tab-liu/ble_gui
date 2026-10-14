@@ -954,7 +954,7 @@ pub async fn run_ble_ota(
             ui,
             "升级成功：蓝牙传输完成，设备即将重启".to_string(),
         );
-        info!(target: "ble_gui::ota", "IOT 自升级完成，等待设备重启断链");
+        info!(target: "ble_gui::ota", "IOT 自升级完成，主动断开蓝牙并重新扫描");
         return;
     }
 

@@ -502,13 +502,12 @@ async fn connect_after_gatt(
                             let ota = ota_live_session.clone();
                             let ui = ui_refresh_for_notify.clone();
                             let policy = poll_policy_ota.clone();
-                            let expect_drop = expect_drop_notify.clone();
                             spawn_tracked(&in_flight_for_notify, async move {
                                 run_ble_ota(
                                     &protocol, &write_tx, &gate, &live, &ota, &ui, job,
                                 )
                                 .await;
-                                finish_ota_session(&policy, &ota, &expect_drop, &ui);
+                                finish_ota_session(&policy, &ota, &ui);
                             });
                         }
                         Some(SessionCommand::StartHttpOta { job }) => {
@@ -524,13 +523,12 @@ async fn connect_after_gatt(
                             let ota = ota_live_session.clone();
                             let ui = ui_refresh_for_notify.clone();
                             let policy = poll_policy_ota.clone();
-                            let expect_drop = expect_drop_notify.clone();
                             spawn_tracked(&in_flight_for_notify, async move {
                                 run_http_ota(
                                     &protocol, &write_tx, &gate, &live, &ota, &ui, job,
                                 )
                                 .await;
-                                finish_ota_session(&policy, &ota, &expect_drop, &ui);
+                                finish_ota_session(&policy, &ota, &ui);
                             });
                         }
                         None => {

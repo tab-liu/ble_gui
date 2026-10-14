@@ -207,12 +207,31 @@ pub async fn worker_main(
                 set_phase(&state, LinkPhase::Idle, "设备已断开");
                 notify_ui_force(&ui_refresh, true);
             }
+            let _ = take_ota_disconnect_request(&ota_live);
+            start_scan_after_ota(
+                &adapter,
+                &state,
+                &event_tx,
+                &ui_refresh,
+                &known,
+                &mut scan_task,
+                &ota_live,
+            )
+            .await;
             continue;
         }
 
         let ota_wants_drop = take_ota_disconnect_request(&ota_live);
         let maybe_cmd = if ota_wants_drop && session.is_some() {
-            info!(target: "ble_gui::worker", "OTA 停止后断开蓝牙，让设备恢复 Wi-Fi");
+            let rescan = ota_live
+                .lock()
+                .map(|g| g.rescan_after_disconnect)
+                .unwrap_or(false);
+            if rescan {
+                info!(target: "ble_gui::worker", "IOT 升级完成，主动断开并重新扫描");
+            } else {
+                info!(target: "ble_gui::worker", "OTA 停止后断开蓝牙，让设备恢复 Wi-Fi");
+            }
             Some(BleCommand::Disconnect)
         } else {
             tokio::select! {
@@ -511,14 +530,26 @@ pub async fn worker_main(
                 if let Some(active) = session.take() {
                     end_session(active).await;
                 }
-                enter_idle(
+                if !start_scan_after_ota(
                     &adapter,
                     &state,
+                    &event_tx,
                     &ui_refresh,
+                    &known,
                     &mut scan_task,
-                    "设备已断开",
+                    &ota_live,
                 )
-                .await;
+                .await
+                {
+                    enter_idle(
+                        &adapter,
+                        &state,
+                        &ui_refresh,
+                        &mut scan_task,
+                        "设备已断开",
+                    )
+                    .await;
+                }
             }
             BleCommand::WriteRegister { address, value } => {
                 if poll_policy.lock().map(|p| p.ota_busy).unwrap_or(false) {
