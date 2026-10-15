@@ -336,14 +336,10 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
         return;
     }
 
-    tabs.set_row_data(
-        active,
-        ModbusTab {
-            title: tab.title,
-            slave_id: tab.slave_id,
-            items: ModelRc::new(VecModel::from(items_vec)),
-        },
-    );
+    // 只改卡片上的结果，不整行替换标签，避免盖掉正在编辑的从站号和标题。
+    for (index, item) in items_vec.into_iter().enumerate() {
+        items_model.set_row_data(index, item);
+    }
     sync_active_query_items_from_tabs(ui, &tabs);
 }
 
@@ -384,14 +380,9 @@ fn reset_active_query_runtime(ui: &MainWindow, ctx: &AppContext) {
     if !changed {
         return;
     }
-    tabs.set_row_data(
-        active,
-        ModbusTab {
-            title: tab.title,
-            slave_id: tab.slave_id,
-            items: ModelRc::new(VecModel::from(items_vec)),
-        },
-    );
+    for (index, item) in items_vec.into_iter().enumerate() {
+        items_model.set_row_data(index, item);
+    }
     sync_active_query_items_from_tabs(ui, &tabs);
 }
 
@@ -496,17 +487,31 @@ fn sync_tab_strip_layout(ui: &MainWindow, ctx: &AppContext) {
 }
 
 fn sync_query_layout(ui: &MainWindow, ctx: &AppContext) {
-    let st = ctx.state.borrow();
-    let tab_index = ui.get_active_modbus_tab() as usize;
-    let count = st
-        .modbus_query
-        .tabs
-        .row_data(tab_index)
-        .map(|tab| tab.items.row_count())
-        .unwrap_or(0);
-    let width = st.modbus_query.grid_layout.width;
+    let (count, width) = {
+        let st = ctx.state.borrow();
+        let tab_index = ui.get_active_modbus_tab() as usize;
+        let count = st
+            .modbus_query
+            .tabs
+            .row_data(tab_index)
+            .map(|tab| tab.items.row_count())
+            .unwrap_or(0);
+        (count, st.modbus_query.grid_layout.width)
+    };
     let rows = compute_layout_rows(count, width);
     ui.set_modbus_query_layout_rows(ModelRc::new(VecModel::from(rows)));
+}
+
+fn set_query_hint(ui: &MainWindow, hint: &str) {
+    ui.set_query_edit_hint(hint.into());
+}
+
+fn parse_slave_id(text: &str) -> Result<u8, ()> {
+    let value: u16 = text.trim().parse().map_err(|_| ())?;
+    if value > 247 {
+        return Err(());
+    }
+    Ok(value as u8)
 }
 
 fn update_tab_items(ctx: &AppContext, ui: &MainWindow, tab_index: usize, items: Vec<ModbusQueryItem>) {
@@ -649,9 +654,9 @@ fn copy_queries_to_tab(ctx: &AppContext, ui: &MainWindow, target_tab: usize) {
     }
     let title = target.title;
     let slave_id = target.slave_id;
+    let tabs = st.modbus_query.tabs.clone();
     drop(st);
-    let st = ctx.state.borrow();
-    st.modbus_query.tabs.set_row_data(
+    tabs.set_row_data(
         target_tab,
         ModbusTab {
             title,
@@ -659,7 +664,6 @@ fn copy_queries_to_tab(ctx: &AppContext, ui: &MainWindow, target_tab: usize) {
             items: ModelRc::new(VecModel::from(items_vec)),
         },
     );
-    drop(st);
     close_dialog(ui);
     clear_selection(ctx, ui);
     sync_query_layout(ui, ctx);
@@ -758,7 +762,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     ui.on_add_modbus_tab_request({
         let ui_weak = ui.as_weak();
         move || {
-            open_dialog(&ui_weak.unwrap(), DIALOG_NEW_TAB);
+            let ui = ui_weak.unwrap();
+            set_query_hint(&ui, "");
+            open_dialog(&ui, DIALOG_NEW_TAB);
         }
     });
 
@@ -815,9 +821,15 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         clear_query_form(&ui);
         clear_selection(&ctx_rename, &ui);
-        let st = ctx_rename.state.borrow();
-        if let Some(tab) = st.modbus_query.tabs.row_data(index as usize) {
-            ui.set_editing_tab_title(tab.title);
+        let title = {
+            let st = ctx_rename.state.borrow();
+            st.modbus_query
+                .tabs
+                .row_data(index as usize)
+                .map(|tab| tab.title)
+        };
+        if let Some(title) = title {
+            ui.set_editing_tab_title(title);
             ui.set_renaming_tab_index(index);
             ui.set_active_modbus_tab(index);
         }
@@ -829,20 +841,18 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let ui = ui_weak.unwrap();
         let name = ui.get_editing_tab_title().trim().to_string();
         if name.is_empty() {
-            cancel_rename(&ui);
+            set_query_hint(&ui, "标签名称不能为空");
             return;
         }
         let idx = ui.get_renaming_tab_index() as usize;
-        cancel_rename(&ui);
-        let st = ctx_commit.state.borrow();
-        if idx >= st.modbus_query.tabs.row_count() {
+        let tabs = ctx_commit.state.borrow().modbus_query.tabs.clone();
+        let Some(tab) = tabs.row_data(idx) else {
+            set_query_hint(&ui, "当前标签不存在，无法改名");
             return;
-        }
-        let tab = st.modbus_query.tabs.row_data(idx).unwrap();
+        };
         let items = tab.items.clone();
         let slave_id = tab.slave_id;
-        drop(st);
-        ctx_commit.state.borrow().modbus_query.tabs.set_row_data(
+        tabs.set_row_data(
             idx,
             ModbusTab {
                 title: name.into(),
@@ -850,6 +860,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
                 items,
             },
         );
+        cancel_rename(&ui);
+        set_query_hint(&ui, "");
         persist_modbus_query(&ctx_commit, &ui);
         sync_tab_strip_layout(&ui, &ctx_commit);
     });
@@ -863,28 +875,29 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_slave = ctx.clone();
     ui.on_commit_tab_slave_id(move || {
         let ui = ui_weak.unwrap();
-        let slave_id = ui.get_active_tab_slave_id().trim().to_string();
-        if slave_id.is_empty() {
-            sync_active_tab_slave_id(&ui, &ctx_slave);
+        let text = ui.get_active_tab_slave_id().trim().to_string();
+        let Ok(slave_id) = parse_slave_id(&text) else {
+            set_query_hint(&ui, "从站号须为 0～247 的整数");
             return;
-        }
+        };
         let idx = ui.get_active_modbus_tab() as usize;
-        let st = ctx_slave.state.borrow();
-        if idx >= st.modbus_query.tabs.row_count() {
+        let tabs = ctx_slave.state.borrow().modbus_query.tabs.clone();
+        let Some(tab) = tabs.row_data(idx) else {
+            set_query_hint(&ui, "当前标签不存在，无法保存从站号");
             return;
-        }
-        let tab = st.modbus_query.tabs.row_data(idx).unwrap();
+        };
         let items = tab.items.clone();
         let title = tab.title;
-        drop(st);
-        ctx_slave.state.borrow().modbus_query.tabs.set_row_data(
+        tabs.set_row_data(
             idx,
             ModbusTab {
                 title,
-                slave_id: slave_id.into(),
+                slave_id: slave_id.to_string().into(),
                 items,
             },
         );
+        ui.set_active_tab_slave_id(slave_id.to_string().into());
+        set_query_hint(&ui, "");
         touch_poll_policy(&ui, &ctx_slave);
         persist_modbus_query(&ctx_slave, &ui);
     });
@@ -896,6 +909,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         cancel_rename(&ui);
         clear_selection(&ctx_panel, &ui);
         ctx_panel.state.borrow_mut().modbus_query.pending_query_tab = tab_index;
+        set_query_hint(&ui, "");
         ui.set_editing_query_index(-1);
         ui.set_query_form_name(SharedString::default());
         ui.set_query_form_register(SharedString::default());
@@ -915,6 +929,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let name = ui.get_query_form_name().trim().to_string();
         let register = ui.get_query_form_register().trim().to_string();
         if name.is_empty() || register.is_empty() {
+            set_query_hint(&ui, "请填写名称和寄存器后再添加");
             return;
         }
         let value_type_index = ui.get_query_form_value_type_index();
@@ -922,9 +937,9 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let scale = ui.get_query_form_scale().to_string();
         let tab_idx = ctx_add.state.borrow().modbus_query.pending_query_tab as usize;
         let edit_idx = ui.get_editing_query_index();
-        clear_query_form(&ui);
         let st = ctx_add.state.borrow();
         if tab_idx >= st.modbus_query.tabs.row_count() {
+            set_query_hint(&ui, "当前标签已变化，请重新点「添加查询」");
             return;
         }
         let tab = st.modbus_query.tabs.row_data(tab_idx).unwrap();
@@ -942,6 +957,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         if edit_idx >= 0 {
             let i = edit_idx as usize;
             if i >= items_vec.len() {
+                drop(st);
+                set_query_hint(&ui, "要编辑的查询项已不存在，请重新打开");
                 return;
             }
             items_vec[i] = item;
@@ -949,6 +966,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             items_vec.push(item);
         }
         drop(st);
+        clear_query_form(&ui);
+        set_query_hint(&ui, "");
         update_tab_items(&ctx_add, &ui, tab_idx, items_vec);
     });
 
@@ -1059,16 +1078,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         }
         let name = ui.get_dialog_name().trim().to_string();
         if name.is_empty() {
+            set_query_hint(&ui, "请填写标签名称");
             return;
         }
         close_dialog(&ui);
-        let st = ctx_confirm.state.borrow();
-        st.modbus_query.tabs.push(default_tab(
-            &name,
-            false,
-        ));
-        ui.set_active_modbus_tab(st.modbus_query.tabs.row_count() as i32 - 1);
-        drop(st);
+        set_query_hint(&ui, "");
+        let tabs = ctx_confirm.state.borrow().modbus_query.tabs.clone();
+        tabs.push(default_tab(&name, false));
+        ui.set_active_modbus_tab(tabs.row_count() as i32 - 1);
         clear_selection(&ctx_confirm, &ui);
         sync_query_layout(&ui, &ctx_confirm);
         sync_tab_strip_layout(&ui, &ctx_confirm);

@@ -135,6 +135,7 @@ export component MainWindow inherits Window {
     in-out property <int> editing-query-index: -1;
 
     in-out property <string> active-tab-slave-id: "0";
+    in-out property <string> query-edit-hint: "";
     in-out property <bool> has-selected-queries;
     in-out property <[bool]> query-selection-states;
     in-out property <[string]> dialog-tab-options;
@@ -372,6 +373,7 @@ export component MainWindow inherits Window {
                             query-form-scale <=> root.query-form-scale;
                             editing-query-index: root.editing-query-index;
                             active-tab-slave-id <=> root.active-tab-slave-id;
+                            query-edit-hint: root.query-edit-hint;
                             has-selected-queries: root.has-selected-queries;
                             query-selection-states: root.query-selection-states;
                             renaming-tab-index: root.renaming-tab-index;
@@ -527,6 +529,7 @@ export component MainWindow inherits Window {
             height: 100%;
             dialog-kind: root.dialog-kind;
             dialog-name <=> root.dialog-name;
+            hint: root.query-edit-hint;
             dialog-tab-options: root.dialog-tab-options;
             confirm => {
                 root.dialog-confirm();

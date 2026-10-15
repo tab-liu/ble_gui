@@ -5,6 +5,7 @@ import { Theme } from "../theme.slint";
 export component NewTabDialog inherits Rectangle {
     in property <int> dialog-kind;
     in-out property <string> dialog-name;
+    in property <string> hint;
     in property <[string]> dialog-tab-options;
     callback confirm();
     callback cancel();
@@ -26,7 +27,7 @@ export component NewTabDialog inherits Rectangle {
 
         if root.dialog-kind == 1: Rectangle {
             width: 420px;
-            height: 200px;
+            height: root.hint == "" ? 200px : 228px;
             border-radius: 10px;
             background: Theme.bg-panel;
             border-width: 1px;
@@ -54,6 +55,13 @@ export component NewTabDialog inherits Rectangle {
                 LineEdit {
                     text <=> root.dialog-name;
                     placeholder-text: "例如：子节点 A";
+                }
+
+                if root.hint != "": Text {
+                    text: root.hint;
+                    color: Theme.warning;
+                    font-size: 12px;
+                    wrap: word-wrap;
                 }
 
                 Rectangle { vertical-stretch: 1; }

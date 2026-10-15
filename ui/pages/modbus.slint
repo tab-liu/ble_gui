@@ -27,6 +27,7 @@ export component ModbusPage inherits VerticalLayout {
     in-out property <string> query-form-scale;
     in property <int> editing-query-index;
     in-out property <string> active-tab-slave-id;
+    in property <string> query-edit-hint;
     in property <int> renaming-tab-index;
     in-out property <string> editing-tab-title;
 
@@ -116,14 +117,41 @@ export component ModbusPage inherits VerticalLayout {
                         }
                     }
 
-                    if root.editing-slave-id: LineEdit {
-                        width: 80px;
-                        text <=> root.active-tab-slave-id;
-                        placeholder-text: "0";
-                        accepted => {
-                            root.commit-tab-slave-id();
-                            root.editing-slave-id = false;
+                    if root.editing-slave-id: slave-edit := FocusScope {
+                        property <bool> armed: false;
+
+                        edit := LineEdit {
+                            width: 80px;
+                            text <=> root.active-tab-slave-id;
+                            placeholder-text: "0";
+                            accepted => {
+                                root.commit-tab-slave-id();
+                                if (root.query-edit-hint == "") {
+                                    root.editing-slave-id = false;
+                                }
+                            }
+                            changed has-focus => {
+                                if (self.has-focus) {
+                                    parent.armed = true;
+                                } else if (parent.armed) {
+                                    root.commit-tab-slave-id();
+                                    if (root.query-edit-hint == "") {
+                                        root.editing-slave-id = false;
+                                    }
+                                }
+                            }
                         }
+
+                        init => {
+                            edit.focus();
+                        }
+                    }
+
+                    if root.query-edit-hint != "": Text {
+                        text: root.query-edit-hint;
+                        color: Theme.warning;
+                        font-size: 12px;
+                        vertical-alignment: center;
                     }
                 }
 
@@ -317,6 +345,13 @@ export component ModbusPage inherits VerticalLayout {
                                 primary: true;
                                 clicked => { root.confirm-add-query(); }
                             }
+                        }
+
+                        if root.query-edit-hint != "": Text {
+                            text: root.query-edit-hint;
+                            color: Theme.warning;
+                            font-size: 12px;
+                            wrap: word-wrap;
                         }
                     }
                 }

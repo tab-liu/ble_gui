@@ -602,14 +602,13 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             return;
         }
         let title = ui.get_editing_group_title().to_string();
-        let st = ctx_rename.state.borrow();
-        if let Some(mut g) = st.device_config.groups.row_data(idx as usize) {
+        let groups = ctx_rename.state.borrow().device_config.groups.clone();
+        if let Some(mut g) = groups.row_data(idx as usize) {
             if !title.trim().is_empty() {
                 g.title = title.trim().into();
-                st.device_config.groups.set_row_data(idx as usize, g);
+                groups.set_row_data(idx as usize, g);
             }
         }
-        drop(st);
         ui.set_renaming_config_group_index(-1);
         sync_tab_strip_layout(&ui, &ctx_rename);
         persist_device_config(&ctx_rename, &ui);
@@ -624,12 +623,11 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             return;
         }
         let slave = ui.get_active_group_slave_id();
-        let st = ctx_slave.state.borrow();
-        if let Some(mut g) = st.device_config.groups.row_data(idx) {
+        let groups = ctx_slave.state.borrow().device_config.groups.clone();
+        if let Some(mut g) = groups.row_data(idx) {
             g.slave_id = slave;
-            st.device_config.groups.set_row_data(idx, g);
+            groups.set_row_data(idx, g);
         }
-        drop(st);
         touch_poll_policy(&ui, &ctx_slave);
         persist_device_config(&ctx_slave, &ui);
     });

@@ -42,14 +42,29 @@ export component ModbusTabItem inherits Rectangle {
         }
     }
 
-    if root.renaming: HorizontalBox {
-        padding: 2px;
+    property <bool> rename-armed: false;
 
-        LineEdit {
-            text <=> root.edit-title;
-            accepted => {
-                root.commit-rename();
+    if root.renaming: rename-edit := FocusScope {
+        HorizontalBox {
+            padding: 2px;
+
+            edit := LineEdit {
+                text <=> root.edit-title;
+                accepted => {
+                    root.commit-rename();
+                }
+                changed has-focus => {
+                    if (self.has-focus) {
+                        root.rename-armed = true;
+                    } else if (root.rename-armed) {
+                        root.commit-rename();
+                    }
+                }
             }
+        }
+
+        init => {
+            edit.focus();
         }
     }
 }
