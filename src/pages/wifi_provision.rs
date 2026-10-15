@@ -8,8 +8,8 @@ use log::warn;
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::services::ble::modbus::{
-    encode_write_value, sta_enable_word, wifi_auth_for_password, QueryValueType,
-    RegisterFieldPatch, BUILTIN_CONFIG_SLAVE_ID, REG_WIFI_ON_OFF, REG_WIFI_STA_AUTH,
+    encode_write_value, sta_enable_word, QueryValueType, RegisterFieldPatch,
+    BUILTIN_CONFIG_SLAVE_ID, REG_WIFI_ON_OFF,
     REG_WIFI_STA_ENABLE, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID,
     REG_WIFI_STA_SSID_COUNT, WIFI_PASSWORD_MAX_BYTES, WIFI_SSID_MAX_BYTES,
 };
@@ -228,7 +228,6 @@ fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
         return;
     }
 
-    let auth = wifi_auth_for_password(&password);
     let ssid_regs = match encode_write_value(&ssid, QueryValueType::String, REG_WIFI_STA_SSID_COUNT)
     {
         Ok(v) => v,
@@ -249,13 +248,6 @@ fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
         }
     };
 
-    ctx.ble.write_holding(
-        BUILTIN_CONFIG_SLAVE_ID,
-        REG_WIFI_STA_AUTH,
-        vec![auth],
-        None,
-        None,
-    );
     ctx.ble.write_holding(
         BUILTIN_CONFIG_SLAVE_ID,
         REG_WIFI_STA_PASSWORD,

@@ -45,9 +45,9 @@ pub use query::{
 pub use wifi_provision::{
     disconnect_reason_text, is_wifi_poll_index, parse_disconnect_reason, parse_link_status,
     parse_link_status_regs, parse_sta_ipv4, parse_sta_ipv4_regs, parse_sta_rssi, rssi_quality_text,
-    sta_enable_word, wifi_auth_for_password, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT,
+    sta_enable_word, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT,
     REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_STA_RSSI, REG_WIFI_DISCONNECT,
-    REG_WIFI_ON_OFF, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_AUTH,
+    REG_WIFI_ON_OFF, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT,
     REG_WIFI_STA_ENABLE, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID,
     REG_WIFI_STA_SSID_COUNT, WIFI_PASSWORD_MAX_BYTES, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK,
     WIFI_POLL_SSID_NOW, WIFI_POLL_STA_IP, WIFI_SSID_MAX_BYTES,

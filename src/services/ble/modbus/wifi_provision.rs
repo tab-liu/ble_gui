@@ -1,9 +1,8 @@
 //! 设备 WiFi 配网寄存器与状态解析。
 //!
-//! 写入 `12001` 认证 / `12002` SSID / `12018` 密码；轮询 `11018` 链路与 `11108` 当前 SSID。
+//! 写入 `12002` SSID / `12018` 密码 / `12050` 使能；轮询 `11018` 链路与 `11108` 当前 SSID。
+//! 不写 `12001` 认证级别，由设备按密码自行选择。
 
-/// `wifi_sta_auth`（ESP `WIFI_AUTH_*`）。
-pub const REG_WIFI_STA_AUTH: u16 = 12001;
 /// `wifi_sta_ssid` 32 字节。
 pub const REG_WIFI_STA_SSID: u16 = 12002;
 pub const REG_WIFI_STA_SSID_COUNT: u16 = 16;
@@ -33,9 +32,6 @@ pub const REG_STA_RSSI: u16 = 11026;
 /// `link_status`～`sta_rssi`：11018～11026，共 9 个寄存器。
 pub const REG_LINK_STATUS_BLOCK_COUNT: u16 = 9;
 
-pub const WIFI_AUTH_OPEN: u16 = 0;
-pub const WIFI_AUTH_WPA_WPA2_PSK: u16 = 4;
-
 /// 不与 [`super::BUILTIN_SETTINGS`] 下标冲突的配网轮询项。
 pub const WIFI_POLL_LINK: usize = 1000;
 pub const WIFI_POLL_SSID_NOW: usize = 1001;
@@ -50,14 +46,6 @@ pub fn is_wifi_poll_index(item_index: usize) -> bool {
         item_index,
         WIFI_POLL_LINK | WIFI_POLL_SSID_NOW | WIFI_POLL_DISCONNECT | WIFI_POLL_STA_IP
     )
-}
-
-pub fn wifi_auth_for_password(password: &str) -> u16 {
-    if password.is_empty() {
-        WIFI_AUTH_OPEN
-    } else {
-        WIFI_AUTH_WPA_WPA2_PSK
-    }
 }
 
 pub fn sta_enable_word(password: &str) -> u16 {
