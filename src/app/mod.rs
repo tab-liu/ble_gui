@@ -31,6 +31,7 @@ use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_external_devic
 /// 创建并运行主窗口（阻塞到退出）。
 pub fn run() -> Result<(), slint::PlatformError> {
     let ui = MainWindow::new()?;
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     ui.set_window_icon(crate::ui::icon::load_window_icon());
     let ctx = AppContext::new();
 

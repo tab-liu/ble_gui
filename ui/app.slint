@@ -46,6 +46,7 @@ export {
 
 // dialog-kind: 0=关闭, 1=新建标签
 export component MainWindow inherits Window {
+    in property <string> app-version;
     in-out property <bool> device-connected;
     in-out property <string> ble-status-text;
     in-out property <string> ble-device-name;
@@ -235,7 +236,7 @@ export component MainWindow inherits Window {
     callback wifi-select-saved(int);
     callback wifi-remove-saved(int);
 
-    title: "BLE Modbus 工具";
+    title: "BLE Modbus 工具 " + root.app-version;
     // 由 Rust 写入编译期从 app.ico 解出的像素；勿用 @image-url 嵌独立 PNG。
     in property <image> window-icon;
     icon: window-icon;
@@ -257,6 +258,7 @@ export component MainWindow inherits Window {
             spacing: 0px;
 
             BleStatusBar {
+            app-version: root.app-version;
             connected: root.device-connected;
             scanning: root.scanning;
             connecting: root.ble-connecting;
