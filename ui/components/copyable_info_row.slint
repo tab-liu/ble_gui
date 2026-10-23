@@ -13,6 +13,19 @@ export global CopyFmt {
         }
         return ty + "  " + sn;
     }
+
+    public pure function type-sn-joined(ty: string, sn: string) -> string {
+        if (ty == "" || ty == "—") && (sn == "" || sn == "—") {
+            return "—";
+        }
+        if sn == "" || sn == "—" {
+            return ty;
+        }
+        if ty == "" || ty == "—" {
+            return sn;
+        }
+        return ty + sn;
+    }
 }
 
 export component FieldLabel inherits Text {

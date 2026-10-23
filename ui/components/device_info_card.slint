@@ -43,8 +43,8 @@ export component DeviceInfoCard inherits Rectangle {
     in property <string> sta-ip;
     callback copy-text(string);
 
-    property <string> device-ident: CopyFmt.type-sn(root.device-type, root.device-sn);
-    property <string> iot-ident: CopyFmt.type-sn(root.iot-type, root.iot-sn);
+    property <string> device-ident: CopyFmt.type-sn-joined(root.device-type, root.device-sn);
+    property <string> iot-ident: CopyFmt.type-sn-joined(root.iot-type, root.iot-sn);
     property <string> password-display: !root.identity-ready ? "—"
         : (root.wifi-password == "" ? "（空）" : root.wifi-password);
 
