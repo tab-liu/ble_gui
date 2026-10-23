@@ -139,7 +139,7 @@ pub struct ModbusLive {
     pub modbus_online: bool,
     pub read_mode: ModbusReadMode,
     pub capabilities_probed: bool,
-    /// 连接后读一次 1100 段得到的版本摘要，周期轮询不再刷新。
+    /// 1100 段版本已读到。TLV 主页和功率在同一次组合读里带回。
     pub device_info_loaded: bool,
     pub device_type: String,
     pub device_sn: String,
@@ -147,7 +147,7 @@ pub struct ModbusLive {
     pub iot_software_version: Option<u32>,
     /// 1100 段软件类型与版本（含 IOT 合并后的 11000 料号）。
     pub device_software: Vec<(u16, u32)>,
-    /// 连接后读一次的身份属性（不进功率轮询）。
+    /// 主页属性（整机 / IoT / 安全码 / MAC）已读到。TLV 时和功率同一次带回。
     pub identity_loaded: bool,
     pub iot_type: String,
     pub iot_sn: String,
@@ -158,6 +158,8 @@ pub struct ModbusLive {
     pub wifi_password: String,
     /// 主页状态轮询：链路 / 当前 SSID / IP / RSSI。
     pub link_status_valid: bool,
+    /// 含属性的主页组合读失败后，本连接不再重试，属性改走单独读取。
+    pub dashboard_tlv_split: bool,
     pub wifi_sta: bool,
     pub mqtt_ok: bool,
     pub ssid_now: String,

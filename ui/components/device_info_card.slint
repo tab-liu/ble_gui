@@ -22,7 +22,7 @@ component StatusChip inherits HorizontalLayout {
     }
 }
 
-/// 主页设备信息：属性连上读一次，状态随主页轮询。
+/// 主页设备信息：属性与状态随主页同一次查询。
 export component DeviceInfoCard inherits Rectangle {
     in property <bool> identity-ready;
     in property <string> device-type;

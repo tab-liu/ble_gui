@@ -1,6 +1,6 @@
 //! Modbus 传输原语：仪表板轮询、能力探测、保持寄存器读写。
 //!
-//! - 主页：SOC@102 + 功率@140～147 + 2011/2012 开关（标准读或 TLV）
+//! - 主页：功率、开关、状态和属性（整机 / IoT / 安全码 / 服务器 / MAC / 密码）同一次 TLV
 //! - 写：FC06/FC10；[`write_holding_registers`] 支持单 bit 或
 //!   [`super::modbus::RegisterFieldPatch`] 多位域 RMW
 //! - 前台「该轮询什么」由 [`super::poll_executor`] 按策略调用本模块
@@ -175,6 +175,7 @@ fn apply_probe_regs(live: &SharedModbusLive, regs: &[u16]) {
 }
 
 /// 连接会话内读一次机型 / SN / IoT 身份 / 服务器地址 / WiFi 密码。
+/// TLV 主页已把这些和功率放进同一次组合读；这里只在那次没拿齐时补读。
 /// 失败不阻塞主页功率数据，下一轮再试。
 pub async fn read_device_info_once(
     protocol: &Arc<Mutex<ProtocolSession>>,
@@ -183,7 +184,7 @@ pub async fn read_device_info_once(
 ) {
     {
         let inner = live.lock().expect("modbus live lock");
-        if inner.device_info_loaded {
+        if inner.device_info_loaded && inner.identity_loaded {
             return;
         }
     }
@@ -514,6 +515,28 @@ pub(crate) async fn modbus_tlv_read(
     }
 }
 
+/// 主页一次 TLV 要的寄存器：功率、开关、状态，以及属性区。
+/// 11018～11026 的链路状态落在 11000 段里，不再单独列一项。
+fn dashboard_page_tl_items(slave_id: u8) -> Vec<TlReadSpec> {
+    vec![
+        TlReadSpec::from_register(slave_id, REG_SOC, REG_SOC_COUNT),
+        TlReadSpec::from_register(slave_id, REG_POWER_START, REG_POWER_COUNT),
+        TlReadSpec::from_register(slave_id, REG_AC_OUTPUT, 2),
+        TlReadSpec::from_register(slave_id, REG_WHOLE_DEVICE_START, REG_WHOLE_DEVICE_COUNT),
+        TlReadSpec::from_register(slave_id, REG_IOT_INFO_START, REG_IOT_IDENTITY_COUNT),
+        TlReadSpec::from_register(slave_id, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT),
+        TlReadSpec::from_register(slave_id, IOT_CLOUD_DNS_REGISTER, IOT_CLOUD_DNS_REGISTER_COUNT),
+        TlReadSpec::from_register(slave_id, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT),
+        TlReadSpec::from_register(slave_id, REG_DEVICE_INFO_START, REG_DEVICE_INFO_COUNT),
+    ]
+}
+
+fn link_regs_in_iot(iot: &[u16]) -> Option<&[u16]> {
+    let start = (REG_LINK_STATUS - REG_IOT_INFO_START) as usize;
+    let end = start + REG_LINK_STATUS_BLOCK_COUNT as usize;
+    iot.get(start..end)
+}
+
 /// 执行一次仪表板轮询（SOC@102、功率@140～147、开关 2011/2012）。
 pub async fn poll_dashboard(
     protocol: &Arc<Mutex<ProtocolSession>>,
@@ -644,17 +667,57 @@ async fn poll_dashboard_tlv(
 ) -> bool {
     debug!(
         target: "ble_gui::poll",
-        "主页 TLV 轮询 slave_id={slave_id} SOC@{REG_SOC} 功率@{REG_POWER_START}×{REG_POWER_COUNT} 开关@2011",
+        "主页 TLV 轮询 slave_id={slave_id} SOC@{REG_SOC} 功率@{REG_POWER_START}×{REG_POWER_COUNT} 开关@2011 属性@110/11000/12067",
     );
 
-    let tl_items = [
+    let split = live
+        .lock()
+        .map(|inner| inner.dashboard_tlv_split)
+        .unwrap_or(false);
+    let tl_items = if split {
+        dashboard_status_tl_items(slave_id)
+    } else {
+        dashboard_page_tl_items(slave_id)
+    };
+
+    let results = match modbus_tlv_read(protocol, write_tx, &tl_items).await {
+        Ok(r) => r,
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
+        Err(err) if !split => {
+            warn!(
+                target: "ble_gui::poll",
+                "主页组合读失败，改为只读功率和状态: {err}",
+            );
+            if let Ok(mut inner) = live.lock() {
+                inner.dashboard_tlv_split = true;
+            }
+            return poll_dashboard_tlv_status(protocol, write_tx, live, slave_id).await;
+        }
+        Err(err) => {
+            warn!(target: "ble_gui::poll", "主页 TLV 读失败: {err}");
+            return false;
+        }
+    };
+    finish_dashboard_tlv(live, slave_id, &results, !split)
+}
+
+fn dashboard_status_tl_items(slave_id: u8) -> Vec<TlReadSpec> {
+    vec![
         TlReadSpec::from_register(slave_id, REG_SOC, REG_SOC_COUNT),
         TlReadSpec::from_register(slave_id, REG_POWER_START, REG_POWER_COUNT),
         TlReadSpec::from_register(slave_id, REG_AC_OUTPUT, 2),
         TlReadSpec::from_register(slave_id, REG_LINK_STATUS, REG_LINK_STATUS_BLOCK_COUNT),
         TlReadSpec::from_register(slave_id, REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT),
-    ];
+    ]
+}
 
+async fn poll_dashboard_tlv_status(
+    protocol: &Arc<Mutex<ProtocolSession>>,
+    write_tx: &tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
+    live: &SharedModbusLive,
+    slave_id: u8,
+) -> bool {
+    let tl_items = dashboard_status_tl_items(slave_id);
     let results = match modbus_tlv_read(protocol, write_tx, &tl_items).await {
         Ok(r) => r,
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
@@ -663,25 +726,33 @@ async fn poll_dashboard_tlv(
             return false;
         }
     };
+    finish_dashboard_tlv(live, slave_id, &results, false)
+}
 
-    let soc = match tlv_register_values(&results, slave_id, REG_SOC) {
+fn finish_dashboard_tlv(
+    live: &SharedModbusLive,
+    slave_id: u8,
+    results: &[super::modbus::TlvReadResult],
+    with_identity: bool,
+) -> bool {
+    let soc = match tlv_register_values(results, slave_id, REG_SOC) {
         Ok(regs) => *regs.first().unwrap_or(&0),
         Err(err) => {
             warn!(
                 target: "ble_gui::poll",
                 "TLV 缺少 SOC({REG_SOC}): {err}；已收到 [{}]",
-                describe_tlv_units(&results),
+                describe_tlv_units(results),
             );
             return false;
         }
     };
-    let power = match tlv_register_values(&results, slave_id, REG_POWER_START) {
+    let power = match tlv_register_values(results, slave_id, REG_POWER_START) {
         Ok(regs) => regs,
         Err(err) => {
             warn!(
                 target: "ble_gui::poll",
                 "TLV 缺少功率段({REG_POWER_START}): {err}；已收到 [{}]",
-                describe_tlv_units(&results),
+                describe_tlv_units(results),
             );
             return false;
         }
@@ -694,27 +765,22 @@ async fn poll_dashboard_tlv(
                 target: "ble_gui::poll",
                 "TLV 解析主页功率失败（需要 {REG_POWER_COUNT} 寄存器，实得 {}）；已收到 [{}]",
                 power.len(),
-                describe_tlv_units(&results),
+                describe_tlv_units(results),
             );
             return false;
         }
     };
 
-    if let Ok(states) = tlv_register_values(&results, slave_id, REG_AC_OUTPUT) {
+    if let Ok(states) = tlv_register_values(results, slave_id, REG_AC_OUTPUT) {
         let ac_on = states.first().is_some_and(|v| *v != 0);
         let dc_on = states.get(1).is_some_and(|v| *v != 0);
         merge_control_states(&mut dashboard, ac_on, dc_on);
     }
 
-    poll_dashboard_link(
-        protocol,
-        write_tx,
-        live,
-        slave_id,
-        true,
-        Some(&results),
-    )
-    .await;
+    apply_tlv_link(live, slave_id, results);
+    if with_identity {
+        apply_tlv_page_identity(live, slave_id, results);
+    }
 
     {
         let mut inner = live.lock().expect("modbus live lock");
@@ -731,6 +797,103 @@ async fn poll_dashboard_tlv(
         dashboard.dc_output_on,
     );
     true
+}
+
+fn apply_tlv_link(
+    live: &SharedModbusLive,
+    slave_id: u8,
+    results: &[super::modbus::TlvReadResult],
+) {
+    let ssid = tlv_register_values(results, slave_id, REG_WIFI_SSID_NOW).unwrap_or_default();
+    if let Ok(link) = tlv_register_values(results, slave_id, REG_LINK_STATUS) {
+        apply_dashboard_link(live, &link, &ssid);
+        return;
+    }
+    if let Ok(iot) = tlv_register_values(results, slave_id, REG_IOT_INFO_START) {
+        if let Some(link) = link_regs_in_iot(&iot) {
+            apply_dashboard_link(live, link, &ssid);
+        }
+    }
+}
+
+fn apply_tlv_page_identity(
+    live: &SharedModbusLive,
+    slave_id: u8,
+    results: &[super::modbus::TlvReadResult],
+) {
+    let whole = tlv_register_values(results, slave_id, REG_WHOLE_DEVICE_START).ok();
+    let iot = tlv_register_values(results, slave_id, REG_IOT_INFO_START).ok();
+    let cloud = tlv_register_values(results, slave_id, IOT_CLOUD_DNS_REGISTER).ok();
+    let password = tlv_register_values(results, slave_id, REG_WIFI_STA_PASSWORD).ok();
+    let device = tlv_register_values(results, slave_id, REG_DEVICE_INFO_START).ok();
+
+    let Ok(mut inner) = live.lock() else {
+        return;
+    };
+    if let Some(whole) = whole.as_ref() {
+        let (ty, sn) = parse_whole_device(whole);
+        if !ty.is_empty() {
+            inner.device_type = ty;
+        }
+        if !sn.is_empty() {
+            inner.device_sn = sn;
+        }
+    }
+    if let Some(iot) = iot.as_ref() {
+        if let Some(ver) = parse_iot_software_ver(iot) {
+            inner.iot_software_version = Some(ver);
+        }
+        let identity = parse_iot_identity(iot);
+        if !identity.iot_type.is_empty() {
+            inner.iot_type = identity.iot_type;
+        }
+        if !identity.iot_sn.is_empty() {
+            inner.iot_sn = identity.iot_sn;
+        }
+        if !identity.safe_code.is_empty() {
+            inner.safe_code = identity.safe_code;
+        }
+        if !identity.wifi_mac.is_empty() {
+            inner.wifi_mac = identity.wifi_mac;
+        }
+        if !identity.ble_mac.is_empty() {
+            inner.ble_mac = identity.ble_mac;
+        }
+        if inner.device_type.is_empty() {
+            let ty = parse_iot_type(iot);
+            if !ty.is_empty() {
+                inner.device_type = ty;
+            }
+        }
+        inner.identity_loaded = true;
+    }
+    if let Some(cloud) = cloud.as_ref() {
+        inner.cloud_url = parse_ascii_regs(cloud);
+    }
+    if let Some(password) = password.as_ref() {
+        inner.wifi_password = parse_ascii_regs(password);
+    }
+    if let Some(regs) = device.as_ref() {
+        if let Ok(mut info) = parse_device_info(regs) {
+            if let Some(ver) = inner.iot_software_version {
+                info.merge_iot_version(ver);
+            }
+            if inner.device_type.is_empty() && !info.device_type.is_empty() {
+                inner.device_type = info.device_type.clone();
+            }
+            if inner.device_sn.is_empty() && !info.sn.is_empty() {
+                inner.device_sn = info.sn.clone();
+            }
+            inner.device_versions_text = info.summary_text();
+            inner.device_software = info
+                .software
+                .iter()
+                .map(|s| (s.type_code, s.version))
+                .collect();
+            inner.iot_software_version = info.iot_version().or(inner.iot_software_version);
+            inner.device_info_loaded = true;
+        }
+    }
 }
 
 fn apply_dashboard_link(live: &SharedModbusLive, link_regs: &[u16], ssid_regs: &[u16]) {
@@ -1102,5 +1265,26 @@ mod tests {
         let inner = live.lock().expect("modbus live lock");
         assert!(inner.capabilities_probed);
         assert_eq!(inner.read_mode, ModbusReadMode::Tlv);
+    }
+
+    #[test]
+    fn dashboard_page_is_one_tlv_query() {
+        let items = dashboard_page_tl_items(0);
+        let batches = super::super::modbus::chunk_tl_batches(&items);
+        assert_eq!(batches.len(), 1);
+        assert!(items.iter().any(|item| item.reg_addr == REG_WHOLE_DEVICE_START));
+        assert!(items.iter().any(|item| {
+            item.reg_addr == REG_IOT_INFO_START && item.byte_len == REG_IOT_IDENTITY_COUNT * 2
+        }));
+        assert!(items
+            .iter()
+            .any(|item| item.reg_addr == IOT_CLOUD_DNS_REGISTER));
+        assert!(!items.iter().any(|item| item.reg_addr == REG_LINK_STATUS));
+
+        let mut iot = vec![0u16; REG_IOT_IDENTITY_COUNT as usize];
+        iot[(REG_LINK_STATUS - REG_IOT_INFO_START) as usize] = 0x0041;
+        let link = link_regs_in_iot(&iot).expect("link inside 11000");
+        assert_eq!(link.len(), REG_LINK_STATUS_BLOCK_COUNT as usize);
+        assert_eq!(link[0], 0x0041);
     }
 }

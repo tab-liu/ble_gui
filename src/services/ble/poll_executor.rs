@@ -2,7 +2,7 @@
 //!
 //! | [`super::poll_policy::PollForeground`] | 行为 |
 //! |----------------------------------------|------|
-//! | `Dashboard` | [`super::poll::poll_dashboard`] + 连接后一次设备信息 |
+//! | `Dashboard` | [`super::poll::poll_dashboard`]（TLV 时属性与功率同一次） |
 //! | `ModbusQuery` / `DeviceConfig` | 按项读保持寄存器，写入 `QueryPollSnapshot` |
 //! | `ExternalDevices` | 写 21000=1，收组网配件列表 |
 //! | `None` 或 OTA 忙 | 不发 Modbus |
@@ -383,8 +383,9 @@ async fn poll_register_items_tlv(
     any_ok || !items.is_empty()
 }
 
-/// Modbus 链路就绪后：先 POST-KEX 探测（读 1～16，看寄存器 3 bit3），
-/// 再读 1100 版本，再拉当前页数据。三次请求收到回复后立刻发下一笔，中间不加周期间隔。
+/// Modbus 链路就绪后：先 POST-KEX 探测（读 1～16，看寄存器 3 bit3）。
+/// 主页且设备支持 TLV 时，功率、状态和属性同一次组合读；没拿齐再补读。
+/// 其它页面仍先读设备信息，再拉当前页。收到回复后立刻发下一笔，中间不加周期间隔。
 pub async fn poll_foreground_once(
     policy: &SharedPollPolicy,
     protocol: &Arc<Mutex<ProtocolSession>>,
@@ -406,9 +407,39 @@ pub async fn poll_foreground_once(
         if !probe_modbus_capabilities(protocol, write_tx, modbus_live).await {
             return;
         }
-        read_device_info_once(protocol, write_tx, modbus_live).await;
     }
     ensure_dashboard_poll_if_idle(policy);
+    let page_in_one_read = {
+        let tlv = modbus_live
+            .lock()
+            .map(|live| live.read_mode == ModbusReadMode::Tlv)
+            .unwrap_or(false);
+        tlv && matches!(effective_foreground(policy), PollForeground::Dashboard)
+    };
+    if page_in_one_read {
+        poll_foreground(
+            policy,
+            protocol,
+            write_tx,
+            modbus_live,
+            query_live,
+            query_generation,
+            gate,
+        )
+        .await;
+        let loaded = modbus_live.lock().is_ok_and(|live| {
+            live.device_info_loaded && live.identity_loaded
+        });
+        if !loaded {
+            let _guard = gate.lock().await;
+            read_device_info_once(protocol, write_tx, modbus_live).await;
+        }
+        return;
+    }
+    {
+        let _guard = gate.lock().await;
+        read_device_info_once(protocol, write_tx, modbus_live).await;
+    }
     poll_foreground(
         policy,
         protocol,
