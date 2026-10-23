@@ -36,7 +36,6 @@ component StatusBarButton inherits Rectangle {
 }
 
 export component BleStatusBar inherits Rectangle {
-    in property <string> app-version;
     in property <bool> connected;
     in property <bool> scanning;
     in property <bool> connecting;
@@ -88,13 +87,6 @@ export component BleStatusBar inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 1;
-        }
-
-        Text {
-            text: root.app-version;
-            color: Theme.text-dim;
-            font-size: 12px;
-            vertical-alignment: center;
         }
 
         StatusBarButton {
