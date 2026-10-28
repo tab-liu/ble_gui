@@ -1,0 +1,311 @@
+import { ListView } from "std-widgets.slint";
+import { Palette, AppButton, StatusChip, Readout } from "theme.slint";
+
+export struct DeviceItem {
+    name: string,
+    address: string,
+    rssi: string,
+    bars: int,
+}
+
+export component IdentWindow inherits Window {
+    title: "Ident";
+    preferred-width: 760px;
+    preferred-height: 640px;
+    min-width: 640px;
+    min-height: 560px;
+    background: Palette.canvas;
+    default-font-family: "Segoe UI";
+    default-font-size: 13px;
+
+    in-out property <bool> scanning: false;
+    in-out property <bool> connected: false;
+    in-out property <bool> busy: false;
+    in-out property <string> selected: "";
+    in-out property <string> status: "";
+    in-out property <string> machine: "—";
+    in-out property <string> iot: "—";
+    in-out property <string> safe-code: "—";
+    in-out property <string> device-count: "0";
+    in-out property <[DeviceItem]> devices;
+
+    callback scan();
+    callback connect();
+    callback copy();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        HorizontalLayout {
+            spacing: 12px;
+            alignment: start;
+
+            VerticalLayout {
+                spacing: 2px;
+                alignment: start;
+                horizontal-stretch: 1;
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: start;
+
+                    Rectangle {
+                        width: 3px;
+                        height: 14px;
+                        border-radius: 2px;
+                        background: Palette.accent;
+                    }
+
+                    Text {
+                        text: "Ident";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: Palette.ink;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+
+            if root.status != "": StatusChip {
+                text: root.status;
+                live: root.scanning || root.busy;
+                ok: root.connected && !root.busy;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            AppButton {
+                label: root.scanning ? "Stop" : "Scan";
+                primary: !root.connected && !root.busy;
+                active: !root.connected && !root.busy;
+                clicked => {
+                    root.scan();
+                }
+            }
+
+            AppButton {
+                label: root.connected || root.busy ? "Disconnect" : "Connect";
+                primary: !root.connected && !root.busy && root.selected != "";
+                active: root.connected || root.busy || root.selected != "";
+                clicked => {
+                    root.connect();
+                }
+            }
+
+            if root.selected != "": Text {
+                text: root.selected;
+                font-family: "Consolas";
+                font-size: 12px;
+                color: Palette.ink;
+                horizontal-stretch: 1;
+                horizontal-alignment: right;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+            background: Palette.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.line;
+            clip: true;
+
+            VerticalLayout {
+                Rectangle {
+                    height: 34px;
+                    background: #f4f7f9;
+
+                    HorizontalLayout {
+                        padding-left: 12px;
+                        padding-right: 12px;
+
+                        Text {
+                            text: "Devices";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: Palette.ink;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                        }
+
+                        Text {
+                            text: root.device-count;
+                            font-size: 12px;
+                            color: Palette.muted;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Palette.line;
+                }
+
+                Rectangle {
+                    vertical-stretch: 1;
+                    min-height: 96px;
+                    preferred-height: 96px;
+                    background: Palette.surface;
+
+                    if root.devices.length > 0: ListView {
+                        width: parent.width;
+                        height: parent.height;
+
+                        for dev in root.devices: row := Rectangle {
+                            height: 56px;
+                            background: dev.address == root.selected ? #e5f3f4 : (row-touch.has-hover ? #f4f7f9 : Palette.surface);
+
+                            property <color> signal: dev.bars >= 3 ? Palette.strong : (dev.bars == 2 ? Palette.mid : Palette.weak);
+
+                            Rectangle {
+                                width: 3px;
+                                height: parent.height;
+                                background: dev.address == root.selected ? Palette.accent : transparent;
+                            }
+
+                            HorizontalLayout {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                spacing: 12px;
+
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: dev.name;
+                                        horizontal-stretch: 1;
+                                        font-size: 13px;
+                                        font-weight: dev.address == root.selected ? 600 : 400;
+                                        color: Palette.ink;
+                                        overflow: elide;
+                                    }
+
+                                    Text {
+                                        text: dev.address;
+                                        horizontal-stretch: 1;
+                                        font-family: "Consolas";
+                                        font-size: 12px;
+                                        color: Palette.muted;
+                                        overflow: elide;
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    min-width: 96px;
+                                    spacing: 8px;
+                                    alignment: end;
+                                    cross-axis-alignment: center;
+
+                                    HorizontalLayout {
+                                        spacing: 2px;
+                                        width: 18px;
+                                        cross-axis-alignment: end;
+
+                                        Rectangle {
+                                            width: 3px;
+                                            height: 6px;
+                                            border-radius: 1px;
+                                            background: dev.bars >= 1 ? row.signal : Palette.bar-off;
+                                        }
+
+                                        Rectangle {
+                                            width: 3px;
+                                            height: 9px;
+                                            border-radius: 1px;
+                                            background: dev.bars >= 2 ? row.signal : Palette.bar-off;
+                                        }
+
+                                        Rectangle {
+                                            width: 3px;
+                                            height: 12px;
+                                            border-radius: 1px;
+                                            background: dev.bars >= 3 ? row.signal : Palette.bar-off;
+                                        }
+
+                                        Rectangle {
+                                            width: 3px;
+                                            height: 15px;
+                                            border-radius: 1px;
+                                            background: dev.bars >= 4 ? row.signal : Palette.bar-off;
+                                        }
+                                    }
+
+                                    Text {
+                                        text: dev.rssi;
+                                        min-width: 64px;
+                                        font-family: "Consolas";
+                                        font-size: 12px;
+                                        color: row.signal;
+                                        horizontal-alignment: right;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                width: parent.width;
+                                background: #eef2f5;
+                            }
+
+                            row-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => {
+                                    root.selected = dev.address;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            background: Palette.surface;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.line;
+
+            VerticalLayout {
+                padding: 14px;
+                spacing: 10px;
+                alignment: start;
+
+                Readout {
+                    value: root.machine;
+                }
+
+                Readout {
+                    value: root.iot;
+                }
+
+                HorizontalLayout {
+                    spacing: 8px;
+
+                    Readout {
+                        value: root.safe-code;
+                        mono: true;
+                    }
+
+                    AppButton {
+                        label: "Copy";
+                        active: root.safe-code != "" && root.safe-code != "—";
+                        clicked => {
+                            root.copy();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

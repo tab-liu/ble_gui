@@ -1,0 +1,125 @@
+export global Palette {
+    out property <color> canvas: #e8edf2;
+    out property <color> surface: #ffffff;
+    out property <color> inset: #f3f6f8;
+    out property <color> line: #d7dee6;
+    out property <color> line-strong: #c5ced8;
+    out property <color> ink: #172033;
+    out property <color> muted: #5c6b7c;
+    out property <color> faint: #8b98a8;
+    out property <color> accent: #0f5f73;
+    out property <color> accent-hover: #0c4e5e;
+    out property <color> accent-press: #0a4250;
+    out property <color> on-accent: #ffffff;
+    out property <color> ok: #157a42;
+    out property <color> ok-soft: #e7f6ee;
+    out property <color> ok-line: #b7e0c8;
+    out property <color> live-soft: #e5f3f6;
+    out property <color> live-line: #b9d7e0;
+    out property <color> bad: #b42318;
+    out property <color> bad-soft: #fdecec;
+    out property <color> bad-line: #f3c4c0;
+    out property <color> strong: #157a42;
+    out property <color> mid: #9a6700;
+    out property <color> weak: #b42318;
+    out property <color> bar-off: #d8dee6;
+}
+
+export component AppButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> primary: false;
+    in property <bool> active: true;
+    callback clicked();
+
+    private property <bool> hot: root.active && ta.has-hover;
+    private property <bool> down: root.active && ta.pressed;
+
+    height: 32px;
+    min-width: 72px;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: !root.active ? #d5dce4 : (root.primary ? Palette.accent-press : Palette.line-strong);
+    background: !root.active ? #e1e7ee : (root.primary ? (root.down ? Palette.accent-press : (root.hot ? Palette.accent-hover : Palette.accent)) : (root.down ? #e7edf2 : (root.hot ? #f7fafc : Palette.surface)));
+
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        alignment: center;
+
+        Text {
+            text: root.label;
+            font-size: 13px;
+            font-weight: 600;
+            color: !root.active ? #8b97a6 : (root.primary ? Palette.on-accent : Palette.ink);
+            vertical-alignment: center;
+        }
+    }
+
+    ta := TouchArea {
+        enabled: root.active;
+        mouse-cursor: root.active ? pointer : default;
+        clicked => {
+            root.clicked();
+        }
+    }
+}
+
+export component StatusChip inherits Rectangle {
+    in property <string> text;
+    in property <bool> live: false;
+    in property <bool> ok: false;
+    in property <bool> bad: false;
+
+    height: 26px;
+    border-radius: 13px;
+    background: root.bad ? Palette.bad-soft : (root.ok ? Palette.ok-soft : (root.live ? Palette.live-soft : Palette.inset));
+    border-width: 1px;
+    border-color: root.bad ? Palette.bad-line : (root.ok ? Palette.ok-line : (root.live ? Palette.live-line : Palette.line));
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 10px;
+        spacing: 6px;
+        alignment: center;
+
+        Rectangle {
+            width: 6px;
+            height: 6px;
+            border-radius: 3px;
+            background: root.bad ? Palette.bad : (root.ok ? Palette.ok : (root.live ? Palette.accent : Palette.faint));
+        }
+
+        Text {
+            text: root.text;
+            font-size: 12px;
+            color: root.bad ? Palette.bad : (root.ok ? #17693c : (root.live ? Palette.accent : Palette.ink));
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component Readout inherits Rectangle {
+    in property <string> value;
+    in property <bool> mono: false;
+    horizontal-stretch: 1;
+    background: Palette.inset;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: Palette.line;
+
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+
+        Text {
+            text: root.value == "" ? "—" : root.value;
+            wrap: root.mono ? word-wrap : no-wrap;
+            overflow: elide;
+            font-size: 13px;
+            font-family: root.mono ? "Consolas" : "";
+            color: (root.value == "" || root.value == "—") ? Palette.faint : Palette.ink;
+        }
+    }
+}

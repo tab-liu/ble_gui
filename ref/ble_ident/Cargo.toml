@@ -1,0 +1,42 @@
+[package]
+name = "ble_ident"
+version = "0.1.0"
+edition = "2024"
+description = "Scan encrypted BLE devices and seal the safe code"
+
+[[bin]]
+name = "ident"
+path = "src/bin/ident.rs"
+
+[[bin]]
+name = "decode"
+path = "src/bin/decode.rs"
+
+[lib]
+name = "ble_ident"
+path = "src/lib.rs"
+
+[dependencies]
+slint = "1.18"
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros"] }
+btleplug = "0.11"
+uuid = "1"
+futures = "0.3"
+md-5 = "0.10"
+aes = "0.8"
+cbc = "0.1"
+cipher = { version = "0.4", features = ["block-padding"] }
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
+sha2 = "0.10"
+rand = "0.8"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.11"
+arboard = "3"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+aes-gcm = "0.10"
+hkdf = "0.12"
+base64 = "0.22"
+
+[build-dependencies]
+slint-build = "1.18"
