@@ -3,9 +3,8 @@
 //! 实现按职责拆在同模块的 `support` / `scan` / `session` / `connect`（`include!`）。
 //! 子文件不是独立模块：其中的 `#[cfg(test)]` 不会单独注册，测试写在可 `mod` 的层。
 //!
-//! Windows 上 `connect()` 实为 Uncached GetGattServices；刚停扫描时常
-//! `Unreachable`→`Not connected`。[`connect_gatt_with_retry`] 先等待再重试，
-//! UI 侧不要在 Connect 之前单独发 StopScan。
+//! Windows 上 `connect()` 实为 Uncached GetGattServices；失败后再按间隔重试。
+//! 上一轮会话刚拆掉时才额外等 400ms。UI 侧不要在 Connect 之前单独发 StopScan。
 //!
 //! 断开走 `end_session`：先退订 CCCD、Close 吞吐优化多开的 WinRT 句柄，
 //! 再 `peripheral.disconnect()`。界面在 GATT 清理完成之后才标「已断开」。
@@ -305,6 +304,7 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
             }
             BleCommand::Connect { address } => {
+                super::link_log::link_begin(&format!("收到连接 {address}"));
                 if let Ok(mut g) = expect_drop.lock() {
                     *g = None;
                 }
@@ -317,9 +317,15 @@ pub async fn worker_main(
                 notify_ui_force(&ui_refresh, true);
 
                 let had_session = if let Some(active) = session.take() {
+                    super::link_log::link_mark("拆掉上一轮会话");
+                    let tear_down = Instant::now();
                     stop_polling(&poll_policy);
                     clear_live_on_disconnect(&modbus_live);
                     end_session(active).await;
+                    super::link_log::link_mark(&format!(
+                        "上一轮会话已拆除 耗时{}ms，再等 {CONNECT_SETTLE_MS}ms",
+                        tear_down.elapsed().as_millis()
+                    ));
                     true
                 } else {
                     false
@@ -345,6 +351,9 @@ pub async fn worker_main(
                 }
 
                 let scan_was_running = scan_task.is_some();
+                super::link_log::link_mark(&format!(
+                    "查找外设 had_session={had_session} scan_running={scan_was_running}"
+                ));
                 // 刚连过别的设备或扫描已停时，Windows 缓存的 Peripheral 往往 GATT 失败。
                 // 只在「当前扫描中、且本会话还没连过」时用缓存句柄。
                 let mut peripheral = if !had_session && scan_was_running {
@@ -354,6 +363,9 @@ pub async fn worker_main(
                 };
                 let require_fresh_adv = had_session || !scan_was_running;
 
+                if peripheral.is_some() {
+                    super::link_log::link_mark("使用扫描缓存中的外设句柄");
+                }
                 if peripheral.is_none() {
                     if connect_cancelled(&cancel_connect) {
                         enter_idle(
@@ -368,6 +380,11 @@ pub async fn worker_main(
                     }
                     set_phase(&state, LinkPhase::Connecting, "正在查找设备……");
                     notify_ui_force(&ui_refresh, true);
+                    super::link_log::link_mark(&format!(
+                        "缓存没有可用句柄，定向扫描查找 fresh_adv={require_fresh_adv} 超时{}s",
+                        REDISCOVER_TIMEOUT.as_secs()
+                    ));
+                    let find_started = Instant::now();
 
                     if let Some(task) = scan_task.take() {
                         task.abort();
@@ -385,7 +402,13 @@ pub async fn worker_main(
                     )
                     .await
                     {
-                        Ok(p) => peripheral = Some(p),
+                        Ok(p) => {
+                            super::link_log::link_mark(&format!(
+                                "定向查找完成 耗时{}ms",
+                                find_started.elapsed().as_millis()
+                            ));
+                            peripheral = Some(p);
+                        }
                         Err(RediscoverError::Cancelled) => {
                             enter_idle(
                                 &adapter,
@@ -398,6 +421,7 @@ pub async fn worker_main(
                             continue;
                         }
                         Err(RediscoverError::Occupied) => {
+                            super::link_log::link_done("定向查找结束：设备标记为已被占用");
                             warn!(
                                 target: "ble_gui::services::ble",
                                 "Connect aborted for {address}: occupied"
@@ -413,6 +437,10 @@ pub async fn worker_main(
                             continue;
                         }
                         Err(RediscoverError::TimedOut) => {
+                            super::link_log::link_done(&format!(
+                                "定向查找超时 耗时{}ms",
+                                find_started.elapsed().as_millis()
+                            ));
                             warn!(
                                 target: "ble_gui::services::ble",
                                 "Connect aborted for {address}: rediscover timeout"
@@ -445,7 +473,12 @@ pub async fn worker_main(
                 if let Some(task) = scan_task.take() {
                     task.abort();
                 }
+                let stop_scan_started = Instant::now();
                 let _ = adapter.stop_scan().await;
+                super::link_log::link_mark(&format!(
+                    "已停止扫描 耗时{}ms",
+                    stop_scan_started.elapsed().as_millis()
+                ));
 
                 let Some(peripheral) = peripheral else {
                     enter_idle(
@@ -461,6 +494,7 @@ pub async fn worker_main(
 
                 if let Ok(Some(props)) = peripheral.properties().await {
                     if adv_link_hint_from_properties(&props) == AdvLinkHint::Occupied {
+                        super::link_log::link_done("缓存广播标记设备已被占用");
                         warn!(
                             target: "ble_gui::services::ble",
                             "Connect aborted for {address}: occupied (from cache)"
@@ -496,6 +530,7 @@ pub async fn worker_main(
                 {
                     Ok(active) => session = Some(active),
                     Err(err) => {
+                        super::link_log::link_done(&format!("连接失败：{err}"));
                         warn!(target: "ble_gui::services::ble", "Connect failed for {address}: {err}");
                         let detail = if err == "已取消连接" {
                             "已取消连接".into()

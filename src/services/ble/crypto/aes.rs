@@ -2,9 +2,10 @@
 
 use std::io;
 
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use aes::cipher::KeyIvInit;
 use aes::{Aes128, Aes256};
 use cipher::block_padding::{NoPadding, ZeroPadding};
+use cipher::{BlockModeDecrypt, BlockModeEncrypt};
 use cbc::{Decryptor, Encryptor};
 
 type Aes128Enc = Encryptor<Aes128>;
@@ -48,11 +49,11 @@ fn aes_cbc_with_padding(
                 let mut buf = data.to_vec();
                 if zero_pad_mode {
                     Aes128Enc::new(&key_arr.into(), &iv_arr.into())
-                        .encrypt_padded_mut::<ZeroPadding>(&mut buf, data.len())
+                        .encrypt_padded::<ZeroPadding>(&mut buf, data.len())
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 } else {
                     Aes128Enc::new(&key_arr.into(), &iv_arr.into())
-                        .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                        .encrypt_padded::<NoPadding>(&mut buf, data.len())
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 }
                 Ok(buf)
@@ -60,12 +61,12 @@ fn aes_cbc_with_padding(
                 let mut buf = data.to_vec();
                 if zero_pad_mode {
                     Ok(Aes128Dec::new(&key_arr.into(), &iv_arr.into())
-                        .decrypt_padded_mut::<ZeroPadding>(&mut buf)
+                        .decrypt_padded::<ZeroPadding>(&mut buf)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
                         .to_vec())
                 } else {
                     Ok(Aes128Dec::new(&key_arr.into(), &iv_arr.into())
-                        .decrypt_padded_mut::<NoPadding>(&mut buf)
+                        .decrypt_padded::<NoPadding>(&mut buf)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
                         .to_vec())
                 }
@@ -77,11 +78,11 @@ fn aes_cbc_with_padding(
                 let mut buf = data.to_vec();
                 if zero_pad_mode {
                     Aes256Enc::new(&key_arr.into(), &iv_arr.into())
-                        .encrypt_padded_mut::<ZeroPadding>(&mut buf, data.len())
+                        .encrypt_padded::<ZeroPadding>(&mut buf, data.len())
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 } else {
                     Aes256Enc::new(&key_arr.into(), &iv_arr.into())
-                        .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                        .encrypt_padded::<NoPadding>(&mut buf, data.len())
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
                 }
                 Ok(buf)
@@ -89,12 +90,12 @@ fn aes_cbc_with_padding(
                 let mut buf = data.to_vec();
                 if zero_pad_mode {
                     Ok(Aes256Dec::new(&key_arr.into(), &iv_arr.into())
-                        .decrypt_padded_mut::<ZeroPadding>(&mut buf)
+                        .decrypt_padded::<ZeroPadding>(&mut buf)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
                         .to_vec())
                 } else {
                     Ok(Aes256Dec::new(&key_arr.into(), &iv_arr.into())
-                        .decrypt_padded_mut::<NoPadding>(&mut buf)
+                        .decrypt_padded::<NoPadding>(&mut buf)
                         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?
                         .to_vec())
                 }

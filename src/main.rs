@@ -117,7 +117,7 @@ fn main() -> Result<(), slint::PlatformError> {
     attach_parent_console();
 
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("warn"),
+        env_logger::Env::default().default_filter_or("warn,ble_gui::link=info"),
     )
     .format(|buf, record| {
         use std::io::Write;

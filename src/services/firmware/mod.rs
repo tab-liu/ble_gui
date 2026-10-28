@@ -716,7 +716,7 @@ fn inspect_file(path: &Path) -> Result<SelectedFile, String> {
     }
     let bytes = std::fs::read(path).map_err(|e| format!("无法读取文件：{e}"))?;
     let info = classify(size, &bytes)?;
-    let md5 = format!("{:x}", Md5::digest(&bytes));
+    let md5 = hex::encode(Md5::digest(&bytes));
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

@@ -1,6 +1,6 @@
 [package]
 name = "ble_gui"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "BLE Modbus desktop tool (Slint + btleplug). Docs: cargo docs"
 
@@ -13,40 +13,55 @@ name = "ble_gui"
 path = "src/main.rs"
 
 [dependencies]
-slint = { version = "1.17", features = ["raw-window-handle-06"] }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "net", "io-util"] }
-btleplug = "0.11"
+slint = { version = "1.18", features = ["raw-window-handle-06"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "sync",
+    "time",
+    "macros",
+    "net",
+    "io-util",
+] }
+btleplug = "0.13.5"
 uuid = "1"
 futures = "0.3"
-md-5 = "0.10"
-aes = "0.8"
-cbc = "0.1"
-cipher = { version = "0.4", features = ["block-padding"] }
-p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }
-sha2 = "0.10"
-rand = "0.8"
+md-5 = "0.11.0"
+aes = "0.9.3"
+cbc = "0.2.1"
+cipher = { version = "0.5.2", features = ["block-padding"] }
+p256 = { version = "0.14", features = ["ecdh", "ecdsa"] }
+sha2 = "0.11.1"
+rand = "0.10.3"
 hex = "0.4"
 log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1"
-rfd = "0.15"
+rfd = "0.17.2"
 arboard = "3"
 raw-window-handle = "0.6"
 if-addrs = "0.15.0"
 kawaiifi = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Devices_Bluetooth", "Devices_Radios", "Foundation", "Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62.2", features = [
+    "Devices_Bluetooth",
+    "Devices_Radios",
+    "Foundation",
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.4"
+objc2 = "0.6.5"
 objc2-core-location = "0.3.2"
 objc2-foundation = "0.3.2"
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "1.18"
 winres = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
-icns = "0.3"
+icns = "0.5.0"

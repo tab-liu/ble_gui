@@ -109,10 +109,16 @@ async fn connect_after_gatt(
         .or_else(|| notify_char_ff03.clone())
         .ok_or_else(|| "未发现 FF01/FF03 通知特征".to_string())?;
 
+    let subscribe_started = Instant::now();
     peripheral
         .subscribe(&notify_char)
         .await
         .map_err(|e| format!("订阅通知失败：{e}"))?;
+    super::link_log::link_mark(&format!(
+        "已订阅 {} 耗时{}ms",
+        notify_char.uuid,
+        subscribe_started.elapsed().as_millis()
+    ));
 
     if let Some(ff03) = notify_char_ff03 {
         if notify_char_ff01.is_some() && ff03.uuid != notify_char.uuid {
@@ -120,11 +126,14 @@ async fn connect_after_gatt(
                 .subscribe(&ff03)
                 .await
                 .map_err(|e| format!("订阅 FF03 通知失败：{e}"))?;
+            super::link_log::link_mark("已再订阅 FF03（TLV 异步数据走这条）");
             debug!(target: "ble_gui::worker", "已订阅 FF01 + FF03（TLV 异步数据走 FF03）");
         } else {
+            super::link_log::link_mark("通知只走 FF03");
             debug!(target: "ble_gui::worker", "已订阅 FF03（无 FF01，TLV/通知均走 FF03）");
         }
     } else if notify_char_ff01.is_some() {
+        super::link_log::link_mark("设备没有 FF03，通知只走 FF01");
         info!(target: "ble_gui::worker", "已订阅 FF01（设备无 FF03 特征）");
     }
 
@@ -139,6 +148,9 @@ async fn connect_after_gatt(
         .map(|p| format_address(p.address))
         .unwrap_or_else(|| address_text.to_string());
     let device_rssi = props.as_ref().and_then(|p| p.rssi).map(|r| r as i32).unwrap_or(0);
+    super::link_log::link_mark(&format!(
+        "GATT 就绪 name={device_name} rssi={device_rssi}，等待 2A2A 鉴权"
+    ));
 
     {
         let mut inner = state.lock().expect("ble state lock");
@@ -192,6 +204,7 @@ async fn connect_after_gatt(
             .lock()
             .map(|p| p.wake.clone())
             .unwrap_or_else(|_| std::sync::Arc::new(tokio::sync::Notify::new()));
+        let mut announced_ready = false;
         loop {
             loop {
                 let ready = protocol_for_poll_task
@@ -199,6 +212,10 @@ async fn connect_after_gatt(
                     .expect("protocol lock")
                     .modbus_ready();
                 if ready {
+                    if !announced_ready {
+                        super::link_log::link_mark("握手完成，Modbus 可读写，开始能力探测");
+                        announced_ready = true;
+                    }
                     break;
                 }
                 tokio::select! {
@@ -268,7 +285,6 @@ async fn connect_after_gatt(
 
     let poll_abort = poll_task.abort_handle();
     let peripheral_for_session = peripheral.clone();
-    let throughput_hold = super::conn_opt::request_throughput(address_text).await;
     let can_write_without_response = write_char
         .properties
         .contains(CharPropFlags::WRITE_WITHOUT_RESPONSE);
@@ -308,7 +324,8 @@ async fn connect_after_gatt(
     let notify_task = tokio::spawn(async move {
         let mut notifications = match peripheral.notifications().await {
             Ok(stream) => stream,
-            Err(_) => {
+            Err(err) => {
+                super::link_log::link_done(&format!("打开通知流失败：{err}"));
                 poll_abort.abort();
                 write_abort_notify.abort();
                 return;
@@ -371,6 +388,7 @@ async fn connect_after_gatt(
                     if session.phase == HandshakePhase::WaitingAuth && !session.auth_started() {
                         drop(session);
                         let mut session = protocol_for_notify.lock().expect("protocol lock");
+                        super::link_log::link_mark("6s 内没有 2A2A 鉴权，改走明文 Modbus");
                         session.mark_plaintext_mode();
                         if let Ok(mut inner) = state_for_plain.lock() {
                             inner.phase = LinkPhase::GattReady;
@@ -613,6 +631,13 @@ async fn connect_after_gatt(
             }
         }
     });
+
+    let throughput_started = Instant::now();
+    let throughput_hold = super::conn_opt::request_throughput(address_text).await;
+    super::link_log::link_mark(&format!(
+        "请求吞吐优先连接参数结束 耗时{}ms（与握手并行）",
+        throughput_started.elapsed().as_millis()
+    ));
 
     Ok(ActiveSession {
         notify_task,

@@ -7,9 +7,9 @@ use std::io;
 use md5::{Digest, Md5};
 use p256::ecdh::diffie_hellman;
 use p256::ecdsa::{signature::hazmat::PrehashSigner, Signature, SigningKey, VerifyingKey};
-use p256::elliptic_curve::sec1::ToEncodedPoint;
-use p256::{EncodedPoint, PublicKey, SecretKey};
-use rand::rngs::OsRng;
+use p256::elliptic_curve::sec1::{Sec1Point, ToSec1Point};
+use p256::elliptic_curve::Generate;
+use p256::{PublicKey, SecretKey};
 use sha2::Sha256;
 
 use super::crypto::{
@@ -220,6 +220,10 @@ impl ProtocolSession {
         frame[2..6].copy_from_slice(&md5_hash[8..12]);
         let check = additive_checksum(&frame);
 
+        super::link_log::link_mark(&format!(
+            "收到 2A2A01 鉴权请求 {} 字节，已组应答",
+            data.len()
+        ));
         let mut response = [0u8; 10];
         response[0] = 0x2A;
         response[1] = 0x2A;
@@ -240,13 +244,16 @@ impl ProtocolSession {
         self.auth_succeeded = data[4] == 0;
         if self.auth_succeeded {
             self.phase = HandshakePhase::AuthDone;
+            super::link_log::link_mark("2A2A03 鉴权成功");
         } else {
             self.new_aes_key = None;
+            super::link_log::link_mark(&format!("2A2A03 鉴权失败 status={}", data[4]));
         }
         Ok(())
     }
 
     fn handle_key_exchange(&mut self, data: &[u8]) -> io::Result<Option<Vec<u8>>> {
+        super::link_log::link_mark(&format!("收到 0086 密钥交换 {} 字节", data.len()));
         if !self.auth_succeeded {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -307,9 +314,9 @@ impl ProtocolSession {
             .new_aes_key
             .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少会话 AES 密钥"))?;
 
-        let secret = SecretKey::random(&mut OsRng);
+        let secret = SecretKey::generate();
         let public = secret.public_key();
-        let encoded = public.to_encoded_point(false);
+        let encoded = public.to_sec1_point(false);
         let pub_bytes = encoded.as_bytes();
         let public_raw = &pub_bytes[1..65];
 
@@ -384,12 +391,14 @@ impl ProtocolSession {
         self.encryption_ready = true;
         self.phase = HandshakePhase::Encrypted;
         self.rx.set_encrypted(shared_key);
+        super::link_log::link_mark("0007 密钥协商成功，业务加密已就绪");
         // 第一笔 Modbus 由 poll 的 POST-KEX 探测发出（读 1～16，含寄存器 3）。
         // 这里再发一笔会和探测抢响应，导致空等一整轮 POLL_INTERVAL。
         Ok(None)
     }
 
     pub fn mark_plaintext_mode(&mut self) {
+        super::link_log::link_mark("进入明文 Modbus");
         self.phase = HandshakePhase::Plaintext;
         self.encryption_ready = false;
         self.rx.set_plaintext();
@@ -419,7 +428,7 @@ fn public_key_from_raw64(raw: &[u8; 64]) -> io::Result<PublicKey> {
     let mut encoded = [0u8; 65];
     encoded[0] = 0x04;
     encoded[1..].copy_from_slice(raw);
-    EncodedPoint::from_bytes(encoded)
+    Sec1Point::<p256::NistP256>::from_bytes(encoded)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))
         .and_then(|point| {
             PublicKey::from_sec1_bytes(point.as_bytes())
@@ -447,7 +456,7 @@ fn verify_raw_signature(public_key_raw: &[u8; 64], signature: &[u8], data: &[u8]
         return false;
     };
     let verifying_key = VerifyingKey::from(&public);
-    let Ok(sig) = Signature::from_bytes(signature.into()) else {
+    let Ok(sig) = Signature::from_slice(signature) else {
         return false;
     };
     let hash = Sha256::digest(data);

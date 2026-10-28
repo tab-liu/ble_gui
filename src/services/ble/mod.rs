@@ -25,6 +25,7 @@
 //! - Windows：Connect 不要先 StopScan；GATT 失败会重试。`conn_opt` 尽量把间隔压到 ~15ms。
 
 mod crypto;
+mod link_log;
 pub mod modbus;
 mod poll;
 mod poll_executor;

@@ -1,7 +1,7 @@
 //! BLE 连接参数优化：尽量把间隔压到接近手机 App 的 ~15ms。
 //!
-//! btleplug 0.11 尚未暴露跨平台的「请求连接参数」API（0.12 也仅 Windows/Android）。
-//! 因此这里只在 Windows 上走 WinRT；其它平台由系统协商，不做额外分支。
+//! btleplug 0.13 在 Windows / Android 上提供 `request_connection_parameters`。
+//! 这里仍自己持有 WinRT 请求：库把请求对象立刻丢掉，系统可能收回吞吐优先参数。
 //!
 //! Windows 上 `FromBluetoothAddressAsync` 会再拿一份 `BluetoothLEDevice`。
 //! 必须 [`Close`](https://learn.microsoft.com/windows/uwp/devices-sensors/gatt-client)

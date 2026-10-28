@@ -553,17 +553,30 @@ async fn connect_gatt_with_retry(
     ui_refresh: &super::UiRefreshSlot,
     address_text: &str,
 ) -> Result<(), String> {
-    sleep_unless_cancelled(cancel_connect, Duration::from_millis(CONNECT_SETTLE_MS)).await?;
+    super::link_log::link_mark(&format!(
+        "直接 GATT connect()，失败再退避；最多 {CONNECT_RETRY_ATTEMPTS} 次"
+    ));
 
     for attempt in 1..=CONNECT_RETRY_ATTEMPTS {
         if connect_cancelled(cancel_connect) {
             return Err("已取消连接".into());
         }
         if peripheral.is_connected().await.unwrap_or(false) {
+            super::link_log::link_mark(&format!(
+                "GATT 第 {attempt} 次前已是连接状态，跳过 connect()"
+            ));
             return Ok(());
         }
+        super::link_log::link_mark(&format!(
+            "GATT connect() 第 {attempt}/{CONNECT_RETRY_ATTEMPTS} 次开始（Windows 上即无缓存读服务）"
+        ));
+        let attempt_started = Instant::now();
         match peripheral.connect().await {
             Ok(()) => {
+                super::link_log::link_mark(&format!(
+                    "GATT connect() 第 {attempt} 次成功 耗时{}ms",
+                    attempt_started.elapsed().as_millis()
+                ));
                 if attempt > 1 {
                     info!(
                         target: "ble_gui::services::ble",
@@ -573,6 +586,11 @@ async fn connect_gatt_with_retry(
                 return Ok(());
             }
             Err(err) => {
+                super::link_log::link_mark(&format!(
+                    "GATT connect() 第 {attempt} 次失败 耗时{}ms：{err}，退避 {}ms",
+                    attempt_started.elapsed().as_millis(),
+                    CONNECT_RETRY_BASE_MS * u64::from(attempt)
+                ));
                 warn!(
                     target: "ble_gui::services::ble",
                     "GATT connect attempt {attempt}/{CONNECT_RETRY_ATTEMPTS} for {address_text} failed: {err}"

@@ -7,16 +7,30 @@ async fn discover_services_with_retry(
         if connect_cancelled(cancel_connect) {
             return Err("已取消连接".into());
         }
+        super::link_log::link_mark(&format!(
+            "发现 GATT 第 {attempt}/{attempts} 次开始"
+        ));
+        let discover_started = Instant::now();
         match peripheral.discover_services().await {
             Ok(()) => {
+                let n_svc = peripheral.services().len();
+                let n_chr = peripheral.characteristics().len();
                 let has_target = peripheral.characteristics().iter().any(|c| {
                     c.uuid == write_uuid() || c.uuid == notify_uuid() || c.uuid == notify_uuid_ff03()
                 });
+                super::link_log::link_mark(&format!(
+                    "发现 GATT 第 {attempt} 次返回 耗时{}ms 服务={n_svc} 特征={n_chr} FF00特征={has_target}",
+                    discover_started.elapsed().as_millis()
+                ));
                 if has_target {
                     return Ok(());
                 }
             }
             Err(err) => {
+                super::link_log::link_mark(&format!(
+                    "发现 GATT 第 {attempt} 次失败 耗时{}ms：{err}",
+                    discover_started.elapsed().as_millis()
+                ));
                 let msg = err.to_string();
                 // 对象已关闭 / 已中止：链路已废，再重试只会空转。
                 let link_dead = msg.contains("0x80000013")
@@ -31,6 +45,7 @@ async fn discover_services_with_retry(
                 }
             }
         }
+        super::link_log::link_mark("发现 GATT 未拿到 FF01/FF02/FF03，500ms 后重试");
         sleep_unless_cancelled(cancel_connect, Duration::from_millis(500)).await?;
     }
     Err("GATT 已连接但未发现 FF00 服务".to_string())
@@ -93,12 +108,14 @@ async fn rediscover_target(
 ) -> Result<Peripheral, RediscoverError> {
     let target_norm = normalize_address(address_text);
     let deadline = tokio::time::Instant::now() + REDISCOVER_TIMEOUT;
+    super::link_log::link_mark("定向扫描 start_scan");
 
     let mut events = adapter
         .events()
         .await
         .map_err(|_| RediscoverError::TimedOut)?;
     if adapter.start_scan(ScanFilter::default()).await.is_err() {
+        super::link_log::link_mark("定向扫描 start_scan 失败");
         return Err(RediscoverError::TimedOut);
     }
 

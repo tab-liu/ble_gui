@@ -135,6 +135,8 @@ pub async fn probe_modbus_capabilities(
     }
 
     let slave_id = live.lock().expect("modbus live lock").slave_id;
+    super::link_log::link_mark("POST-KEX 探测：读寄存器 1～16，看寄存器 3 bit3");
+    let probe_started = std::time::Instant::now();
 
     let regs = match read_post_kex_probe(protocol, write_tx, slave_id).await {
         Ok(regs) => regs,
@@ -144,6 +146,10 @@ pub async fn probe_modbus_capabilities(
                 target: "ble_gui::poll",
                 "POST-KEX 探测首包异常（{err}），立即重读 1～16",
             );
+            super::link_log::link_mark(&format!(
+                "POST-KEX 首包失败 耗时{}ms：{err}，立刻再读一次",
+                probe_started.elapsed().as_millis()
+            ));
             match read_post_kex_probe(protocol, write_tx, slave_id).await {
                 Ok(regs) => regs,
                 Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
@@ -156,6 +162,12 @@ pub async fn probe_modbus_capabilities(
     };
 
     apply_probe_regs(live, &regs);
+    let mode = live.lock().map(|inner| inner.read_mode).unwrap_or(ModbusReadMode::Standard);
+    let status = regs.get((REG_IOT_STATUS - POST_KEX_PROBE_START) as usize).copied();
+    super::link_log::link_mark(&format!(
+        "探测完成 耗时{}ms 寄存器3={status:?} 读模式={mode:?}",
+        probe_started.elapsed().as_millis()
+    ));
     true
 }
 
@@ -674,6 +686,15 @@ async fn poll_dashboard_tlv(
         .lock()
         .map(|inner| inner.dashboard_tlv_split)
         .unwrap_or(false);
+    super::link_log::link_mark(&format!(
+        "主页 TLV 查询开始 split={split} 项数={}",
+        if split {
+            dashboard_status_tl_items(slave_id).len()
+        } else {
+            dashboard_page_tl_items(slave_id).len()
+        }
+    ));
+    let tlv_started = std::time::Instant::now();
     let tl_items = if split {
         dashboard_status_tl_items(slave_id)
     } else {
@@ -684,6 +705,10 @@ async fn poll_dashboard_tlv(
         Ok(r) => r,
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => return false,
         Err(err) if !split => {
+            super::link_log::link_mark(&format!(
+                "主页组合读失败 耗时{}ms：{err}，改为只读功率和状态",
+                tlv_started.elapsed().as_millis()
+            ));
             warn!(
                 target: "ble_gui::poll",
                 "主页组合读失败，改为只读功率和状态: {err}",
@@ -694,11 +719,21 @@ async fn poll_dashboard_tlv(
             return poll_dashboard_tlv_status(protocol, write_tx, live, slave_id).await;
         }
         Err(err) => {
+            super::link_log::link_mark(&format!(
+                "主页 TLV 读失败 耗时{}ms：{err}",
+                tlv_started.elapsed().as_millis()
+            ));
             warn!(target: "ble_gui::poll", "主页 TLV 读失败: {err}");
             return false;
         }
     };
-    finish_dashboard_tlv(live, slave_id, &results, !split)
+    let ok = finish_dashboard_tlv(live, slave_id, &results, !split);
+    super::link_log::link_mark(&format!(
+        "主页 TLV 查询返回 ok={ok} 耗时{}ms 单元={}",
+        tlv_started.elapsed().as_millis(),
+        results.len()
+    ));
+    ok
 }
 
 fn dashboard_status_tl_items(slave_id: u8) -> Vec<TlReadSpec> {

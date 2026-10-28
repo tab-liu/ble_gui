@@ -405,6 +405,7 @@ pub async fn poll_foreground_once(
     {
         let _guard = gate.lock().await;
         if !probe_modbus_capabilities(protocol, write_tx, modbus_live).await {
+            super::link_log::link_mark("能力探测中断（链路断开），本轮不查询");
             return;
         }
     }
@@ -417,7 +418,8 @@ pub async fn poll_foreground_once(
         tlv && matches!(effective_foreground(policy), PollForeground::Dashboard)
     };
     if page_in_one_read {
-        poll_foreground(
+        let query_started = std::time::Instant::now();
+        let ok = poll_foreground(
             policy,
             protocol,
             write_tx,
@@ -431,8 +433,25 @@ pub async fn poll_foreground_once(
             live.device_info_loaded && live.identity_loaded
         });
         if !loaded {
+            super::link_log::link_mark("属性或版本没在组合读里拿齐，开始分段补读");
+            let fill_started = std::time::Instant::now();
             let _guard = gate.lock().await;
             read_device_info_once(protocol, write_tx, modbus_live).await;
+            super::link_log::link_mark(&format!(
+                "分段补读结束 耗时{}ms",
+                fill_started.elapsed().as_millis()
+            ));
+        }
+        if ok {
+            super::link_log::link_done(&format!(
+                "TLV 查询已确认 本段耗时{}ms",
+                query_started.elapsed().as_millis()
+            ));
+        } else {
+            super::link_log::link_mark(&format!(
+                "TLV 查询未确认 本段耗时{}ms，下一轮再试",
+                query_started.elapsed().as_millis()
+            ));
         }
         return;
     }
@@ -440,7 +459,8 @@ pub async fn poll_foreground_once(
         let _guard = gate.lock().await;
         read_device_info_once(protocol, write_tx, modbus_live).await;
     }
-    poll_foreground(
+    let query_started = std::time::Instant::now();
+    let ok = poll_foreground(
         policy,
         protocol,
         write_tx,
@@ -450,4 +470,15 @@ pub async fn poll_foreground_once(
         gate,
     )
     .await;
+    if ok {
+        super::link_log::link_done(&format!(
+            "常规查询已完成 本段耗时{}ms",
+            query_started.elapsed().as_millis()
+        ));
+    } else {
+        super::link_log::link_mark(&format!(
+            "常规查询未完成 本段耗时{}ms",
+            query_started.elapsed().as_millis()
+        ));
+    }
 }

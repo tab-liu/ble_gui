@@ -3,7 +3,7 @@
 use std::io;
 
 use md5::{Digest, Md5};
-use rand::RngCore;
+use rand::TryRng;
 
 use super::aes::{aes_cbc_raw, zero_pad};
 
@@ -11,7 +11,9 @@ use super::aes::{aes_cbc_raw, zero_pad};
 pub fn encrypt_business_packet(shared_key: &[u8; 32], plain: &[u8]) -> io::Result<Vec<u8>> {
     let padded = zero_pad(plain, 16);
     let mut random = [0u8; 4];
-    rand::rngs::OsRng.fill_bytes(&mut random);
+    rand::rngs::SysRng
+        .try_fill_bytes(&mut random)
+        .expect("系统随机源不可用");
     let iv = md5_bytes(&random);
     // 已手写 zero_pad，用 NoPadding，避免再按 ZeroPadding 规则处理。
     let cipher = aes_cbc_raw(true, shared_key, &iv, &padded)?;
