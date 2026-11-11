@@ -46,6 +46,86 @@ impl TlReadSpec {
     }
 }
 
+/// 合并后单条 TL 的寄存器上限。设备单段处理上限是 127，这里留余量。
+pub const MODBUS_TLV_MAX_REGS_PER_MERGED_ITEM: u16 = 120;
+
+/// 合并块里的一张原卡片。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoalescedTlMember {
+    pub source_index: usize,
+    pub register_offset: u16,
+    pub register_count: u16,
+}
+
+/// 同一从站上首尾相接、合并成一条 TL 的读请求。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoalescedTlRead {
+    pub spec: TlReadSpec,
+    pub members: Vec<CoalescedTlMember>,
+}
+
+/// 把 `(从站, 起始地址, 寄存器个数)` 里首尾相接的项并成较少的 TL。
+/// 不同从站、中间有空档、或合并后超过 [`MODBUS_TLV_MAX_REGS_PER_MERGED_ITEM`] 时另起一条。
+/// 单项本身超过上限时保持原样。同一从站内按地址排序，与卡片在列表中的顺序无关。
+pub fn coalesce_contiguous_tl_reads(items: &[(u8, u16, u16)]) -> Vec<CoalescedTlRead> {
+    let mut slave_order: Vec<u8> = Vec::new();
+    let mut grouped: Vec<Vec<(usize, u16, u16)>> = Vec::new();
+    for (index, &(slave, addr, count)) in items.iter().enumerate() {
+        let count = count.max(1);
+        if let Some(pos) = slave_order.iter().position(|s| *s == slave) {
+            grouped[pos].push((index, addr, count));
+        } else {
+            slave_order.push(slave);
+            grouped.push(vec![(index, addr, count)]);
+        }
+    }
+
+    let mut out = Vec::new();
+    for (slave, mut group) in slave_order.into_iter().zip(grouped) {
+        group.sort_by_key(|(index, addr, _)| (*addr, *index));
+        let mut current: Option<CoalescedTlRead> = None;
+        for (index, addr, count) in group {
+            let can_extend = current.as_ref().is_some_and(|block| {
+                let block_regs = block.spec.byte_len / 2;
+                let end = block.spec.reg_addr.saturating_add(block_regs);
+                addr == end
+                    && block_regs
+                        .checked_add(count)
+                        .is_some_and(|sum| sum <= MODBUS_TLV_MAX_REGS_PER_MERGED_ITEM)
+            });
+            if can_extend {
+                let block = current.as_mut().expect("can_extend");
+                let register_offset = block.spec.byte_len / 2;
+                block.spec.byte_len = block
+                    .spec
+                    .byte_len
+                    .saturating_add(count.saturating_mul(2));
+                block.members.push(CoalescedTlMember {
+                    source_index: index,
+                    register_offset,
+                    register_count: count,
+                });
+            } else {
+                if let Some(block) = current.take() {
+                    out.push(block);
+                }
+                current = Some(CoalescedTlRead {
+                    spec: TlReadSpec::from_register(slave, addr, count),
+                    members: vec![CoalescedTlMember {
+                        source_index: index,
+                        register_offset: 0,
+                        register_count: count,
+                    }],
+                });
+            }
+        }
+        if let Some(block) = current {
+            out.push(block);
+        }
+    }
+    out
+}
+
 /// 将 TL 列表按 [`MODBUS_TLV_MAX_ITEMS_PER_BATCH`] 分块。
 pub fn chunk_tl_batches(specs: &[TlReadSpec]) -> Vec<&[TlReadSpec]> {
     specs.chunks(MODBUS_TLV_MAX_ITEMS_PER_BATCH).collect()
@@ -74,6 +154,35 @@ pub fn tlv_register_values(
         )
     })?;
     tlv_data_to_u16(&unit.data)
+}
+
+/// 从一条合并后的 TLV 块中，按寄存器偏移取出某一张卡片的值。
+pub fn tlv_block_register_values(
+    results: &[TlvReadResult],
+    slave_addr: u8,
+    block_addr: u16,
+    register_offset: u16,
+    register_count: u16,
+) -> io::Result<Vec<u16>> {
+    let unit = find_tlv_result(results, slave_addr, block_addr).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("TLV 响应缺少寄存器 {block_addr}（从站 {slave_addr}）"),
+        )
+    })?;
+    let words = tlv_data_to_u16(&unit.data)?;
+    let start = usize::from(register_offset);
+    let end = start.saturating_add(usize::from(register_count));
+    if end > words.len() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "TLV 寄存器 {block_addr} 长度不足：需要偏移 {register_offset} 起 {register_count} 个，实际 {} 个",
+                words.len()
+            ),
+        ));
+    }
+    Ok(words[start..end].to_vec())
 }
 
 /// TLV 响应中解析出的一个寄存器块。
@@ -451,5 +560,70 @@ mod tests {
         assert_eq!(tlv_data_to_u16(&units[0].data).unwrap(), vec![100, 256]);
         assert!(tlv_register_values(&units, 1, 100).is_ok());
         assert!(tlv_register_values(&units, 0, 100).is_err());
+    }
+
+    #[test]
+    fn coalesce_contiguous_registers_into_one_tl() {
+        let items: Vec<_> = (0..27).map(|i| (0u8, 6000 + i, 1u16)).collect();
+        let blocks = coalesce_contiguous_tl_reads(&items);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].spec.reg_addr, 6000);
+        assert_eq!(blocks[0].spec.byte_len, 54);
+        assert_eq!(blocks[0].members.len(), 27);
+        assert_eq!(blocks[0].members[26].register_offset, 26);
+        assert_eq!(blocks[0].members[26].source_index, 26);
+    }
+
+    #[test]
+    fn coalesce_keeps_gaps_and_other_slaves_separate() {
+        let items = vec![
+            (0u8, 142u16, 2u16),
+            (0, 148, 2),
+            (0, 1420, 2),
+            (0, 1422, 2),
+            (0, 1424, 2),
+            (1, 1426, 2),
+        ];
+        let blocks = coalesce_contiguous_tl_reads(&items);
+        assert_eq!(blocks.len(), 4);
+        assert_eq!(blocks[0].spec.reg_addr, 142);
+        assert_eq!(blocks[1].spec.reg_addr, 148);
+        assert_eq!(blocks[2].spec.reg_addr, 1420);
+        assert_eq!(blocks[2].spec.byte_len, 12);
+        assert_eq!(blocks[2].members.len(), 3);
+        assert_eq!(blocks[3].spec.slave_addr, 1);
+    }
+
+    #[test]
+    fn coalesce_sorts_within_slave_and_stops_at_cap() {
+        let items = vec![(0u8, 6002u16, 1u16), (0, 6000, 1), (0, 6001, 1)];
+        let blocks = coalesce_contiguous_tl_reads(&items);
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].members[0].source_index, 1);
+        assert_eq!(blocks[0].members[2].source_index, 0);
+
+        let long: Vec<_> = (0..121).map(|i| (0u8, i, 1u16)).collect();
+        let capped = coalesce_contiguous_tl_reads(&long);
+        assert_eq!(capped.len(), 2);
+        assert_eq!(capped[0].spec.byte_len, 240);
+        assert_eq!(capped[1].spec.reg_addr, 120);
+
+        let oversized = coalesce_contiguous_tl_reads(&[(0, 100, 200)]);
+        assert_eq!(oversized.len(), 1);
+        assert_eq!(oversized[0].spec.byte_len, 400);
+    }
+
+    #[test]
+    fn tlv_block_register_values_slices_merged_block() {
+        let results = vec![TlvReadResult {
+            slave_addr: 0,
+            reg_addr: 6000,
+            data: vec![0x00, 0x01, 0x00, 0x02, 0x00, 0x03],
+        }];
+        assert_eq!(
+            tlv_block_register_values(&results, 0, 6000, 1, 1).unwrap(),
+            vec![2]
+        );
+        assert!(tlv_block_register_values(&results, 0, 6000, 2, 2).is_err());
     }
 }

@@ -17,8 +17,8 @@ use crate::services::modbus::{
 };
 
 use super::modbus::{
-    build_read_holding, chunk_tl_batches, format_query_value, tlv_batch_start_index,
-    tlv_item_batch_index, tlv_register_values, TlReadSpec,
+    build_read_holding, coalesce_contiguous_tl_reads, format_query_value, tlv_block_register_values,
+    MODBUS_TLV_MAX_ITEMS_PER_BATCH,
 };
 use super::poll::{modbus_read, modbus_tlv_read, poll_dashboard, poll_external_devices, probe_modbus_capabilities, read_device_info_once, ModbusGate};
 use super::poll_policy::{
@@ -294,7 +294,7 @@ async fn poll_register_items_tlv(
     slave_id: u8,
     items: &[QueryPollItemSpec],
 ) -> bool {
-    let mut tl_items = Vec::new();
+    let mut spans = Vec::new();
     let mut valid_items = Vec::new();
 
     for item in items {
@@ -310,74 +310,86 @@ async fn poll_register_items_tlv(
             }
             Some(address) => {
                 let count = item.register_count.max(1);
-                tl_items.push(TlReadSpec::from_register(slave_id, address, count));
-                valid_items.push((item, address, count));
+                spans.push((slave_id, address, count));
+                valid_items.push(item);
             }
         }
     }
 
-    if tl_items.is_empty() {
+    if spans.is_empty() {
         return false;
     }
 
-    let batches = chunk_tl_batches(&tl_items);
-    let mut batch_failed = vec![false; batches.len()];
-    let mut all_results = Vec::new();
-    for (batch_idx, batch) in batches.iter().enumerate() {
-        match modbus_tlv_read(protocol, write_tx, batch).await {
-            Ok(mut chunk) => all_results.append(&mut chunk),
+    // 同一从站上首尾相接的寄存器并成一条再发出去，回来按原卡片地址切开。
+    let blocks = coalesce_contiguous_tl_reads(&spans);
+    let mut any_ok = false;
+    for batch in blocks.chunks(MODBUS_TLV_MAX_ITEMS_PER_BATCH) {
+        let specs: Vec<_> = batch.iter().map(|block| block.spec).collect();
+        let results = match modbus_tlv_read(protocol, write_tx, &specs).await {
+            Ok(results) => results,
             Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => return false,
             Err(err) => {
-                batch_failed[batch_idx] = true;
                 let err_text = err.to_string();
-                let start = tlv_batch_start_index(batch_idx);
-                let end = start + batch.len();
-                for (item, _, _) in &valid_items[start..end] {
-                    let poll_result = QueryItemPollResult {
-                        item_index: item.item_index,
-                        status: "失败".into(),
-                        result: err_text.clone(),
-                        ok: false,
-                    };
-                    publish_query_item(query_live, query_generation, &target, &poll_result);
-                }
-            }
-        }
-    }
-
-    let mut any_ok = false;
-    for (idx, (item, _address, _count)) in valid_items.iter().enumerate() {
-        let batch_idx = tlv_item_batch_index(idx);
-        if batch_failed.get(batch_idx).copied().unwrap_or(false) {
-            continue;
-        }
-        let addr = item.protocol_address.unwrap_or(0);
-        let poll_result = match tlv_register_values(&all_results, slave_id, addr) {
-            Ok(values) => match format_poll_item(&values, item) {
-                Ok(result) => {
-                    any_ok = true;
-                    QueryItemPollResult {
-                        item_index: item.item_index,
-                        status: "正常".into(),
-                        result,
-                        ok: true,
+                for block in batch {
+                    for member in &block.members {
+                        let item = valid_items[member.source_index];
+                        publish_query_item(
+                            query_live,
+                            query_generation,
+                            &target,
+                            &QueryItemPollResult {
+                                item_index: item.item_index,
+                                status: "失败".into(),
+                                result: err_text.clone(),
+                                ok: false,
+                            },
+                        );
                     }
                 }
-                Err(err) => QueryItemPollResult {
-                    item_index: item.item_index,
-                    status: "解析失败".into(),
-                    result: err,
-                    ok: false,
-                },
-            },
-            Err(err) => QueryItemPollResult {
-                item_index: item.item_index,
-                status: "失败".into(),
-                result: err.to_string(),
-                ok: false,
-            },
+                continue;
+            }
         };
-        publish_query_item(query_live, query_generation, &target, &poll_result);
+
+        for block in batch {
+            for member in &block.members {
+                let item = valid_items[member.source_index];
+                let poll_result = match tlv_block_register_values(
+                    &results,
+                    block.spec.slave_addr,
+                    block.spec.reg_addr,
+                    member.register_offset,
+                    member.register_count,
+                ) {
+                    Ok(values) => match format_poll_item(&values, item) {
+                        Ok(result) => {
+                            any_ok = true;
+                            QueryItemPollResult {
+                                item_index: item.item_index,
+                                status: "正常".into(),
+                                result,
+                                ok: true,
+                            }
+                        }
+                        Err(err) => QueryItemPollResult {
+                            item_index: item.item_index,
+                            status: "解析失败".into(),
+                            result: err,
+                            ok: false,
+                        },
+                    },
+                    Err(err) => QueryItemPollResult {
+                        item_index: item.item_index,
+                        status: "失败".into(),
+                        result: err.to_string(),
+                        ok: false,
+                    },
+                };
+                if poll_result.ok {
+                    any_ok = true;
+                }
+                publish_query_item(query_live, query_generation, &target, &poll_result);
+            }
+        }
     }
 
     any_ok || !items.is_empty()

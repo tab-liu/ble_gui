@@ -28,10 +28,27 @@ use super::modbus::{
     REG_WIFI_SSID_NOW_COUNT, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT,
 };
 
-/// TLV：收到 ACK / 任一数据分包后重置；无进展超过此时长则失败。
+/// TLV：还没有数据包时使用。写 21000 的确认是立刻回的，数据帧要晚一拍，
+/// 只再等 1 秒会把晚到的第一包判成超时。
+const MODBUS_TLV_FIRST_DATA_TIMEOUT_MS: u64 = 4000;
+/// TLV：已经收到数据包之后，包与包之间的空闲上限。
 const MODBUS_TLV_IDLE_TIMEOUT_MS: u64 = 1000;
 /// TLV：整次组合读硬上限（防断续永远凑不齐）。
 const MODBUS_TLV_TOTAL_TIMEOUT_MS: u64 = 8000;
+
+fn describe_tl_read(items: &[TlReadSpec]) -> String {
+    let regs: u32 = items.iter().map(|item| u32::from(item.byte_len / 2)).sum();
+    let bytes: u32 = items.iter().map(|item| u32::from(item.byte_len)).sum();
+    let mut parts: Vec<String> = items
+        .iter()
+        .take(8)
+        .map(|item| format!("s{}@{}×{}B", item.slave_addr, item.reg_addr, item.byte_len))
+        .collect();
+    if items.len() > 8 {
+        parts.push(format!("…共{}项", items.len()));
+    }
+    format!("{regs}寄存器 {bytes}B [{}]", parts.join(" "))
+}
 
 fn hex_preview(data: &[u8], max: usize) -> String {
     let take = data.len().min(max);
@@ -392,6 +409,14 @@ pub(crate) async fn modbus_tlv_read(
     }
 
     let request = super::modbus::build_tlv_read_request(tl_items);
+    let request_desc = describe_tl_read(tl_items);
+    if tl_items.iter().any(|item| item.byte_len >= 128) {
+        warn!(
+            target: "ble_gui::poll",
+            "TLV 大段读取 plain={}B {request_desc}",
+            request.len(),
+        );
+    }
     debug!(
         target: "ble_gui::poll",
         "TLV 读请求 {} 项 plain={} hex={}",
@@ -429,7 +454,8 @@ pub(crate) async fn modbus_tlv_read(
 
     let started = tokio::time::Instant::now();
     let total_deadline = started + Duration::from_millis(MODBUS_TLV_TOTAL_TIMEOUT_MS);
-    let mut idle_deadline = started + Duration::from_millis(MODBUS_TLV_IDLE_TIMEOUT_MS);
+    let mut idle_limit_ms = MODBUS_TLV_IDLE_TIMEOUT_MS;
+    let mut idle_deadline = started + Duration::from_millis(idle_limit_ms);
     let mut collector = TlvPacketCollector::default();
     let mut got_ack = false;
     let mut rx_frames = 0u32;
@@ -473,8 +499,13 @@ pub(crate) async fn modbus_tlv_read(
             log_unrecognized_tlv_frame(&resp);
         }
         if progressed {
-            idle_deadline =
-                tokio::time::Instant::now() + Duration::from_millis(MODBUS_TLV_IDLE_TIMEOUT_MS);
+            // 只有写确认、还没有数据包时放宽；数据开始到达后仍按包间 1 秒。
+            idle_limit_ms = if collector.received_count() == 0 {
+                MODBUS_TLV_FIRST_DATA_TIMEOUT_MS
+            } else {
+                MODBUS_TLV_IDLE_TIMEOUT_MS
+            };
+            idle_deadline = tokio::time::Instant::now() + Duration::from_millis(idle_limit_ms);
         }
         if collector.is_complete() {
             let assembled = collector.assembled();
@@ -504,20 +535,21 @@ pub(crate) async fn modbus_tlv_read(
                 .rx_pending_debug();
             let reason = if now >= total_deadline {
                 "总时长"
+            } else if got_ack && collector.received_count() == 0 {
+                "首包等待"
             } else {
                 "包间空闲"
             };
             warn!(
                 target: "ble_gui::poll",
-                "TLV 响应超时 ({reason} idle={}ms total={}ms elapsed={}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B rx_pending={}B [{}]",
-                MODBUS_TLV_IDLE_TIMEOUT_MS,
+                "TLV 响应超时 ({reason} idle={}ms total={}ms elapsed={}ms) ack={got_ack} frames={rx_frames} packets={}/{} assembled={}B rx_pending={}B [{pending_hex}] {request_desc}",
+                idle_limit_ms,
                 MODBUS_TLV_TOTAL_TIMEOUT_MS,
                 started.elapsed().as_millis(),
                 collector.received_count(),
                 collector.expected_total().unwrap_or(0),
                 collector.assembled().len(),
                 pending,
-                pending_hex,
             );
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,

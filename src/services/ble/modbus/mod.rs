@@ -57,8 +57,9 @@ pub use rtu::{
 };
 pub use sub_devices::{apply_sub_device_report, parse_reg21000_report_frame, sn_type_name};
 pub use tlv::{
-    build_tlv_read_request, build_write_multiple, chunk_tl_batches,
-    iot_status_supports_tlv, is_fc10_write_ack, parse_tlv_read_units, parse_tlv_response_packet,
-    describe_tlv_units, tlv_register_values, tlv_batch_start_index, tlv_item_batch_index,
-    TlReadSpec, TlvPacketCollector, TlvReadResult, REG_IOT_STATUS, REG_21000,
+    build_tlv_read_request, build_write_multiple, chunk_tl_batches, coalesce_contiguous_tl_reads,
+    describe_tlv_units, iot_status_supports_tlv, is_fc10_write_ack, parse_tlv_read_units,
+    parse_tlv_response_packet, tlv_batch_start_index, tlv_block_register_values,
+    tlv_item_batch_index, tlv_register_values, CoalescedTlRead, TlReadSpec, TlvPacketCollector,
+    TlvReadResult, MODBUS_TLV_MAX_ITEMS_PER_BATCH, REG_21000, REG_IOT_STATUS,
 };
