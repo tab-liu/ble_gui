@@ -4,7 +4,7 @@
 //! - [`QueryPollSnapshot`]：查询页 **与** 设备配置页共用的单项读回结果  
 //!   （通过 [`QueryPollTarget`] 区分归属，避免串页）
 //!
-//! BLE worker 写入上述 `Arc<Mutex<_>>`；UI 定时器读 generation 后合并进 Slint。
+//! BLE worker 写入上述 `Arc<Mutex<_>>`；UI 事件回调读 generation 后合并进 Slint。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -258,7 +258,7 @@ pub type SharedQueryPollLive = Arc<Mutex<QueryPollSnapshot>>;
 struct ModbusInner {
     live: SharedModbusLive,
     query_live: SharedQueryPollLive,
-    /// worker 写入 query_live 后递增，UI 定时器据此触发合并。
+    /// worker 写入 query_live 后递增，UI 事件回调据此触发合并。
     query_poll_generation: Arc<AtomicU64>,
     session_active: bool,
 }

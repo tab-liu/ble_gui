@@ -26,7 +26,7 @@
 //! │  Slint UI   │ ◄─────────────────► │ pages::*::wire   │
 //! │  (ui/*.slint)│   property sync    │ AppContext       │
 //! └──────┬──────┘                     └────────┬─────────┘
-//!        │ 50ms timer / refresh_all            │
+//!        │ worker 事件 → 刷新对应区域        │
 //!        ▼                                     ▼
 //! ┌─────────────┐                     ┌──────────────────┐
 //! │ ui::bindings│                     │ services::*      │
@@ -102,7 +102,7 @@
 //!
 //! | 模块 | 职责 |
 //! |------|------|
-//! | [`app`] | 组装 UI、定时器、事件循环入口 |
+//! | [`app`] | 组装 UI、事件回调、事件循环入口 |
 //! | [`pages`] | 各页面回调接线（dashboard / modbus / device_config / external / firmware / wifi_provision） |
 //! | [`services`] | BLE、Modbus、固件 OTA、持久化、主题 |
 //! | [`state`] | `AppContext`、页面 ID、对话框常量 |

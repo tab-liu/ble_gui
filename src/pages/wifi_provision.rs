@@ -19,6 +19,14 @@ use crate::state::wifi_provision::WifiProvisionPhase;
 use crate::state::AppContext;
 use crate::ui::{MainWindow, RegValueType, WifiSavedNetwork, WifiScanAp};
 
+/// 配网正在等 WiFi 或云端时，超时只跟墙上时钟有关，需要周期推进。
+pub fn wifi_phase_needs_clock(ctx: &AppContext) -> bool {
+    matches!(
+        ctx.state.borrow().device_config.wifi.phase,
+        WifiProvisionPhase::ConnectingWifi | WifiProvisionPhase::ConnectingCloud
+    )
+}
+
 pub fn tick_wifi_provision(ui: &MainWindow, ctx: &AppContext) {
     {
         let connected = ctx.ble.is_connected();

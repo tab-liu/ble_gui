@@ -396,6 +396,12 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     if page == crate::services::ble::AppPage::DeviceConfig {
         crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
+    refresh_firmware_from_session(ui, ctx);
+}
+
+/// 把当前连接上的机型/版本写入固件服务，并刷新固件页属性。
+pub fn refresh_firmware_from_session(ui: &MainWindow, ctx: &AppContext) {
+    let connected = ctx.ble.is_connected();
     let (versions, iot_ver, dev_type, sn, software) = if connected {
         ctx.modbus
             .shared_live()
