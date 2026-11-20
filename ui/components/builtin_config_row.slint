@@ -1,14 +1,15 @@
 import { LineEdit, ComboBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { BuiltinControl, RegValueLabel, RegValueType } from "../types.slint";
 import { ToolbarButton } from "toolbar_button.slint";
 
 /// 常用设置行：无删除；读回与设置分离。
 export component BuiltinConfigRow inherits Rectangle {
     in property <string> name;
     in property <string> register;
-    in property <string> value-type;
+    in property <RegValueType> value-type;
     in property <int> register-count;
-    in property <int> widget-kind;
+    in property <BuiltinControl> widget-kind;
     in property <[string]> enum-labels;
     in property <[string]> enum-values;
     in property <int> enum-index;
@@ -53,7 +54,7 @@ export component BuiltinConfigRow inherits Rectangle {
 
             Text {
                 text: "寄存器 " + root.register
-                    + " · " + root.value-type
+                    + " · " + RegValueLabel.text(root.value-type)
                     + (root.register-count > 1 ? (" ×" + root.register-count) : "")
                     + (root.dirty ? " · 未写入" : "");
                 color: Theme.text-dim;
@@ -136,7 +137,7 @@ export component BuiltinConfigRow inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            if root.widget-kind == 0: HorizontalLayout {
+            if root.widget-kind == BuiltinControl.switch: HorizontalLayout {
                 spacing: 6px;
                 cross-axis-alignment: center;
 
@@ -180,7 +181,7 @@ export component BuiltinConfigRow inherits Rectangle {
                 }
             }
 
-            if root.widget-kind == 1 && root.enum-labels.length > 0: ComboBox {
+            if root.widget-kind == BuiltinControl.choice && root.enum-labels.length > 0: ComboBox {
                 width: 280px;
                 model: root.enum-labels;
                 current-index: root.enum-index;
@@ -191,14 +192,14 @@ export component BuiltinConfigRow inherits Rectangle {
                 }
             }
 
-            if root.widget-kind == 1 && root.enum-labels.length == 0: LineEdit {
+            if root.widget-kind == BuiltinControl.choice && root.enum-labels.length == 0: LineEdit {
                 width: 120px;
                 text: root.write-value;
                 placeholder-text: "枚举值";
                 edited => { root.write-value-edited(self.text); }
             }
 
-            if root.widget-kind == 2: LineEdit {
+            if root.widget-kind == BuiltinControl.number: LineEdit {
                 width: 100px;
                 text: root.write-value;
                 placeholder-text: "数值";

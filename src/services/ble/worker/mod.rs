@@ -43,7 +43,7 @@ use super::radio::{
     is_radio_unavailable_detail, message_for_scan_failure, radio_unavailable_reason, NO_ADAPTER_HINT,
 };
 use crate::services::modbus::{SharedModbusLive, SharedQueryPollLive};
-use crate::services::firmware::{HttpOtaJob, OtaJob, SharedOtaLive, PHASE_SUCCESS};
+use crate::services::firmware::{FirmwarePhase, HttpOtaJob, OtaJob, SharedOtaLive};
 use crate::services::ble::modbus::POLL_INTERVAL_MS;
 
 pub enum BleCommand {
@@ -619,7 +619,7 @@ pub async fn worker_main(
                     let _ = active.cmd_tx.send(SessionCommand::StartOta { job });
                 } else if let Ok(mut g) = ota_live.lock() {
                     g.running = false;
-                    g.phase = crate::services::firmware::PHASE_FAILED;
+                    g.phase = FirmwarePhase::Failed;
                     g.result_text = "升级失败".into();
                     g.fail_reason = "未连接设备".into();
                     g.stage_text = "升级失败".into();
@@ -631,7 +631,7 @@ pub async fn worker_main(
                     let _ = active.cmd_tx.send(SessionCommand::StartHttpOta { job });
                 } else if let Ok(mut g) = ota_live.lock() {
                     g.running = false;
-                    g.phase = crate::services::firmware::PHASE_FAILED;
+                    g.phase = FirmwarePhase::Failed;
                     g.result_text = "升级失败".into();
                     g.fail_reason = "未连接设备".into();
                     g.stage_text = "升级失败".into();

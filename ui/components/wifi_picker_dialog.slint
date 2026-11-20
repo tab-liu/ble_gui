@@ -1,7 +1,7 @@
 import { Button, VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { ToolbarButton } from "toolbar_button.slint";
-import { WifiSavedNetwork, WifiScanAp } from "../types.slint";
+import { WifiSavedNetwork, WifiScanAp, WifiPickerKind } from "../types.slint";
 
 component WifiScanRow inherits Rectangle {
     in property <string> ssid;
@@ -63,9 +63,9 @@ component WifiScanRow inherits Rectangle {
     }
 }
 
-/// 配网选择弹窗：1=扫描附近 WiFi，2=已保存历史。
+/// 配网选择弹窗：扫描附近 WiFi，或已保存的历史。
 export component WifiPickerDialog inherits Rectangle {
-    in property <int> kind;
+    in property <WifiPickerKind> kind;
     in property <bool> scan-busy;
     in property <string> scan-message;
     in property <[WifiScanAp]> scan-aps;
@@ -81,10 +81,10 @@ export component WifiPickerDialog inherits Rectangle {
     height: 100%;
     background: transparent;
 
-    property <bool> is-scan: root.kind == 1;
-    property <bool> is-history: root.kind == 2;
+    property <bool> is-scan: root.kind == WifiPickerKind.scan;
+    property <bool> is-history: root.kind == WifiPickerKind.history;
 
-    if root.kind != 0: TouchArea {
+    if root.kind != WifiPickerKind.closed: TouchArea {
         width: 100%;
         height: 100%;
 

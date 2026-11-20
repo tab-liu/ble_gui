@@ -22,7 +22,7 @@ mod wifi_provision;
 
 pub use device_config_builtin::{
     bind_option_standalone_only, bind_trigger_field, builtin_bind_supported, enum_index_for_value,
-    is_parallel_ha1_device, BuiltinSettingDef, BuiltinWidget, RegisterFieldPatch, BUILTIN_SETTINGS,
+    is_parallel_ha1_device, BuiltinSettingDef, RegisterFieldPatch, BUILTIN_SETTINGS,
     DEFAULT_SLAVE_ID as BUILTIN_CONFIG_SLAVE_ID, IOT_CLOUD_DNS_REGISTER,
     IOT_CLOUD_DNS_REGISTER_COUNT,
 };
@@ -40,7 +40,8 @@ pub use device_info::{
 };
 pub use query::{
     encode_write_value, format_query_value, integer_debug_hex, parse_register_address,
-    parse_register_count, parse_scale, parse_value_type, value_type_from_index, QueryValueType,
+    parse_register_count, parse_scale, parse_value_type, stored_value_type, value_type_from_index,
+    value_type_to_index,
 };
 pub use wifi_provision::{
     disconnect_reason_text, is_wifi_poll_index, parse_disconnect_reason, parse_link_status,

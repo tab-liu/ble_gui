@@ -6,16 +6,14 @@
 use slint::Model;
 
 use crate::services::ble::modbus::{
-    parse_register_address, parse_scale, parse_value_type, BUILTIN_SETTINGS, QueryValueType,
+    parse_register_address, parse_scale, BUILTIN_SETTINGS,
     REG_LINK_STATUS, REG_LINK_STATUS_COUNT, REG_STA_IPV4, REG_STA_IPV4_COUNT, REG_WIFI_DISCONNECT,
     REG_WIFI_SSID_NOW, REG_WIFI_SSID_NOW_COUNT, WIFI_POLL_DISCONNECT, WIFI_POLL_LINK,
     WIFI_POLL_SSID_NOW, WIFI_POLL_STA_IP,
 };
 use crate::services::ble::{PollForeground, QueryPollItemSpec};
-use crate::state::{
-    AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_EXTERNAL, PAGE_FIRMWARE, PAGE_MODBUS,
-};
-use crate::ui::MainWindow;
+use crate::state::{AppContext, AppPage};
+use crate::ui::{MainWindow, RegValueType};
 
 /// 根据当前页面与激活列表，更新 worker 的 [`PollForeground`]。
 pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
@@ -23,12 +21,11 @@ pub fn sync_poll_policy(ui: &MainWindow, ctx: &AppContext) {
         PollForeground::None
     } else {
         match ctx.ble.ui_page() {
-            PAGE_DASHBOARD => PollForeground::Dashboard,
-            PAGE_MODBUS => build_modbus_query_foreground(ui, ctx),
-            PAGE_DEVICE_CONFIG => build_device_config_foreground(ui, ctx),
-            PAGE_EXTERNAL => PollForeground::ExternalDevices,
-            PAGE_FIRMWARE => PollForeground::None,
-            _ => PollForeground::None,
+            AppPage::Dashboard => PollForeground::Dashboard,
+            AppPage::Modbus => build_modbus_query_foreground(ui, ctx),
+            AppPage::DeviceConfig => build_device_config_foreground(ui, ctx),
+            AppPage::External => PollForeground::ExternalDevices,
+            AppPage::Firmware => PollForeground::None,
         }
     };
     ctx.ble.set_poll_foreground(foreground);
@@ -66,7 +63,7 @@ fn build_modbus_query_foreground(ui: &MainWindow, ctx: &AppContext) -> PollForeg
             register_text: register_text.clone(),
             protocol_address: parse_register_address(&register_text).ok(),
             register_count,
-            value_type: parse_value_type(&row.value_type.to_string()),
+            value_type: row.value_type,
             scale,
             bit: None,
         });
@@ -130,7 +127,7 @@ fn build_device_config_foreground(ui: &MainWindow, ctx: &AppContext) -> PollFore
             register_text: register_text.clone(),
             protocol_address: parse_register_address(&register_text).ok(),
             register_count: row.register_count.max(1) as u16,
-            value_type: parse_value_type(&row.value_type.to_string()),
+            value_type: row.value_type,
             scale: 1,
             bit: None,
         });
@@ -151,7 +148,7 @@ fn wifi_status_poll_items() -> Vec<QueryPollItemSpec> {
             register_text: REG_LINK_STATUS.to_string(),
             protocol_address: Some(REG_LINK_STATUS),
             register_count: REG_LINK_STATUS_COUNT,
-            value_type: QueryValueType::Integer,
+            value_type: RegValueType::Integer,
             scale: 1,
             bit: None,
         },
@@ -160,7 +157,7 @@ fn wifi_status_poll_items() -> Vec<QueryPollItemSpec> {
             register_text: REG_WIFI_SSID_NOW.to_string(),
             protocol_address: Some(REG_WIFI_SSID_NOW),
             register_count: REG_WIFI_SSID_NOW_COUNT,
-            value_type: QueryValueType::String,
+            value_type: RegValueType::Text,
             scale: 1,
             bit: None,
         },
@@ -169,7 +166,7 @@ fn wifi_status_poll_items() -> Vec<QueryPollItemSpec> {
             register_text: REG_WIFI_DISCONNECT.to_string(),
             protocol_address: Some(REG_WIFI_DISCONNECT),
             register_count: 1,
-            value_type: QueryValueType::Integer,
+            value_type: RegValueType::Integer,
             scale: 1,
             bit: None,
         },
@@ -178,7 +175,7 @@ fn wifi_status_poll_items() -> Vec<QueryPollItemSpec> {
             register_text: REG_STA_IPV4.to_string(),
             protocol_address: Some(REG_STA_IPV4),
             register_count: REG_STA_IPV4_COUNT,
-            value_type: QueryValueType::Integer,
+            value_type: RegValueType::Integer,
             scale: 1,
             bit: None,
         },

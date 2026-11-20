@@ -14,7 +14,7 @@ use log::{info, warn};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::services::firmware::{
-    OtaJob, SharedOtaLive, PHASE_FAILED, PHASE_SUCCESS,
+    FirmwarePhase, OtaJob, SharedOtaLive,
 };
 
 use super::modbus::{
@@ -199,7 +199,7 @@ pub(crate) fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl 
     let reason = reason.into();
     if let Ok(mut g) = ota.lock() {
         g.running = false;
-        g.phase = PHASE_FAILED;
+        g.phase = FirmwarePhase::Failed;
         g.result_text = if g.cancel { "已停止".into() } else { "升级失败".into() };
         g.fail_reason = reason.clone();
         g.stage_text = if g.cancel { "已停止".into() } else { "升级失败".into() };
@@ -216,7 +216,7 @@ pub(crate) fn fail(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, reason: impl 
 pub(crate) fn succeed(ota: &SharedOtaLive, ui: &super::UiRefreshSlot, stage: String) {
     if let Ok(mut g) = ota.lock() {
         g.running = false;
-        g.phase = PHASE_SUCCESS;
+        g.phase = FirmwarePhase::Success;
         g.pc_percent = 100;
         g.device_percent = 100;
         g.result_text = "升级成功".into();

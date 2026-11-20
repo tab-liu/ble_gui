@@ -21,24 +21,27 @@ use crate::pages::wifi_provision;
 use crate::services::ble::modbus::{
     bind_option_standalone_only, bind_trigger_field, builtin_bind_supported,
     encode_write_value, enum_index_for_value, integer_debug_hex, is_parallel_ha1_device,
-    is_wifi_poll_index, parse_register_address, parse_value_type, BuiltinSettingDef, BuiltinWidget,
+    is_wifi_poll_index, parse_register_address, value_type_from_index, value_type_to_index,
+    BuiltinSettingDef,
     BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS,
 };
 use crate::services::device_config_store;
 use crate::services::modbus::QueryPollTarget;
 use crate::services::poll_sync::sync_poll_policy;
 use crate::state::device_config::custom_groups_to_schema;
-use crate::state::{AppContext, PAGE_DEVICE_CONFIG};
+use crate::state::{AppContext, AppPage};
+use crate::ui::kinds;
 use crate::ui::{
-    BuiltinConfigItem, DeviceConfigGroup, DeviceConfigItem, MainWindow, ModbusQueryLayoutRow,
+    BuiltinConfigItem, BuiltinControl, ConfigWidget, DeviceConfigGroup, DeviceConfigItem,
+    MainWindow, ModbusQueryLayoutRow, RegValueType,
 };
 
 fn empty_read() -> (SharedString, SharedString, SharedString, i32) {
     ("—".into(), "—".into(), "".into(), 14)
 }
 
-fn result_hex_for(result: &str, value_type: &SharedString) -> SharedString {
-    integer_debug_hex(result, parse_value_type(&value_type.to_string()), 1).into()
+fn result_hex_for(result: &str, value_type: RegValueType) -> SharedString {
+    integer_debug_hex(result, value_type, 1).into()
 }
 
 fn result_font_size(char_count: usize) -> i32 {
@@ -50,8 +53,8 @@ fn result_font_size(char_count: usize) -> i32 {
     }
 }
 
-fn display_for_config(result: &str, widget_kind: i32) -> SharedString {
-    if widget_kind == 0 {
+fn display_for_config(result: &str, widget_kind: ConfigWidget) -> SharedString {
+    if widget_kind == ConfigWidget::Switch {
         match result.trim() {
             "1" | "true" => "开".into(),
             "0" | "false" => "关".into(),
@@ -63,8 +66,19 @@ fn display_for_config(result: &str, widget_kind: i32) -> SharedString {
     }
 }
 
+fn display_for_builtin_widget(result: &str, widget: BuiltinControl) -> SharedString {
+    display_for_config(
+        result,
+        if widget == BuiltinControl::Switch {
+            ConfigWidget::Switch
+        } else {
+            ConfigWidget::Text
+        },
+    )
+}
+
 fn display_for_builtin_result(result: &str, def: &BuiltinSettingDef) -> SharedString {
-    display_for_config(result, def.widget as i32)
+    display_for_builtin_widget(result, def.widget)
 }
 
 fn builtin_availability(
@@ -122,37 +136,6 @@ fn is_builtin_group(ctx: &AppContext, group_index: usize) -> bool {
         .row_data(group_index)
         .map(|g| g.builtin)
         .unwrap_or(false)
-}
-
-fn widget_kind_from_index(index: i32) -> i32 {
-    match index {
-        1 => 2,
-        _ => 1,
-    }
-}
-
-fn widget_kind_to_form_index(kind: i32) -> i32 {
-    if kind == 2 {
-        1
-    } else {
-        0
-    }
-}
-
-fn value_type_from_index(index: i32) -> SharedString {
-    match index {
-        1 => "float".into(),
-        2 => "string".into(),
-        _ => "integer".into(),
-    }
-}
-
-fn value_type_to_form_index(text: &str) -> i32 {
-    match text {
-        "float" => 1,
-        "string" => 2,
-        _ => 0,
-    }
 }
 
 fn clear_config_form(ui: &MainWindow) {
@@ -287,7 +270,7 @@ pub fn refresh_builtin_availability(ui: &MainWindow, ctx: &AppContext) {
 }
 
 fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
-    if ctx.ble.ui_page() == PAGE_DEVICE_CONFIG {
+    if ctx.ble.ui_page() == AppPage::DeviceConfig {
         sync_poll_policy(ui, ctx);
     }
 }
@@ -347,25 +330,27 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
             let Some(mut item) = st.device_config.builtin_items.row_data(r.item_index) else {
                 continue;
             };
-            let new_status: SharedString = r.status.clone().into();
+            let new_status: SharedString = r.status.label().into();
             let new_display = BUILTIN_SETTINGS
                 .get(r.item_index)
                 .map(|def| display_for_builtin_result(&r.result, def))
-                .unwrap_or_else(|| display_for_config(&r.result, item.widget_kind));
+                .unwrap_or_else(|| display_for_builtin_widget(&r.result, item.widget_kind));
             let new_hex = BUILTIN_SETTINGS
                 .get(r.item_index)
                 .map(|def| integer_debug_hex(&r.result, def.value_type, 1).into())
-                .unwrap_or_else(|| result_hex_for(&r.result, &item.value_type));
-            if item.status != new_status
+                .unwrap_or_else(|| result_hex_for(&r.result, item.value_type));
+            if item.awaiting
+                || item.status != new_status
                 || item.result_display != new_display
                 || item.result_hex != new_hex
             {
+                item.awaiting = false;
                 item.status = new_status;
                 item.result_display = new_display;
                 item.result_hex = new_hex;
                 if !item.dirty {
                     if let Some(def) = BUILTIN_SETTINGS.get(r.item_index) {
-                        if def.widget == BuiltinWidget::Enum
+                        if def.widget == BuiltinControl::Choice
                             && def.id != "device_bind"
                             && def.field.is_none()
                             && !r.result.trim().is_empty()
@@ -403,10 +388,11 @@ pub fn apply_config_poll_results(ui: &MainWindow, ctx: &AppContext) {
         let Some(item) = items.get_mut(r.item_index) else {
             continue;
         };
-        let new_status: SharedString = r.status.clone().into();
+        let new_status: SharedString = r.status.label().into();
         let new_result: SharedString = r.result.clone().into();
-        let new_hex = result_hex_for(&new_result, &item.value_type);
-        if item.status != new_status || item.result != new_result || item.result_hex != new_hex {
+        let new_hex = result_hex_for(&new_result, item.value_type);
+        if item.awaiting || item.status != new_status || item.result != new_result || item.result_hex != new_hex {
+            item.awaiting = false;
             item.status = new_status;
             item.result = new_result.clone();
             item.result_display = display_for_config(&new_result, item.widget_kind);
@@ -432,9 +418,10 @@ fn reset_config_readback(ui: &MainWindow, ctx: &AppContext) {
             let Some(mut item) = st.device_config.builtin_items.row_data(i) else {
                 continue;
             };
-            if item.status.as_str() == "等待读取" {
+            if item.awaiting {
                 continue;
             }
+            item.awaiting = true;
             item.status = "等待读取".into();
             item.result_display = empty_display.clone();
             item.result_hex = empty_hex.clone();
@@ -460,9 +447,10 @@ fn reset_config_readback(ui: &MainWindow, ctx: &AppContext) {
 
     let mut changed = false;
     for item in &mut items {
-        if item.status.as_str() == "等待读取" {
+        if item.awaiting {
             continue;
         }
+        item.awaiting = true;
         item.status = "等待读取".into();
         item.result = empty_result.clone();
         item.result_display = empty_display.clone();
@@ -679,13 +667,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             register: register.trim().into(),
             value_type: value_type_from_index(ui.get_config_form_value_type_index()),
             register_count: count,
-            widget_kind: widget_kind_from_index(ui.get_config_form_widget_index()),
+            widget_kind: kinds::config_widget_from_form(ui.get_config_form_widget_index()),
             result,
             result_display,
             result_hex,
             result_font_size,
             write_value: "".into(),
             status: "等待读取".into(),
+            awaiting: true,
             dirty: false,
         };
 
@@ -718,6 +707,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
                 items[i].result_hex = item.result_hex;
                 items[i].result_font_size = item.result_font_size;
                 items[i].status = item.status;
+                items[i].awaiting = item.awaiting;
             }
         } else {
             items.push(item);
@@ -748,8 +738,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ui.set_editing_config_index(item_index);
         ui.set_config_form_name(item.name);
         ui.set_config_form_register(item.register);
-        ui.set_config_form_widget_index(widget_kind_to_form_index(item.widget_kind));
-        ui.set_config_form_value_type_index(value_type_to_form_index(item.value_type.as_str()));
+        ui.set_config_form_widget_index(kinds::config_widget_to_form(item.widget_kind));
+        ui.set_config_form_value_type_index(value_type_to_index(item.value_type));
         ui.set_config_form_register_count(item.register_count.to_string().into());
         ui.set_show_add_config_form(true);
     });
@@ -777,6 +767,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         };
         item.write_value = value;
         item.dirty = true;
+        item.awaiting = false;
         item.status = "未写入".into();
         write_group_items(&ctx_edit, group_index, slave_id, title, builtin, items);
         sync_active_to_ui(&ui, &ctx_edit);
@@ -815,13 +806,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         let address = match parse_register_address(&item.register.to_string()) {
             Ok(a) => a,
             Err(err) => {
+                item.awaiting = false;
                 item.status = err.into();
                 write_group_items(&ctx_write, group_index, slave_id_text, title, builtin, items);
                 sync_active_to_ui(&ui, &ctx_write);
                 return;
             }
         };
-        let value_type = parse_value_type(&item.value_type.to_string());
+        let value_type = item.value_type;
         let values = match encode_write_value(
             &item.write_value.to_string(),
             value_type,
@@ -829,6 +821,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ) {
             Ok(v) => v,
             Err(err) => {
+                item.awaiting = false;
                 item.status = err.into();
                 write_group_items(&ctx_write, group_index, slave_id_text, title, builtin, items);
                 sync_active_to_ui(&ui, &ctx_write);
@@ -837,6 +830,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         };
 
         item.dirty = false;
+        item.awaiting = false;
         item.status = "写入中…".into();
         write_group_items(
             &ctx_write,
@@ -891,6 +885,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         };
         item.write_value = value;
         item.dirty = true;
+        item.awaiting = false;
         item.status = "未写入".into();
         if let Some(def) = BUILTIN_SETTINGS.get(idx) {
             refresh_builtin_enum_index(&mut item, def.enum_options);
@@ -919,16 +914,19 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             if bind_option_standalone_only(&write_text)
                 && is_parallel_ha1_device(&snap.device_name)
             {
+                item.awaiting = false;
                 item.status = "并机(HA1)设备不支持设备绑定".into();
                 st.device_config.builtin_items.set_row_data(idx, item);
                 return;
             }
             let Some(field) = bind_trigger_field(&write_text) else {
+                item.awaiting = false;
                 item.status = "未知绑定选项".into();
                 st.device_config.builtin_items.set_row_data(idx, item);
                 return;
             };
             item.dirty = false;
+            item.awaiting = false;
             item.status = "写入中…".into();
             st.device_config.builtin_items.set_row_data(idx, item);
             drop(st);
@@ -942,13 +940,14 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             return;
         }
         let values = match def.widget {
-            BuiltinWidget::Switch => {
+            BuiltinControl::Switch => {
                 vec![if parse_switch_on(&write_text) { 1 } else { 0 }]
             }
-            BuiltinWidget::Enum | BuiltinWidget::Number => {
+            BuiltinControl::Choice | BuiltinControl::Number => {
                 match encode_write_value(&write_text, def.value_type, def.register_count) {
                     Ok(v) => v,
                     Err(err) => {
+                        item.awaiting = false;
                         item.status = err.into();
                         st.device_config.builtin_items.set_row_data(idx, item);
                         return;
@@ -957,6 +956,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
             }
         };
         item.dirty = false;
+        item.awaiting = false;
         item.status = "写入中…".into();
         st.device_config.builtin_items.set_row_data(idx, item);
         drop(st);

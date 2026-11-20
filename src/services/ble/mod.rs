@@ -57,9 +57,9 @@ use state::{BleInner, LinkPhase, SharedBleState};
 use worker::{BleCommand, worker_main};
 
 pub use modbus::{REG_AC_OUTPUT, REG_DC_OUTPUT};
+pub use crate::ui::AppPage;
 pub use poll_policy::{
-    ensure_dashboard_poll_if_idle, PollForeground,
-    QueryPollItemSpec,
+    ensure_dashboard_poll_if_idle, PollForeground, QueryPollItemSpec,
 };
 pub use state::{BleScanEntry, BleSnapshot, ScanLinkHint};
 
@@ -151,11 +151,11 @@ impl BleService {
     }
 
     /// 记录 UI 当前页面（worker 连接就绪时用于默认轮询目标）。
-    pub fn set_ui_page(&self, page: i32) {
+    pub fn set_ui_page(&self, page: AppPage) {
         self.inner.poll_policy.lock().expect("poll policy lock").ui_page = page;
     }
 
-    pub fn ui_page(&self) -> i32 {
+    pub fn ui_page(&self) -> AppPage {
         self.inner.poll_policy.lock().expect("poll policy lock").ui_page
     }
 

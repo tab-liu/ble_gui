@@ -13,19 +13,19 @@ pub mod modbus_query;
 pub mod wifi_provision;
 
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, PAGE_DEVICE_CONFIG, PAGE_MODBUS};
+use crate::state::{AppContext, AppPage};
 use crate::ui::{clipboard, MainWindow};
 
 /// 切换页面并同步至 Slint 与 worker 轮询策略。
-pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: i32) {
+pub fn set_app_page(ui: &MainWindow, ctx: &AppContext, page: AppPage) {
     ctx.ble.set_ui_page(page);
     ui.set_current_page(page);
     sync_poll_policy(ui, ctx);
-    if page == PAGE_MODBUS {
+    if page == AppPage::Modbus {
         modbus_query::sync_active_query_items_to_ui(ui, ctx);
         modbus_query::sync_layout_from_window(ui, ctx);
     }
-    if page == PAGE_DEVICE_CONFIG {
+    if page == AppPage::DeviceConfig {
         device_config::sync_layout_from_window(ui, ctx);
     }
 }

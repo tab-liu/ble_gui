@@ -16,7 +16,7 @@ use crate::services::ble_favorites::{self, FavoriteDevice};
 use crate::services::firmware::FirmwareSnapshot;
 use crate::services::modbus::{DashboardData, ModbusReadMode, SubDevice};
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, PAGE_DASHBOARD, PAGE_DEVICE_CONFIG, PAGE_EXTERNAL};
+use crate::state::AppContext;
 use crate::ui::{BleFavoriteDevice, BleScanDevice, MainWindow, SubDeviceInfo};
 
 const DEFAULT_RSSI_MIN: i32 = -70;
@@ -387,13 +387,13 @@ pub fn refresh_all(ui: &MainWindow, ctx: &AppContext) {
     } else {
         ctx.modbus.on_disconnected();
     }
-    if page == PAGE_DASHBOARD {
+    if page == crate::services::ble::AppPage::Dashboard {
         refresh_modbus_dashboard(ui, &ctx.modbus);
     }
-    if page == PAGE_EXTERNAL {
+    if page == crate::services::ble::AppPage::External {
         refresh_external_devices(ui, &ctx.modbus);
     }
-    if page == PAGE_DEVICE_CONFIG {
+    if page == crate::services::ble::AppPage::DeviceConfig {
         crate::pages::device_config::refresh_builtin_availability(ui, ctx);
     }
     let (versions, iot_ver, dev_type, sn, software) = if connected {
@@ -681,7 +681,7 @@ pub fn refresh_firmware(ui: &MainWindow, snap: &FirmwareSnapshot) {
 }
 
 pub fn close_dialog(ui: &MainWindow) {
-    ui.set_dialog_kind(crate::state::DIALOG_NONE);
+    ui.set_dialog_kind(crate::ui::DialogKind::None);
     ui.set_dialog_name("".into());
 }
 

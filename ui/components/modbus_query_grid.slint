@@ -87,6 +87,7 @@ export component ModbusQueryGrid inherits Rectangle {
 
                 for idx in row.indices: ModbusQueryCard {
                     name: root.items[idx].name;
+                    status: root.items[idx].status;
                     register: root.items[idx].register;
                     result: root.items[idx].result;
                     result-display: root.items[idx].result-display;

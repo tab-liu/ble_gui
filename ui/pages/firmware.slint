@@ -1,5 +1,6 @@
 import { VerticalBox, LineEdit, CheckBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { FirmwarePhase } from "../types.slint";
 import { CopyableInfoRow, CopyFmt } from "../components/copyable_info_row.slint";
 
 component FwActionButton inherits Rectangle {
@@ -69,7 +70,7 @@ export component FirmwarePage inherits VerticalBox {
     in property <string> firmware-dev-model;
     in property <bool> firmware-has-file;
     in property <bool> firmware-part-mismatch;
-    in property <int> firmware-phase;
+    in property <FirmwarePhase> firmware-phase;
     in property <int> firmware-progress;
     in property <string> firmware-stage-text;
     in property <string> firmware-elapsed-text;
@@ -88,11 +89,11 @@ export component FirmwarePage inherits VerticalBox {
     callback force-toggled(bool);
     callback copy-text(string);
 
-    property <color> result-color: root.firmware-phase == 3 ? Theme.success
-        : (root.firmware-phase == 4 ? Theme.error
-            : (root.firmware-phase == 2 ? Theme.accent : Theme.text-secondary));
-    property <color> bar-color: root.firmware-phase == 3 ? Theme.success
-        : (root.firmware-phase == 4 ? Theme.error : Theme.accent);
+    property <color> result-color: root.firmware-phase == FirmwarePhase.success ? Theme.success
+        : (root.firmware-phase == FirmwarePhase.failed ? Theme.error
+            : (root.firmware-phase == FirmwarePhase.running ? Theme.accent : Theme.text-secondary));
+    property <color> bar-color: root.firmware-phase == FirmwarePhase.success ? Theme.success
+        : (root.firmware-phase == FirmwarePhase.failed ? Theme.error : Theme.accent);
 
     spacing: 12px;
     vertical-stretch: 1;
@@ -214,12 +215,12 @@ export component FirmwarePage inherits VerticalBox {
                         FwActionButton {
                             text: "选择文件";
                             primary: true;
-                            enabled: root.firmware-phase != 2;
+                            enabled: root.firmware-phase != FirmwarePhase.running;
                             clicked => { root.pick-file(); }
                         }
                         FwActionButton {
                             text: "清除";
-                            enabled: root.firmware-has-file && root.firmware-phase != 2;
+                            enabled: root.firmware-has-file && root.firmware-phase != FirmwarePhase.running;
                             clicked => { root.clear-file(); }
                         }
                         Rectangle { horizontal-stretch: 1; }
@@ -240,7 +241,7 @@ export component FirmwarePage inherits VerticalBox {
                             horizontal-stretch: 1;
                             min-width: 0px;
                             text <=> root.firmware-ota-version;
-                            enabled: root.firmware-has-file && root.firmware-phase != 2;
+                            enabled: root.firmware-has-file && root.firmware-phase != FirmwarePhase.running;
                             edited => { root.ota-version-edited(self.text); }
                         }
                     }
@@ -371,7 +372,7 @@ export component FirmwarePage inherits VerticalBox {
                     CheckBox {
                         text: "强制升级";
                         checked <=> root.firmware-force;
-                        enabled: root.firmware-phase != 2;
+                        enabled: root.firmware-phase != FirmwarePhase.running;
                         vertical-stretch: 0;
                         toggled => { root.force-toggled(self.checked); }
                     }
@@ -396,7 +397,7 @@ export component FirmwarePage inherits VerticalBox {
                     Rectangle { horizontal-stretch: 1; }
                 }
 
-                if root.firmware-phase == 3 || root.firmware-phase == 4: VerticalLayout {
+                if root.firmware-phase == FirmwarePhase.success || root.firmware-phase == FirmwarePhase.failed: VerticalLayout {
                     spacing: 6px;
                     CopyableInfoRow {
                         label: "结果";
@@ -404,7 +405,7 @@ export component FirmwarePage inherits VerticalBox {
                         value-color: root.result-color;
                         copy-text(t) => { root.copy-text(t); }
                     }
-                    if root.firmware-phase == 4 && root.firmware-fail-reason != "": HorizontalLayout {
+                    if root.firmware-phase == FirmwarePhase.failed && root.firmware-fail-reason != "": HorizontalLayout {
                         spacing: 8px;
                         alignment: start;
                         Text {

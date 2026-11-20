@@ -23,24 +23,12 @@ use crate::services::theme::ThemeService;
 use crate::ui::MainWindow;
 
 pub mod device_config;
-pub mod dialog;
 pub mod query;
 pub mod wifi_provision;
 
+pub use crate::services::ble::AppPage;
 pub use device_config::DeviceConfigState;
-pub use dialog::{DIALOG_COPY_QUERY, DIALOG_NEW_TAB, DIALOG_NONE};
 pub use query::ModbusQueryState;
-
-/// 主页（仪表板 SOC/功率）。
-pub const PAGE_DASHBOARD: i32 = 0;
-/// Modbus 查询页（可增删查询项 + 前台轮询）。
-pub const PAGE_MODBUS: i32 = 1;
-/// 固件升级页。`2` 曾为设置页，已删除，勿复用以免旧窗口状态错页。
-pub const PAGE_FIRMWARE: i32 = 3;
-/// 设备配置（固定「常用」+ 自定义寄存器表单）。
-pub const PAGE_DEVICE_CONFIG: i32 = 4;
-/// 外部设备 / 组网配件（21000 段列表）。
-pub const PAGE_EXTERNAL: i32 = 5;
 
 /// UI 线程可变状态（查询标签、设备配置分组等）。
 pub struct AppState {

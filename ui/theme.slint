@@ -1,8 +1,9 @@
-// theme-mode: 0=跟随系统, 1=浅色, 2=深色
 import { Palette } from "std-widgets.slint";
 
+export enum ThemeChoice { system, light, dark }
+
 export global Theme {
-    in-out property <int> mode: 0;
+    in-out property <ThemeChoice> mode: ThemeChoice.system;
     in-out property <bool> dark: false;
 
     changed mode => {
@@ -13,8 +14,8 @@ export global Theme {
     }
 
     out property <string> quick-toggle-label: root.dark ? "☀ 浅色" : "🌙 深色";
-    out property <string> mode-label: root.mode == 0 ? "跟随系统"
-        : root.mode == 1 ? "浅色" : "深色";
+    out property <string> mode-label: root.mode == ThemeChoice.system ? "跟随系统"
+        : root.mode == ThemeChoice.light ? "浅色" : "深色";
 
     // 浅色：主内容区最亮，侧栏/状态栏仅作轻微 chrome 区分
     out property <color> bg-window: root.dark ? #1a1c24 : #ffffff;

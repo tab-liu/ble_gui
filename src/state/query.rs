@@ -7,7 +7,8 @@ use std::rc::Rc;
 use slint::{Model, ModelRc, SharedString, VecModel};
 
 use crate::services::modbus_query_store::{QueryItemSchema, QueryTabSchema};
-use crate::ui::{ModbusQueryItem, ModbusTab};
+use crate::services::ble::modbus::{parse_value_type, stored_value_type};
+use crate::ui::{ModbusQueryItem, ModbusTab, QueryCardStatus};
 
 pub struct GridLayoutState {
     pub(crate) width: f32,
@@ -24,6 +25,9 @@ pub struct ModbusQueryState {
     pub selected_indices: Vec<usize>,
 }
 
+/// 还没有成功读数时，卡片大字和状态都用这句。
+pub(crate) const QUERY_PENDING_TEXT: &str = "等待查询";
+
 fn result_font_size(char_count: usize) -> i32 {
     match char_count {
         0..=6 => 20,
@@ -37,10 +41,10 @@ fn schema_item_to_query_item(item: QueryItemSchema) -> ModbusQueryItem {
     let mut mapped = ModbusQueryItem {
         name: item.name.into(),
         register: item.register.into(),
-        value_type: item.value_type.into(),
+        value_type: parse_value_type(&item.value_type),
         register_count: item.register_count,
         scale: item.scale,
-        status: SharedString::default(),
+        status: QueryCardStatus::Pending,
         result: SharedString::default(),
         result_display: SharedString::default(),
         result_hex: SharedString::default(),
@@ -52,9 +56,9 @@ fn schema_item_to_query_item(item: QueryItemSchema) -> ModbusQueryItem {
 }
 
 pub(crate) fn reset_item_runtime(item: &mut ModbusQueryItem) {
-    let result: SharedString = "（Modbus 轮询后将自动填充）".into();
+    let result: SharedString = QUERY_PENDING_TEXT.into();
     let display = result.to_string();
-    item.status = "等待查询".into();
+    item.status = QueryCardStatus::Pending;
     item.result = result.clone();
     item.result_display = display.clone().into();
     item.result_hex = SharedString::default();
@@ -91,7 +95,7 @@ pub fn tabs_to_schema(tabs: &Rc<VecModel<ModbusTab>>) -> Vec<QueryTabSchema> {
             .map(|item| QueryItemSchema {
                 name: item.name.to_string(),
                 register: item.register.to_string(),
-                value_type: item.value_type.to_string(),
+                value_type: stored_value_type(item.value_type).to_string(),
                 register_count: item.register_count,
                 scale: item.scale,
             })

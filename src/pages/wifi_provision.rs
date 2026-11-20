@@ -5,10 +5,10 @@
 use std::time::Instant;
 
 use log::warn;
-use slint::{ComponentHandle, Model, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::services::ble::modbus::{
-    encode_write_value, sta_enable_word, QueryValueType, RegisterFieldPatch,
+    encode_write_value, sta_enable_word, RegisterFieldPatch,
     BUILTIN_CONFIG_SLAVE_ID, REG_WIFI_ON_OFF,
     REG_WIFI_STA_ENABLE, REG_WIFI_STA_PASSWORD, REG_WIFI_STA_PASSWORD_COUNT, REG_WIFI_STA_SSID,
     REG_WIFI_STA_SSID_COUNT, WIFI_PASSWORD_MAX_BYTES, WIFI_SSID_MAX_BYTES,
@@ -16,8 +16,8 @@ use crate::services::ble::modbus::{
 use crate::services::modbus::QueryItemPollResult;
 use crate::services::{wifi_cred_store, wifi_scan};
 use crate::state::wifi_provision::WifiProvisionPhase;
-use crate::state::{AppContext, PAGE_DEVICE_CONFIG};
-use crate::ui::{MainWindow, WifiSavedNetwork, WifiScanAp};
+use crate::state::AppContext;
+use crate::ui::{MainWindow, RegValueType, WifiSavedNetwork, WifiScanAp};
 
 pub fn tick_wifi_provision(ui: &MainWindow, ctx: &AppContext) {
     {
@@ -28,7 +28,7 @@ pub fn tick_wifi_provision(ui: &MainWindow, ctx: &AppContext) {
             .wifi
             .advance(connected);
     }
-    if ui.get_current_page() == PAGE_DEVICE_CONFIG {
+    if ui.get_current_page() == crate::ui::AppPage::DeviceConfig {
         refresh_wifi_status(ui, ctx);
     }
 }
@@ -55,8 +55,15 @@ pub fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
     let st = ctx.state.borrow();
     let wifi = &st.device_config.wifi;
     let phase = wifi.phase;
-    let (wifi_ok, wifi_pending, cloud_ok, cloud_pending, wifi_label, cloud_label, hint) =
-        if !connected {
+    let (
+        wifi_ok,
+        wifi_pending,
+        cloud_ok,
+        cloud_pending,
+        wifi_label,
+        cloud_label,
+        hint,
+    ): (bool, bool, bool, bool, SharedString, SharedString, String) = if !connected {
             (
                 false,
                 false,
@@ -149,8 +156,14 @@ pub fn refresh_wifi_status(ui: &MainWindow, ctx: &AppContext) {
 
     ui.set_wifi_ok(wifi_ok);
     ui.set_wifi_pending(wifi_pending);
+    ui.set_wifi_fault(
+        connected && !wifi_ok && !wifi_pending && wifi_label.as_str() != "WiFi 未连接",
+    );
     ui.set_wifi_cloud_ok(cloud_ok);
     ui.set_wifi_cloud_pending(cloud_pending);
+    ui.set_wifi_cloud_fault(
+        connected && !cloud_ok && !cloud_pending && cloud_label.as_str() == "云端连接超时",
+    );
     ui.set_wifi_status_label(wifi_label);
     ui.set_wifi_cloud_status_label(cloud_label);
     ui.set_wifi_current_ssid(current_ssid.into());
@@ -228,7 +241,7 @@ fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
         return;
     }
 
-    let ssid_regs = match encode_write_value(&ssid, QueryValueType::String, REG_WIFI_STA_SSID_COUNT)
+    let ssid_regs = match encode_write_value(&ssid, RegValueType::Text, REG_WIFI_STA_SSID_COUNT)
     {
         Ok(v) => v,
         Err(err) => {
@@ -238,7 +251,7 @@ fn apply_wifi_credentials(ui: &MainWindow, ctx: &AppContext) {
     };
     let password_regs = match encode_write_value(
         &password,
-        QueryValueType::String,
+        RegValueType::Text,
         REG_WIFI_STA_PASSWORD_COUNT,
     ) {
         Ok(v) => v,
@@ -315,7 +328,7 @@ pub fn wire_wifi(ui: &MainWindow, ctx: &AppContext) {
             return;
         }
         wifi_scan::prepare_platform_access();
-        ui.set_wifi_picker_kind(1);
+        ui.set_wifi_picker_kind(crate::ui::WifiPickerKind::Scan);
         ui.set_wifi_scan_busy(true);
         ui.set_wifi_scan_message("正在扫描附近 WiFi…".into());
         let ui_weak_done = ui.as_weak();
@@ -375,7 +388,7 @@ pub fn wire_wifi(ui: &MainWindow, ctx: &AppContext) {
         if let Some(pwd) = saved_pwd {
             ui.set_wifi_password(pwd);
         }
-        ui.set_wifi_picker_kind(0);
+        ui.set_wifi_picker_kind(crate::ui::WifiPickerKind::Closed);
     });
 
     let ui_weak = ui.as_weak();
@@ -395,7 +408,7 @@ pub fn wire_wifi(ui: &MainWindow, ctx: &AppContext) {
         };
         ui.set_wifi_ssid(net.ssid);
         ui.set_wifi_password(net.password);
-        ui.set_wifi_picker_kind(0);
+        ui.set_wifi_picker_kind(crate::ui::WifiPickerKind::Closed);
     });
 
     let ctx_rm_wifi = ctx.clone();

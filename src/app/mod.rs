@@ -24,7 +24,7 @@ use slint::{ComponentHandle, SharedString, Timer, TimerMode};
 use crate::pages::{self, device_config, modbus_query, set_app_page, wifi_provision};
 use crate::services::ble::ensure_dashboard_poll_if_idle;
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, DIALOG_NONE, PAGE_DASHBOARD, PAGE_EXTERNAL};
+use crate::state::{AppContext, AppPage};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{self, refresh_all, refresh_ble, refresh_external_devices_from_live, refresh_modbus_dashboard_from_live};
 
@@ -57,10 +57,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 refresh_ble(&ui, &favorites, &snap, read_mode);
                 if snap.connected {
                     ensure_dashboard_poll_if_idle(&poll_policy);
-                    if ui.get_current_page() == PAGE_DASHBOARD {
+                    if ui.get_current_page() == crate::ui::AppPage::Dashboard {
                         refresh_modbus_dashboard_from_live(&ui, &modbus_live);
                     }
-                    if ui.get_current_page() == PAGE_EXTERNAL {
+                    if ui.get_current_page() == crate::ui::AppPage::External {
                         refresh_external_devices_from_live(&ui, &modbus_live);
                     }
                 }
@@ -68,8 +68,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }));
 
-    set_app_page(&ui, &ctx, PAGE_DASHBOARD);
-    ui.set_dialog_kind(DIALOG_NONE);
+    set_app_page(&ui, &ctx, AppPage::Dashboard);
+    ui.set_dialog_kind(crate::ui::DialogKind::None);
     ui.set_active_modbus_tab(ctx.initial_modbus_tab);
     ctx.bind_modbus_tabs(&ui);
     ctx.theme.apply(&ui);
@@ -155,7 +155,7 @@ pub fn refresh(ui: &MainWindow, ctx: &AppContext) {
 }
 
 /// 打开通用对话框（种类见 [`crate::state::dialog`]）。
-pub fn open_dialog(ui: &MainWindow, kind: i32) {
+pub fn open_dialog(ui: &MainWindow, kind: crate::ui::DialogKind) {
     ui.set_dialog_kind(kind);
     ui.set_dialog_name(SharedString::default());
 }

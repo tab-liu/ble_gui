@@ -5,10 +5,12 @@ use std::rc::Rc;
 use slint::{Model, ModelRc, SharedString, VecModel};
 
 use crate::services::ble::modbus::{
-    enum_index_for_value, BUILTIN_CONFIG_SLAVE_ID, BUILTIN_SETTINGS,
+    enum_index_for_value, parse_value_type, stored_value_type, BUILTIN_CONFIG_SLAVE_ID,
+    BUILTIN_SETTINGS,
 };
 use crate::services::device_config_store::{ConfigGroupSchema, ConfigItemSchema};
-use crate::ui::{BuiltinConfigItem, DeviceConfigGroup, DeviceConfigItem};
+use crate::ui::kinds;
+use crate::ui::{BuiltinConfigItem, ConfigWidget, DeviceConfigGroup, DeviceConfigItem};
 
 use super::wifi_provision::WifiProvisionUiState;
 
@@ -25,23 +27,24 @@ fn empty_read() -> (SharedString, SharedString, SharedString, i32) {
 
 fn schema_item_to_config_item(item: ConfigItemSchema) -> DeviceConfigItem {
     let (result, result_display, result_hex, result_font_size) = empty_read();
-    let widget_kind = item.widget_kind.clamp(0, 2);
+    let widget_kind = kinds::config_widget_from_stored(item.widget_kind);
     DeviceConfigItem {
         name: item.name.into(),
         register: item.register.into(),
-        value_type: item.value_type.into(),
+        value_type: parse_value_type(&item.value_type),
         register_count: item.register_count.max(1),
         widget_kind,
         result,
         result_display,
         result_hex,
         result_font_size,
-        write_value: if widget_kind == 0 {
+        write_value: if widget_kind == ConfigWidget::Switch {
             "0".into()
         } else {
             "".into()
         },
         status: "等待读取".into(),
+        awaiting: true,
         dirty: false,
     }
 }
@@ -91,9 +94,9 @@ pub fn custom_groups_to_schema(
             .map(|item| ConfigItemSchema {
                 name: item.name.to_string(),
                 register: item.register.to_string(),
-                value_type: item.value_type.to_string(),
+                value_type: stored_value_type(item.value_type).to_string(),
                 register_count: item.register_count,
-                widget_kind: item.widget_kind,
+                widget_kind: kinds::config_widget_to_stored(item.widget_kind),
             })
             .collect();
         out.push(ConfigGroupSchema {
@@ -128,9 +131,9 @@ fn builtin_item_from_def(
         id: def.id.into(),
         name: def.name.into(),
         register: def.register.to_string().into(),
-        value_type: def.value_type.as_str().into(),
+        value_type: def.value_type,
         register_count: def.register_count.max(1) as i32,
-        widget_kind: def.widget as i32,
+        widget_kind: def.widget,
         enum_labels: ModelRc::new(VecModel::from(enum_labels)),
         enum_values: ModelRc::new(VecModel::from(enum_values)),
         enum_index,
@@ -138,6 +141,7 @@ fn builtin_item_from_def(
         result_hex: "".into(),
         write_value: default_write.into(),
         status: "等待读取".into(),
+        awaiting: true,
         dirty: false,
         write_enabled: false,
         disabled_hint: "".into(),

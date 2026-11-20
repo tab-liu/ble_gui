@@ -1,14 +1,15 @@
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { ConfigWidget, RegValueLabel, RegValueType } from "../types.slint";
 import { ToolbarButton } from "toolbar_button.slint";
 
 /// 单行配置：左侧删除；中间读回与写入分离；右侧仅「写入」。
 export component DeviceConfigRow inherits Rectangle {
     in property <string> name;
     in property <string> register;
-    in property <string> value-type;
+    in property <RegValueType> value-type;
     in property <int> register-count;
-    in property <int> widget-kind;
+    in property <ConfigWidget> widget-kind;
     in property <string> result-display;
     in property <string> result-hex;
     in property <int> result-font-size: 14;
@@ -81,7 +82,7 @@ export component DeviceConfigRow inherits Rectangle {
 
                 Text {
                     text: "寄存器 " + root.register
-                        + " · " + root.value-type
+                        + " · " + RegValueLabel.text(root.value-type)
                         + (root.register-count > 1 ? (" ×" + root.register-count) : "")
                         + (root.dirty ? " · 未写入" : "");
                     color: Theme.text-dim;
@@ -160,7 +161,7 @@ export component DeviceConfigRow inherits Rectangle {
                 horizontal-alignment: center;
             }
 
-            if root.widget-kind == 0: HorizontalLayout {
+            if root.widget-kind == ConfigWidget.switch: HorizontalLayout {
                 spacing: 6px;
                 cross-axis-alignment: center;
 
@@ -200,14 +201,14 @@ export component DeviceConfigRow inherits Rectangle {
                 }
             }
 
-            if root.widget-kind == 1: LineEdit {
+            if root.widget-kind == ConfigWidget.text: LineEdit {
                 width: 160px;
                 text: root.write-value;
                 placeholder-text: "写入文本";
                 edited => { root.write-value-edited(self.text); }
             }
 
-            if root.widget-kind == 2: LineEdit {
+            if root.widget-kind == ConfigWidget.number: LineEdit {
                 width: 100px;
                 text: root.write-value;
                 placeholder-text: "写入数值";

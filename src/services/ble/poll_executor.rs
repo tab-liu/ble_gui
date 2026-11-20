@@ -13,7 +13,8 @@ use std::sync::{Arc, Mutex};
 use log::{debug, info, warn};
 
 use crate::services::modbus::{
-    ModbusReadMode, QueryItemPollResult, QueryPollTarget, SharedModbusLive, SharedQueryPollLive,
+    ModbusReadMode, QueryItemPollResult, QueryPollStatus, QueryPollTarget, SharedModbusLive,
+    SharedQueryPollLive,
 };
 
 use super::modbus::{
@@ -63,7 +64,7 @@ fn publish_query_item(
     if changed {
         debug!(
             target: "ble_gui::query_ui",
-            "query_live 单项更新 {:?} [#{}] result={} status={}",
+            "query_live 单项更新 {:?} [#{}] result={} status={:?}",
             target,
             result.item_index,
             result.result,
@@ -218,7 +219,7 @@ pub async fn poll_register_items(
         let poll_result = match item.protocol_address {
             None => QueryItemPollResult {
                 item_index: item.item_index,
-                status: "地址无效".into(),
+                status: QueryPollStatus::BadAddress,
                 result: item.register_text.clone(),
                 ok: false,
             },
@@ -245,14 +246,14 @@ pub async fn poll_register_items(
                             );
                             QueryItemPollResult {
                                 item_index: item.item_index,
-                                status: "正常".into(),
+                                status: QueryPollStatus::Ok,
                                 result,
                                 ok: true,
                             }
                         }
                         Err(err) => QueryItemPollResult {
                             item_index: item.item_index,
-                            status: "解析失败".into(),
+                            status: QueryPollStatus::ParseError,
                             result: err,
                             ok: false,
                         },
@@ -262,7 +263,7 @@ pub async fn poll_register_items(
                     }
                     Err(err) => QueryItemPollResult {
                         item_index: item.item_index,
-                        status: "失败".into(),
+                        status: QueryPollStatus::Failed,
                         result: err.to_string(),
                         ok: false,
                     },
@@ -302,7 +303,7 @@ async fn poll_register_items_tlv(
             None => {
                 let poll_result = QueryItemPollResult {
                     item_index: item.item_index,
-                    status: "地址无效".into(),
+                    status: QueryPollStatus::BadAddress,
                     result: item.register_text.clone(),
                     ok: false,
                 };
@@ -339,7 +340,7 @@ async fn poll_register_items_tlv(
                             &target,
                             &QueryItemPollResult {
                                 item_index: item.item_index,
-                                status: "失败".into(),
+                                status: QueryPollStatus::Failed,
                                 result: err_text.clone(),
                                 ok: false,
                             },
@@ -365,21 +366,21 @@ async fn poll_register_items_tlv(
                             any_ok = true;
                             QueryItemPollResult {
                                 item_index: item.item_index,
-                                status: "正常".into(),
+                                status: QueryPollStatus::Ok,
                                 result,
                                 ok: true,
                             }
                         }
                         Err(err) => QueryItemPollResult {
                             item_index: item.item_index,
-                            status: "解析失败".into(),
+                            status: QueryPollStatus::ParseError,
                             result: err,
                             ok: false,
                         },
                     },
                     Err(err) => QueryItemPollResult {
                         item_index: item.item_index,
-                        status: "失败".into(),
+                        status: QueryPollStatus::Failed,
                         result: err.to_string(),
                         ok: false,
                     },

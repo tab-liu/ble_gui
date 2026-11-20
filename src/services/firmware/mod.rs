@@ -27,19 +27,16 @@ use header::{
 };
 use http_cmd::{check_http_lan, format_not_same_lan, HttpNetCheck};
 
+pub use crate::ui::FirmwarePhase;
+
 pub const IOT_DEFAULT_OTA_VERSION: u32 = 100600199;
-pub const PHASE_IDLE: i32 = 0;
-pub const PHASE_READY: i32 = 1;
-pub const PHASE_RUNNING: i32 = 2;
-pub const PHASE_SUCCESS: i32 = 3;
-pub const PHASE_FAILED: i32 = 4;
 
 /// Worker 与 UI 共享的传输进度。
 #[derive(Clone, Debug)]
 pub struct OtaLive {
     pub running: bool,
     pub cancel: bool,
-    pub phase: i32,
+    pub phase: FirmwarePhase,
     pub pc_percent: i32,
     pub device_percent: i32,
     /// IOT 自身升级只有蓝牙阶段，总进度不按 50/50 折算。
@@ -64,7 +61,7 @@ impl Default for OtaLive {
         Self {
             running: false,
             cancel: false,
-            phase: PHASE_IDLE,
+            phase: FirmwarePhase::Idle,
             pc_percent: 0,
             device_percent: 0,
             ble_only: false,
@@ -134,7 +131,7 @@ pub struct FirmwareSnapshot {
     pub dev_model: String,
     pub ota_version_text: String,
     pub has_file: bool,
-    pub phase: i32,
+    pub phase: FirmwarePhase,
     pub progress: i32,
     pub stage_text: String,
     pub elapsed_text: String,
@@ -169,7 +166,7 @@ struct FirmwareInner {
     ota_version_auto: bool,
     /// 下载前版本判断：false=默认 0，版本不够新则不开传。
     force: bool,
-    phase: i32,
+    phase: FirmwarePhase,
     stage_text: String,
     result_text: String,
     fail_reason: String,
@@ -198,7 +195,7 @@ impl FirmwareService {
                 ota_version_text: String::new(),
                 ota_version_auto: true,
                 force: false,
-                phase: PHASE_IDLE,
+                phase: FirmwarePhase::Idle,
                 stage_text: "等待选择固件".into(),
                 result_text: "—".into(),
                 fail_reason: String::new(),
@@ -245,13 +242,13 @@ impl FirmwareService {
             return;
         }
         if inner.selected.is_some() {
-            inner.phase = PHASE_READY;
+            inner.phase = FirmwarePhase::Ready;
             inner.stage_text = "已验证，等待升级".into();
             inner.result_text = "待升级".into();
             inner.fail_reason.clear();
             inner.status_text.clear();
         } else {
-            inner.phase = PHASE_IDLE;
+            inner.phase = FirmwarePhase::Idle;
             inner.stage_text = "等待选择固件".into();
             inner.result_text = "—".into();
             inner.fail_reason.clear();
@@ -265,10 +262,10 @@ impl FirmwareService {
         let version_ok = parse_ota_version_text(&inner.ota_version_text).is_ok();
         let parse_ok = inner.selected.is_some();
         let running = ota.as_ref().is_some_and(|g| g.running);
-        let ota_phase = ota.as_ref().map(|g| g.phase).unwrap_or(PHASE_IDLE);
+        let ota_phase = ota.as_ref().map(|g| g.phase).unwrap_or(FirmwarePhase::Idle);
         let phase = if running {
-            PHASE_RUNNING
-        } else if ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
+            FirmwarePhase::Running
+        } else if ota_phase == FirmwarePhase::Success || ota_phase == FirmwarePhase::Failed {
             ota_phase
         } else {
             inner.phase
@@ -323,7 +320,7 @@ impl FirmwareService {
         });
         let status_text = if let Some(err) = &inner.parse_error {
             err.clone()
-        } else if running || ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
+        } else if running || ota_phase == FirmwarePhase::Success || ota_phase == FirmwarePhase::Failed {
             ota.as_ref()
                 .map(|g| g.status_text.clone())
                 .unwrap_or_default()
@@ -335,7 +332,7 @@ impl FirmwareService {
             inner.status_text.clone()
         };
 
-        let stage_text = if running || ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
+        let stage_text = if running || ota_phase == FirmwarePhase::Success || ota_phase == FirmwarePhase::Failed {
             ota.as_ref()
                 .map(|g| g.stage_text.clone())
                 .unwrap_or_else(|| inner.stage_text.clone())
@@ -348,7 +345,7 @@ impl FirmwareService {
             .map(|g| elapsed_display(g))
             .unwrap_or_default();
 
-        let (result_text, fail_reason) = if ota_phase == PHASE_SUCCESS || ota_phase == PHASE_FAILED {
+        let (result_text, fail_reason) = if ota_phase == FirmwarePhase::Success || ota_phase == FirmwarePhase::Failed {
             (
                 ota.as_ref()
                     .map(|g| g.result_text.clone())
@@ -387,8 +384,8 @@ impl FirmwareService {
             part_mismatch: (mismatch.is_some() || stale.is_some())
                 && inner.parse_error.is_none()
                 && !running
-                && ota_phase != PHASE_SUCCESS
-                && ota_phase != PHASE_FAILED,
+                && ota_phase != FirmwarePhase::Success
+                && ota_phase != FirmwarePhase::Failed,
             force: inner.force,
         }
     }
@@ -419,7 +416,7 @@ impl FirmwareService {
         inner.parse_error = None;
         inner.ota_version_text.clear();
         inner.ota_version_auto = true;
-        inner.phase = PHASE_IDLE;
+        inner.phase = FirmwarePhase::Idle;
         inner.stage_text = "等待选择固件".into();
         inner.result_text = "—".into();
         inner.fail_reason.clear();
@@ -434,28 +431,28 @@ impl FirmwareService {
         {
             let mut inner = self.inner.borrow_mut();
             if inner.selected.is_none() {
-                inner.phase = PHASE_FAILED;
+                inner.phase = FirmwarePhase::Failed;
                 inner.result_text = "升级失败".into();
                 inner.fail_reason = "未选择有效固件".into();
                 inner.status_text = inner.fail_reason.clone();
                 return None;
             }
             if !device_connected {
-                inner.phase = PHASE_FAILED;
+                inner.phase = FirmwarePhase::Failed;
                 inner.result_text = "升级失败".into();
                 inner.fail_reason = "未连接设备，无法开始升级".into();
                 inner.status_text = inner.fail_reason.clone();
                 return None;
             }
             if !encryption_ready {
-                inner.phase = PHASE_FAILED;
+                inner.phase = FirmwarePhase::Failed;
                 inner.result_text = "升级失败".into();
                 inner.fail_reason = "加密通道尚未完成，不能启动升级".into();
                 inner.status_text = inner.fail_reason.clone();
                 return None;
             }
             if parse_ota_version_text(&inner.ota_version_text).is_err() {
-                inner.phase = PHASE_FAILED;
+                inner.phase = FirmwarePhase::Failed;
                 inner.result_text = "升级失败".into();
                 inner.fail_reason = "请填写料号版本号（IOT 整包读不到，需手填设备当前软件版本）".into();
                 inner.status_text = inner.fail_reason.clone();
@@ -488,7 +485,7 @@ impl FirmwareService {
             *g = OtaLive {
                 running: true,
                 cancel: false,
-                phase: PHASE_RUNNING,
+                phase: FirmwarePhase::Running,
                 pc_percent: 0,
                 device_percent: 0,
                 ble_only: job.firmware_type == 0,
@@ -574,7 +571,7 @@ impl FirmwareService {
         let reason = reason.into();
         if let Ok(mut g) = self.ota.lock() {
             g.running = false;
-            g.phase = PHASE_FAILED;
+            g.phase = FirmwarePhase::Failed;
             g.result_text = "升级失败".into();
             g.fail_reason = reason.clone();
             g.stage_text = "升级失败".into();
@@ -582,7 +579,7 @@ impl FirmwareService {
             g.freeze_elapsed();
         }
         let mut inner = self.inner.borrow_mut();
-        inner.phase = PHASE_FAILED;
+        inner.phase = FirmwarePhase::Failed;
         inner.result_text = "升级失败".into();
         inner.fail_reason = reason.clone();
         inner.status_text = reason;
@@ -682,7 +679,7 @@ impl FirmwareService {
                 );
                 inner.selected = Some(selected);
                 inner.parse_error = None;
-                inner.phase = PHASE_READY;
+                inner.phase = FirmwarePhase::Ready;
                 inner.stage_text = "已验证，等待升级".into();
                 inner.result_text = "待升级".into();
                 inner.fail_reason.clear();
@@ -694,7 +691,7 @@ impl FirmwareService {
                 inner.ota_version_text.clear();
                 inner.ota_version_auto = true;
                 inner.parse_error = Some(err.clone());
-                inner.phase = PHASE_FAILED;
+                inner.phase = FirmwarePhase::Failed;
                 inner.stage_text = "识别失败".into();
                 inner.result_text = "无法使用".into();
                 inner.fail_reason = err.clone();

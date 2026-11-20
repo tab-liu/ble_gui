@@ -9,6 +9,7 @@ import {
     DeviceConfigItem,
     BuiltinConfigItem,
     ModbusQueryLayoutRow,
+    WifiPickerKind,
 } from "../types.slint";
 import { Theme } from "../theme.slint";
 import { ModbusTabItem } from "../components/modbus_tab_item.slint";
@@ -42,13 +43,15 @@ export component DeviceConfigPage inherits VerticalLayout {
     in property <bool> wifi-scan-busy;
     in property <bool> wifi-ok;
     in property <bool> wifi-pending;
+    in property <bool> wifi-fault;
     in property <bool> wifi-cloud-ok;
     in property <bool> wifi-cloud-pending;
+    in property <bool> wifi-cloud-fault;
     in property <string> wifi-status-label;
     in property <string> wifi-cloud-status-label;
     in property <string> wifi-current-ssid;
     in property <string> wifi-hint;
-    in-out property <int> wifi-picker-kind;
+    in-out property <WifiPickerKind> wifi-picker-kind;
 
     property <bool> editing-slave-id: false;
     property <bool> on-builtin: root.config-groups.length > 0
@@ -326,18 +329,20 @@ export component DeviceConfigPage inherits VerticalLayout {
                     scan-busy: root.wifi-scan-busy;
                     wifi-ok: root.wifi-ok;
                     wifi-pending: root.wifi-pending;
+                    wifi-fault: root.wifi-fault;
                     cloud-ok: root.wifi-cloud-ok;
                     cloud-pending: root.wifi-cloud-pending;
+                    cloud-fault: root.wifi-cloud-fault;
                     wifi-status-label: root.wifi-status-label;
                     cloud-status-label: root.wifi-cloud-status-label;
                     current-ssid: root.wifi-current-ssid;
                     hint: root.wifi-hint;
                     apply-clicked => { root.wifi-apply(); }
                     scan-clicked => {
-                        root.wifi-picker-kind = 1;
+                        root.wifi-picker-kind = WifiPickerKind.scan;
                         root.wifi-scan();
                     }
-                    history-clicked => { root.wifi-picker-kind = 2; }
+                    history-clicked => { root.wifi-picker-kind = WifiPickerKind.history; }
                 }
 
                 for item[index] in root.builtin-config-items: BuiltinConfigRow {

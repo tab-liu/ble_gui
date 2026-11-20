@@ -10,7 +10,7 @@ use crate::services::ble::{REG_AC_OUTPUT, REG_DC_OUTPUT};
 use crate::services::ble_favorites;
 use crate::pages::set_app_page;
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, PAGE_DASHBOARD};
+use crate::state::{AppContext, AppPage};
 use crate::ui::MainWindow;
 use crate::ui::bindings::{refresh_ble, refresh_ble_scan_filter, refresh_modbus_dashboard};
 
@@ -56,8 +56,8 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         } else {
             ctx_ble.ble.start_scan();
             ui.set_selected_scan_address("".into());
-            if ctx_ble.ble.ui_page() != PAGE_DASHBOARD {
-                set_app_page(&ui, &ctx_ble, PAGE_DASHBOARD);
+            if ctx_ble.ble.ui_page() != AppPage::Dashboard {
+                set_app_page(&ui, &ctx_ble, AppPage::Dashboard);
             }
             refresh_ble(&ui, &ctx_ble.favorites, &ctx_ble.ble.snapshot(), None);
         }

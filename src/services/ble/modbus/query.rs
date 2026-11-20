@@ -1,40 +1,41 @@
 //! Modbus 查询页：寄存器地址解析与按类型格式化。
 
-/// 查询项数值类型（与 Slint `value-type` 字符串对应）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum QueryValueType {
-    #[default]
-    Integer,
-    Float,
-    String,
-}
+use crate::ui::RegValueType;
 
-impl QueryValueType {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Integer => "integer",
-            Self::Float => "float",
-            Self::String => "string",
-        }
+/// 配置文件里的类型名。界面用 [`RegValueType::Text`]，文件里仍写 `string`。
+pub fn stored_value_type(kind: RegValueType) -> &'static str {
+    match kind {
+        RegValueType::Integer => "integer",
+        RegValueType::Float => "float",
+        RegValueType::Text => "string",
     }
 }
 
-/// 解析用户输入的类型字符串；空或未知值 → 整数。
-pub fn parse_value_type(text: &str) -> QueryValueType {
+/// 解析配置或表单里的类型字符串；空或未知值 → 整数。
+pub fn parse_value_type(text: &str) -> RegValueType {
     match text.trim().to_lowercase().as_str() {
-        "" | "integer" | "int" | "整数" | "整型" => QueryValueType::Integer,
-        "float" | "f32" | "浮点" | "浮点数" => QueryValueType::Float,
-        "string" | "str" | "字符串" | "文本" => QueryValueType::String,
-        _ => QueryValueType::Integer,
+        "" | "integer" | "int" | "整数" | "整型" => RegValueType::Integer,
+        "float" | "f32" | "浮点" | "浮点数" => RegValueType::Float,
+        "string" | "str" | "字符串" | "文本" => RegValueType::Text,
+        _ => RegValueType::Integer,
     }
 }
 
-/// 添加表单 ComboBox 索引 → 类型（0=整数, 1=浮点, 2=字符串）。
-pub fn value_type_from_index(index: i32) -> QueryValueType {
+/// 添加表单的下拉索引 → 类型（0=整数, 1=浮点, 2=字符串）。
+pub fn value_type_from_index(index: i32) -> RegValueType {
     match index {
-        1 => QueryValueType::Float,
-        2 => QueryValueType::String,
-        _ => QueryValueType::Integer,
+        1 => RegValueType::Float,
+        2 => RegValueType::Text,
+        _ => RegValueType::Integer,
+    }
+}
+
+/// 类型在添加表单里的下拉索引。
+pub fn value_type_to_index(kind: RegValueType) -> i32 {
+    match kind {
+        RegValueType::Float => 1,
+        RegValueType::Text => 2,
+        RegValueType::Integer => 0,
     }
 }
 
@@ -82,21 +83,21 @@ pub fn parse_scale(text: &str) -> u32 {
 /// 按类型、长度与倍数格式化一次读保持寄存器的结果。
 pub fn format_query_value(
     values: &[u16],
-    value_type: QueryValueType,
+    value_type: RegValueType,
     scale: u32,
 ) -> Result<String, String> {
     match value_type {
-        QueryValueType::Integer => format_integer(values, scale),
-        QueryValueType::Float => format_float(values),
-        QueryValueType::String => format_string(values),
+        RegValueType::Integer => format_integer(values, scale),
+        RegValueType::Float => format_float(values),
+        RegValueType::Text => format_string(values),
     }
 }
 
 /// 整数读回的调试 hex（如 `0x10`）。非整数类型、占位/错误文案返回空串。
 ///
 /// 带倍数的小数按「显示值 × scale」还原原始寄存器后再转 hex，便于对照报文。
-pub fn integer_debug_hex(result: &str, value_type: QueryValueType, scale: u32) -> String {
-    if value_type != QueryValueType::Integer {
+pub fn integer_debug_hex(result: &str, value_type: RegValueType, scale: u32) -> String {
+    if value_type != RegValueType::Integer {
         return String::new();
     }
     let s = result.trim();
@@ -204,13 +205,13 @@ pub fn encode_string_to_registers(text: &str, register_count: u16) -> Vec<u16> {
 /// 将写入文本编码为寄存器字（无倍数；整数按低字在前拆分）。
 pub fn encode_write_value(
     text: &str,
-    value_type: QueryValueType,
+    value_type: RegValueType,
     register_count: u16,
 ) -> Result<Vec<u16>, String> {
     let count = register_count.max(1) as usize;
     match value_type {
-        QueryValueType::String => Ok(encode_string_to_registers(text, register_count)),
-        QueryValueType::Float => {
+        RegValueType::Text => Ok(encode_string_to_registers(text, register_count)),
+        RegValueType::Float => {
             let f: f32 = text
                 .trim()
                 .parse()
@@ -222,7 +223,7 @@ pub fn encode_write_value(
             regs.resize(count, 0);
             Ok(regs)
         }
-        QueryValueType::Integer => {
+        RegValueType::Integer => {
             let s = text.trim();
             let on = matches!(s.to_lowercase().as_str(), "1" | "true" | "on" | "开");
             let off = matches!(s.to_lowercase().as_str(), "0" | "false" | "off" | "关");
@@ -261,7 +262,7 @@ mod tests {
     #[test]
     fn integer_scale_10() {
         assert_eq!(
-            format_query_value(&[123], QueryValueType::Integer, 10).unwrap(),
+            format_query_value(&[123], RegValueType::Integer, 10).unwrap(),
             "12.3"
         );
     }
@@ -269,7 +270,7 @@ mod tests {
     #[test]
     fn integer_u32_two_regs() {
         assert_eq!(
-            format_query_value(&[4, 1], QueryValueType::Integer, 1).unwrap(),
+            format_query_value(&[4, 1], RegValueType::Integer, 1).unwrap(),
             "65540"
         );
     }
@@ -277,17 +278,17 @@ mod tests {
     #[test]
     fn integer_debug_hex_plain_and_scaled() {
         assert_eq!(
-            integer_debug_hex("16", QueryValueType::Integer, 1),
+            integer_debug_hex("16", RegValueType::Integer, 1),
             "0x10"
         );
         assert_eq!(
-            integer_debug_hex("12.3", QueryValueType::Integer, 10),
+            integer_debug_hex("12.3", RegValueType::Integer, 10),
             "0x7B"
         );
-        assert_eq!(integer_debug_hex("—", QueryValueType::Integer, 1), "");
-        assert_eq!(integer_debug_hex("1.5", QueryValueType::Float, 1), "");
+        assert_eq!(integer_debug_hex("—", RegValueType::Integer, 1), "");
+        assert_eq!(integer_debug_hex("1.5", RegValueType::Float, 1), "");
         assert_eq!(
-            integer_debug_hex("（Modbus 轮询后将自动填充）", QueryValueType::Integer, 1),
+            integer_debug_hex("等待查询", RegValueType::Integer, 1),
             ""
         );
     }
@@ -296,7 +297,7 @@ mod tests {
     fn integer_u64_four_regs() {
         // 对齐 ref/tool SN：1107~1110 低字在前拼 u64
         assert_eq!(
-            format_query_value(&[1, 2, 3, 4], QueryValueType::Integer, 1).unwrap(),
+            format_query_value(&[1, 2, 3, 4], RegValueType::Integer, 1).unwrap(),
             "1125912791875585"
         );
     }
@@ -305,7 +306,7 @@ mod tests {
     fn string_device_type_low_byte_first() {
         let regs = encode_string_to_registers("AP200", 3);
         assert_eq!(
-            format_query_value(&regs, QueryValueType::String, 1).unwrap(),
+            format_query_value(&regs, RegValueType::Text, 1).unwrap(),
             "AP200"
         );
     }
@@ -314,7 +315,7 @@ mod tests {
     fn string_encode_roundtrip() {
         let regs = encode_string_to_registers("AP200", 6);
         assert_eq!(
-            format_query_value(&regs, QueryValueType::String, 1).unwrap(),
+            format_query_value(&regs, RegValueType::Text, 1).unwrap(),
             "AP200"
         );
     }

@@ -6,8 +6,10 @@
 
 #![allow(unused_imports)]
 
-slint::include_modules!();
+mod generated;
+pub use generated::*;
 
 pub mod bindings;
 pub mod clipboard;
 pub mod icon;
+pub mod kinds;

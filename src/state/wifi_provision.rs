@@ -162,12 +162,12 @@ fn ssid_matches(expected: &str, actual: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::services::modbus::QueryItemPollResult;
+    use crate::services::modbus::{QueryItemPollResult, QueryPollStatus};
 
     fn poll(index: usize, result: &str) -> QueryItemPollResult {
         QueryItemPollResult {
             item_index: index,
-            status: String::new(),
+            status: QueryPollStatus::Ok,
             result: result.into(),
             ok: true,
         }
@@ -333,7 +333,7 @@ mod tests {
         let mut st = WifiProvisionUiState::blank();
         st.apply_poll_item(&QueryItemPollResult {
             item_index: WIFI_POLL_LINK,
-            status: String::new(),
+            status: QueryPollStatus::Failed,
             result: "65".into(),
             ok: false,
         });

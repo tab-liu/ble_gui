@@ -5,16 +5,7 @@
 //!   `1=enable` / `2=disable`；默认写 bit7/6 设备绑定使能。
 //!   仅设备绑定在 HA1 并机上禁用。
 
-use super::query::QueryValueType;
-
-/// 控件类型（与 Slint BuiltinConfigItem.widget-kind 对齐）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-pub enum BuiltinWidget {
-    Switch = 0,
-    Enum = 1,
-    Number = 2,
-}
+use crate::ui::{BuiltinControl, RegValueType};
 
 /// 寄存器内多位域写入（RMW）：只改 `start_bit` 起 `width` 位，其它位保持不变。
 #[derive(Debug, Clone, Copy)]
@@ -34,8 +25,8 @@ pub struct BuiltinSettingDef {
     pub bit: Option<u8>,
     /// 若为 Some，表示多位域写入；与 `bit` 互斥，写入需 RMW。
     pub field: Option<RegisterFieldPatch>,
-    pub widget: BuiltinWidget,
-    pub value_type: QueryValueType,
+    pub widget: BuiltinControl,
+    pub value_type: RegValueType,
     pub register_count: u16,
     /// Enum 控件选项：(显示名, 写入值)
     pub enum_options: &'static [(&'static str, &'static str)],
@@ -115,8 +106,8 @@ pub const BUILTIN_SETTINGS: &[BuiltinSettingDef] = &[
         register: IOT_CLOUD_DNS_REGISTER,
         bit: None,
         field: None,
-        widget: BuiltinWidget::Enum,
-        value_type: QueryValueType::String,
+        widget: BuiltinControl::Choice,
+        value_type: RegValueType::Text,
         register_count: IOT_CLOUD_DNS_REGISTER_COUNT,
         enum_options: CLOUD_URL_OPTIONS,
     },
@@ -126,8 +117,8 @@ pub const BUILTIN_SETTINGS: &[BuiltinSettingDef] = &[
         register: IOT_ENABLE_MIX1_REGISTER,
         bit: None,
         field: None,
-        widget: BuiltinWidget::Enum,
-        value_type: QueryValueType::Integer,
+        widget: BuiltinControl::Choice,
+        value_type: RegValueType::Integer,
         register_count: 1,
         enum_options: BIND_TRIGGER_OPTIONS,
     },

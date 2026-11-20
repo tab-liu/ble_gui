@@ -11,13 +11,10 @@ use std::sync::{Arc, Mutex};
 use log::info;
 use tokio::sync::Notify;
 
-use crate::services::ble::modbus::QueryValueType;
-
-/// 与 `crate::state::PAGE_DASHBOARD` 一致，避免 ble 模块依赖 state。
-pub const UI_PAGE_DASHBOARD: i32 = 0;
+use crate::ui::{AppPage, RegValueType};
 
 /// UI 告诉 worker「此刻该轮询什么」。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PollForeground {
     /// 非 Modbus 相关页（固件升级等）或未连接。
     None,
@@ -41,14 +38,14 @@ pub enum PollForeground {
 }
 
 /// 单个查询/配置项在轮询层的描述（与 Slint 模型解耦）。
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct QueryPollItemSpec {
     pub item_index: usize,
     pub register_text: String,
     /// `None` 表示寄存器字符串无法解析，轮询时直接标记失败。
     pub protocol_address: Option<u16>,
     pub register_count: u16,
-    pub value_type: QueryValueType,
+    pub value_type: RegValueType,
     pub scale: u32,
     /// 若为 Some，读回只取该 bit（设备配置常用项）。
     pub bit: Option<u8>,
@@ -58,7 +55,7 @@ pub struct QueryPollItemSpec {
 pub struct PollPolicy {
     pub foreground: PollForeground,
     /// UI 当前页面（worker 可读，用于连接后默认主页轮询）。
-    pub ui_page: i32,
+    pub ui_page: AppPage,
     /// OTA 传输中禁止普通 Modbus 轮询。
     pub ota_busy: bool,
     /// 换页 / OTA 结束时唤醒轮询任务，避免先空等一个周期。
@@ -69,7 +66,7 @@ impl Default for PollPolicy {
     fn default() -> Self {
         Self {
             foreground: PollForeground::None,
-            ui_page: UI_PAGE_DASHBOARD,
+            ui_page: AppPage::Dashboard,
             ota_busy: false,
             wake: Arc::new(Notify::new()),
         }
@@ -100,7 +97,7 @@ pub fn ensure_dashboard_poll_if_idle(policy: &SharedPollPolicy) {
     if p.foreground != PollForeground::None {
         return;
     }
-    if p.ui_page == UI_PAGE_DASHBOARD {
+    if p.ui_page == AppPage::Dashboard {
         info!(
             target: "ble_gui::poll",
             "连接就绪，UI 在主页，启用主页轮询",
@@ -118,7 +115,7 @@ pub fn effective_foreground(policy: &SharedPollPolicy) -> PollForeground {
     if p.foreground != PollForeground::None {
         return p.foreground.clone();
     }
-    if p.ui_page == UI_PAGE_DASHBOARD {
+    if p.ui_page == AppPage::Dashboard {
         return PollForeground::Dashboard;
     }
     PollForeground::None

@@ -12,10 +12,13 @@ import {
     WifiSavedNetwork,
     WifiScanAp,
     SubDeviceInfo,
+    FirmwarePhase,
+    AppPage,
+    DialogKind,
+    WifiPickerKind,
 } from "types.slint";
 
 import { Theme } from "theme.slint";
-import { AppPages } from "app_pages.slint";
 import { BleStatusBar } from "components/ble_status_bar.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { NewTabDialog } from "components/new_tab_dialog.slint";
@@ -44,7 +47,7 @@ export {
     ModbusDndApi,
 }
 
-// dialog-kind: 0=关闭, 1=新建标签
+// dialog-kind: 见 DialogKind
 export component MainWindow inherits Window {
     in property <string> app-version;
     in-out property <bool> device-connected;
@@ -113,7 +116,7 @@ export component MainWindow inherits Window {
     in-out property <string> firmware-dev-model;
     in-out property <bool> firmware-has-file;
     in-out property <bool> firmware-part-mismatch;
-    in-out property <int> firmware-phase;
+    in-out property <FirmwarePhase> firmware-phase: FirmwarePhase.idle;
     in-out property <int> firmware-progress;
     in-out property <string> firmware-stage-text;
     in-out property <string> firmware-elapsed-text;
@@ -123,8 +126,8 @@ export component MainWindow inherits Window {
     in-out property <bool> firmware-can-stop;
     in-out property <bool> firmware-force;
 
-    in-out property <int> current-page: 0;
-    in-out property <int> dialog-kind: 0;
+    in-out property <AppPage> current-page: AppPage.dashboard;
+    in-out property <DialogKind> dialog-kind: DialogKind.none;
     in-out property <string> dialog-name: "";
 
     in-out property <bool> show-add-query-form: false;
@@ -168,16 +171,18 @@ export component MainWindow inherits Window {
     in-out property <bool> wifi-pending: false;
     in-out property <bool> wifi-cloud-ok: false;
     in-out property <bool> wifi-cloud-pending: false;
+    in-out property <bool> wifi-fault: false;
+    in-out property <bool> wifi-cloud-fault: false;
     in-out property <string> wifi-status-label: "WiFi 未连接";
     in-out property <string> wifi-cloud-status-label: "服务器未连接";
     in-out property <string> wifi-current-ssid: "";
     in-out property <string> wifi-hint: "";
     in-out property <[WifiScanAp]> wifi-scan-aps;
     in-out property <[WifiSavedNetwork]> wifi-saved-networks;
-    in-out property <int> wifi-picker-kind: 0;
+    in-out property <WifiPickerKind> wifi-picker-kind: WifiPickerKind.closed;
     in-out property <string> wifi-scan-message: "";
 
-    callback navigate(int);
+    callback navigate(AppPage);
     callback ble-action-clicked();
     callback select-scan-device(string);
     callback connect-selected-clicked();
@@ -298,7 +303,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         min-width: 0px;
 
-                        if root.current-page == AppPages.dashboard: DashboardPage {
+                        if root.current-page == AppPage.dashboard: DashboardPage {
                             device-connected: root.device-connected;
                             scanning: root.scanning;
                             ble-connecting: root.ble-connecting;
@@ -359,7 +364,7 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        if root.current-page == AppPages.modbus: ModbusPage {
+                        if root.current-page == AppPage.modbus: ModbusPage {
                             device-connected: root.device-connected;
                             modbus-tabs: root.modbus-tabs;
                             active-modbus-tab: root.active-modbus-tab;
@@ -426,7 +431,7 @@ export component MainWindow inherits Window {
                             }
                         }
 
-                        if root.current-page == AppPages.firmware: FirmwarePage {
+                        if root.current-page == AppPage.firmware: FirmwarePage {
                             device-connected: root.device-connected;
                             device-name: root.ble-device-name;
                             firmware-status-text: root.firmware-status-text;
@@ -461,7 +466,7 @@ export component MainWindow inherits Window {
                             copy-text(text) => { root.copy-text(text); }
                         }
 
-                        if root.current-page == AppPages.device-config: DeviceConfigPage {
+                        if root.current-page == AppPage.device-config: DeviceConfigPage {
                             device-connected: root.device-connected;
                             config-groups: root.config-groups;
                             active-config-group: root.active-config-group;
@@ -484,8 +489,10 @@ export component MainWindow inherits Window {
                             wifi-scan-busy: root.wifi-scan-busy;
                             wifi-ok: root.wifi-ok;
                             wifi-pending: root.wifi-pending;
+                            wifi-fault: root.wifi-fault;
                             wifi-cloud-ok: root.wifi-cloud-ok;
                             wifi-cloud-pending: root.wifi-cloud-pending;
+                            wifi-cloud-fault: root.wifi-cloud-fault;
                             wifi-status-label: root.wifi-status-label;
                             wifi-cloud-status-label: root.wifi-cloud-status-label;
                             wifi-current-ssid: root.wifi-current-ssid;
@@ -511,7 +518,7 @@ export component MainWindow inherits Window {
                             wifi-scan => { root.wifi-scan(); }
                         }
 
-                        if root.current-page == AppPages.external: ExternalPage {
+                        if root.current-page == AppPage.external: ExternalPage {
                             device-connected: root.device-connected;
                             external-devices-valid: root.external-devices-valid;
                             external-devices: root.external-devices;
@@ -551,7 +558,7 @@ export component MainWindow inherits Window {
             scan-message: root.wifi-scan-message;
             scan-aps: root.wifi-scan-aps;
             saved-networks: root.wifi-saved-networks;
-            close => { root.wifi-picker-kind = 0; }
+            close => { root.wifi-picker-kind = WifiPickerKind.closed; }
             rescan => { root.wifi-scan(); }
             select-scan-ap(index) => { root.wifi-select-scan-ap(index); }
             select-saved(index) => { root.wifi-select-saved(index); }

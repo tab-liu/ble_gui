@@ -1,6 +1,6 @@
 [package]
 name = "ble_gui"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 description = "BLE Modbus desktop tool (Slint + btleplug). Docs: cargo docs"
 

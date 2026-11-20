@@ -1,10 +1,12 @@
 import { VerticalBox } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
+import { QueryCardStatus } from "../types.slint";
 import { ModbusDndApi } from "modbus_dnd.slint";
 import { ModbusLayout } from "modbus_layout.slint";
 
 export component ModbusQueryCard inherits Rectangle {
     in property <string> name;
+    in property <QueryCardStatus> status;
     in property <string> register;
     in property <string> result;
     in property <string> result-display;
@@ -17,6 +19,10 @@ export component ModbusQueryCard inherits Rectangle {
     callback remove-clicked();
     callback select-clicked(bool);
     callback edit-clicked();
+
+    // 0 等待=灰，正常=绿，未响应=黄，连续未更新或硬错误=红。
+    property <color> freshness: root.status == QueryCardStatus.ok ? Theme.success : root.status == QueryCardStatus.missed ? Theme.warning : (root.status == QueryCardStatus.stalled || root.status == QueryCardStatus.bad-address || root.status == QueryCardStatus.parse-error) ? Theme.error : Theme.text-dim;
+    property <string> freshness-hint: root.status == QueryCardStatus.missed ? "上一轮未响应" : root.status == QueryCardStatus.stalled ? "已连续未更新" : "";
 
     width: ModbusLayout.card-width;
     height: ModbusLayout.card-height;
@@ -38,6 +44,11 @@ export component ModbusQueryCard inherits Rectangle {
                 Text {
                     text: root.name;
                     font-weight: 600;
+                    wrap: word-wrap;
+                }
+
+                if root.freshness-hint != "": Text {
+                    text: root.freshness-hint;
                     wrap: word-wrap;
                 }
 
@@ -92,16 +103,36 @@ export component ModbusQueryCard inherits Rectangle {
                     padding-right: 20px;
                     spacing: 2px;
 
-                    Text {
-                        text: root.name;
-                        color: Theme.text-muted;
-                        font-size: 12px;
-                        overflow: elide;
+                    HorizontalLayout {
+                        spacing: 6px;
+                        alignment: start;
+                        cross-axis-alignment: center;
+                        vertical-stretch: 0;
+                        min-width: 0px;
+
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: root.freshness;
+                            horizontal-stretch: 0;
+                            vertical-stretch: 0;
+                        }
+
+                        Text {
+                            text: root.name;
+                            color: Theme.text-muted;
+                            font-size: 12px;
+                            overflow: elide;
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                        }
                     }
 
                     if root.result-hex == "" || root.result-hex-below: VerticalLayout {
                         spacing: 3px;
-                        alignment: start;
+                        alignment: center;
+                        vertical-stretch: 1;
                         min-width: 0px;
 
                         Text {
@@ -142,6 +173,7 @@ export component ModbusQueryCard inherits Rectangle {
                         spacing: 8px;
                         alignment: start;
                         cross-axis-alignment: center;
+                        vertical-stretch: 1;
                         min-width: 0px;
 
                         Text {
@@ -178,6 +210,7 @@ export component ModbusQueryCard inherits Rectangle {
                         color: root.accent;
                         font-size: 11px;
                         overflow: elide;
+                        vertical-stretch: 0;
                     }
                 }
             }

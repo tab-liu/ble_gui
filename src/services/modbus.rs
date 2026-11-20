@@ -216,11 +216,33 @@ pub enum QueryPollTarget {
     },
 }
 
+/// 一次寄存器轮询的结果。卡片上的颜色由界面再根据连续失败次数决定。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum QueryPollStatus {
+    Ok,
+    #[default]
+    Failed,
+    BadAddress,
+    ParseError,
+}
+
+impl QueryPollStatus {
+    /// 配置行上给用户看的短说明。查询卡片不拿这句当状态。
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ok => "正常",
+            Self::Failed => "失败",
+            Self::BadAddress => "地址无效",
+            Self::ParseError => "解析失败",
+        }
+    }
+}
+
 /// Modbus 查询页单个卡片轮询结果（worker 写入，UI 合并到 Slint 模型）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct QueryItemPollResult {
     pub item_index: usize,
-    pub status: String,
+    pub status: QueryPollStatus,
     pub result: String,
     pub ok: bool,
 }

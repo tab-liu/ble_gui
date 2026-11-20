@@ -1,12 +1,12 @@
 import { VerticalBox, Button } from "std-widgets.slint";
 import { NavItem } from "nav_item.slint";
 import { Theme } from "../theme.slint";
-import { AppPages } from "../app_pages.slint";
+import { AppPage } from "../types.slint";
 
 export component Sidebar inherits Rectangle {
-    in property <int> current-page;
+    in property <AppPage> current-page;
     in property <bool> device-connected;
-    callback navigate(int);
+    callback navigate(AppPage);
     callback toggle-theme();
 
     width: 160px;
@@ -29,28 +29,28 @@ export component Sidebar inherits Rectangle {
 
         NavItem {
             label: "主页";
-            selected: root.current-page == AppPages.dashboard;
-            clicked => { root.navigate(AppPages.dashboard); }
+            selected: root.current-page == AppPage.dashboard;
+            clicked => { root.navigate(AppPage.dashboard); }
         }
         NavItem {
             label: "Modbus";
-            selected: root.current-page == AppPages.modbus;
-            clicked => { root.navigate(AppPages.modbus); }
+            selected: root.current-page == AppPage.modbus;
+            clicked => { root.navigate(AppPage.modbus); }
         }
         NavItem {
             label: "设备配置";
-            selected: root.current-page == AppPages.device-config;
-            clicked => { root.navigate(AppPages.device-config); }
+            selected: root.current-page == AppPage.device-config;
+            clicked => { root.navigate(AppPage.device-config); }
         }
         NavItem {
             label: "外部设备";
-            selected: root.current-page == AppPages.external;
-            clicked => { root.navigate(AppPages.external); }
+            selected: root.current-page == AppPage.external;
+            clicked => { root.navigate(AppPage.external); }
         }
         NavItem {
             label: "固件升级";
-            selected: root.current-page == AppPages.firmware;
-            clicked => { root.navigate(AppPages.firmware); }
+            selected: root.current-page == AppPage.firmware;
+            clicked => { root.navigate(AppPage.firmware); }
         }
 
         Rectangle { vertical-stretch: 1; }

@@ -47,7 +47,7 @@ fn finish_ota_session(
     let iot_ok = ota
         .lock()
         .ok()
-        .is_some_and(|g| g.phase == PHASE_SUCCESS && g.ble_only);
+        .is_some_and(|g| g.phase == FirmwarePhase::Success && g.ble_only);
     if iot_ok {
         info!(
             target: "ble_gui::ota",
@@ -166,7 +166,7 @@ fn on_peer_disconnect(
     if let Ok(mut g) = ota.lock() {
         if g.running {
             g.running = false;
-            g.phase = crate::services::firmware::PHASE_FAILED;
+            g.phase = FirmwarePhase::Failed;
             g.result_text = "升级失败".into();
             g.fail_reason = "升级过程中蓝牙断开".into();
             g.stage_text = "升级失败".into();

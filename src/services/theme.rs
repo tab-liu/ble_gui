@@ -8,47 +8,42 @@ use std::rc::Rc;
 use slint::ComponentHandle;
 
 use crate::services::config_dir;
-use crate::ui::{MainWindow, Theme};
+use crate::ui::{MainWindow, Theme, ThemeChoice};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ThemeMode {
-    System = 0,
-    Light = 1,
-    Dark = 2,
+fn theme_from_stored(v: i32) -> ThemeChoice {
+    match v {
+        1 => ThemeChoice::Light,
+        2 => ThemeChoice::Dark,
+        _ => ThemeChoice::System,
+    }
 }
 
-impl ThemeMode {
-    pub fn from_i32(v: i32) -> Self {
-        match v {
-            1 => Self::Light,
-            2 => Self::Dark,
-            _ => Self::System,
-        }
-    }
-
-    fn as_i32(self) -> i32 {
-        self as i32
+fn theme_to_stored(mode: ThemeChoice) -> i32 {
+    match mode {
+        ThemeChoice::Light => 1,
+        ThemeChoice::Dark => 2,
+        ThemeChoice::System => 0,
     }
 }
 
 #[derive(Clone)]
 pub struct ThemeService {
-    inner: Rc<RefCell<ThemeMode>>,
+    inner: Rc<RefCell<ThemeChoice>>,
 }
 
 impl ThemeService {
     pub fn new() -> Self {
-        let mode = load_mode().unwrap_or(ThemeMode::System);
+        let mode = load_mode().unwrap_or(ThemeChoice::System);
         Self {
             inner: Rc::new(RefCell::new(mode)),
         }
     }
 
-    pub fn mode(&self) -> ThemeMode {
+    pub fn mode(&self) -> ThemeChoice {
         *self.inner.borrow()
     }
 
-    pub fn set_mode(&self, mode: ThemeMode) {
+    pub fn set_mode(&self, mode: ThemeChoice) {
         *self.inner.borrow_mut() = mode;
         if let Err(err) = save_mode(mode) {
             log::warn!(target: "ble_gui::theme", "保存主题失败: {err}");
@@ -57,9 +52,9 @@ impl ThemeService {
 
     pub fn toggle_quick(&self) {
         let next = if self.effective_dark() {
-            ThemeMode::Light
+            ThemeChoice::Light
         } else {
-            ThemeMode::Dark
+            ThemeChoice::Dark
         };
         self.set_mode(next);
     }
@@ -68,7 +63,7 @@ impl ThemeService {
         let mode = self.mode();
         let dark = self.effective_dark_for(mode);
 
-        ui.global::<Theme>().set_mode(mode.as_i32());
+        ui.global::<Theme>().set_mode(mode);
         ui.global::<Theme>().set_dark(dark);
         ui.global::<Theme>().invoke_sync_palette();
     }
@@ -77,11 +72,11 @@ impl ThemeService {
         self.effective_dark_for(self.mode())
     }
 
-    fn effective_dark_for(&self, mode: ThemeMode) -> bool {
+    fn effective_dark_for(&self, mode: ThemeChoice) -> bool {
         match mode {
-            ThemeMode::Light => false,
-            ThemeMode::Dark => true,
-            ThemeMode::System => detect_system_dark(),
+            ThemeChoice::Light => false,
+            ThemeChoice::Dark => true,
+            ThemeChoice::System => detect_system_dark(),
         }
     }
 }
@@ -155,10 +150,10 @@ fn config_path() -> Option<PathBuf> {
     config_dir::config_file("theme")
 }
 
-fn load_mode() -> Option<ThemeMode> {
+fn load_mode() -> Option<ThemeChoice> {
     let path = config_path()?;
     let text = fs::read_to_string(&path).ok()?;
-    let mode = text.trim().parse::<i32>().ok().map(ThemeMode::from_i32)?;
+    let mode = text.trim().parse::<i32>().ok().map(theme_from_stored)?;
     log::info!(
         target: "ble_gui::theme",
         "已加载主题 {:?}, 路径={}",
@@ -168,12 +163,12 @@ fn load_mode() -> Option<ThemeMode> {
     Some(mode)
 }
 
-fn save_mode(mode: ThemeMode) -> std::io::Result<()> {
+fn save_mode(mode: ThemeChoice) -> std::io::Result<()> {
     let path = config_path().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "无法确定配置目录")
     })?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, mode.as_i32().to_string())
+    fs::write(path, theme_to_stored(mode).to_string())
 }

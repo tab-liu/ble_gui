@@ -43,8 +43,10 @@ export component WifiProvisionCard inherits Rectangle {
     in property <bool> scan-busy;
     in property <bool> wifi-ok;
     in property <bool> wifi-pending;
+    in property <bool> wifi-fault;
     in property <bool> cloud-ok;
     in property <bool> cloud-pending;
+    in property <bool> cloud-fault;
     in property <string> wifi-status-label;
     in property <string> cloud-status-label;
     in property <string> current-ssid;
@@ -97,8 +99,7 @@ export component WifiProvisionCard inherits Rectangle {
                 dot-color: !root.device-connected ? Theme.text-dim
                     : (root.wifi-ok ? Theme.success
                         : (root.wifi-pending ? Theme.warning
-                            : (root.device-connected && root.wifi-status-label != "WiFi 未连接"
-                                ? Theme.error : Theme.text-dim)));
+                            : (root.wifi-fault ? Theme.error : Theme.text-dim)));
                 label: root.wifi-status-label;
                 extra: root.current-ssid;
             }
@@ -107,8 +108,7 @@ export component WifiProvisionCard inherits Rectangle {
                 dot-color: !root.device-connected ? Theme.text-dim
                     : (root.cloud-ok ? Theme.success
                         : (root.cloud-pending ? Theme.warning
-                            : (root.cloud-status-label == "云端连接超时"
-                                ? Theme.error : Theme.text-dim)));
+                            : (root.cloud-fault ? Theme.error : Theme.text-dim)));
                 label: root.cloud-status-label;
             }
         }

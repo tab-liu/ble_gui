@@ -17,14 +17,15 @@ use slint::{ComponentHandle, DataTransfer, Model, ModelRc, SharedString, VecMode
 
 use crate::app::{close_dialog, open_dialog};
 use crate::services::ble::modbus::{
-    integer_debug_hex, parse_register_count, parse_scale, parse_value_type, value_type_from_index,
-    QueryValueType,
+    integer_debug_hex, parse_register_count, parse_scale, value_type_from_index,
+    value_type_to_index,
 };
 use crate::services::modbus_query_store;
 use crate::services::poll_sync::sync_poll_policy;
-use crate::state::{AppContext, DIALOG_COPY_QUERY, DIALOG_NEW_TAB, PAGE_MODBUS};
-use crate::state::query::tabs_to_schema;
-use crate::ui::{MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab};
+use crate::state::{AppContext, AppPage};
+use crate::state::query::{tabs_to_schema, QUERY_PENDING_TEXT};
+use crate::services::modbus::QueryPollStatus;
+use crate::ui::{DialogKind, MainWindow, ModbusDndApi, ModbusQueryItem, ModbusQueryLayoutRow, ModbusTab, QueryCardStatus, RegValueType};
 
 const CARD_WIDTH: f32 = 180.0;
 const CARD_HEIGHT: f32 = 124.0;
@@ -45,10 +46,10 @@ fn default_tab(title: &str, with_sample: bool) -> ModbusTab {
         vec![enrich_query_item(ModbusQueryItem {
             name: "室内温度".into(),
             register: "40001".into(),
-            value_type: "integer".into(),
+            value_type: RegValueType::Integer,
             register_count: 1,
             scale: 1,
-            status: "正常".into(),
+            status: QueryCardStatus::Ok,
             result: "24.6 °C".into(),
             result_display: SharedString::default(),
             result_hex: SharedString::default(),
@@ -75,14 +76,6 @@ fn clear_query_form(ui: &MainWindow) {
     ui.set_query_form_scale(SharedString::default());
 }
 
-fn value_type_to_index(text: &str) -> i32 {
-    match parse_value_type(text) {
-        QueryValueType::Float => 1,
-        QueryValueType::String => 2,
-        QueryValueType::Integer => 0,
-    }
-}
-
 fn new_pending_query_item(
     name: &str,
     register: &str,
@@ -90,15 +83,14 @@ fn new_pending_query_item(
     register_count_text: &str,
     scale_text: &str,
 ) -> ModbusQueryItem {
-    let value_type = value_type_from_index(value_type_index);
     enrich_query_item(ModbusQueryItem {
         name: name.into(),
         register: register.into(),
-        value_type: value_type.as_str().into(),
+        value_type: value_type_from_index(value_type_index),
         register_count: parse_register_count(register_count_text, 1) as i32,
         scale: parse_scale(scale_text) as i32,
-        status: "等待查询".into(),
-        result: "（Modbus 轮询后将自动填充）".into(),
+        status: QueryCardStatus::Pending,
+        result: QUERY_PENDING_TEXT.into(),
         result_display: SharedString::default(),
         result_hex: SharedString::default(),
         result_hex_below: false,
@@ -185,11 +177,47 @@ fn enrich_query_item(mut item: ModbusQueryItem) -> ModbusQueryItem {
     item
 }
 
+struct FoldedPoll {
+    status: QueryCardStatus,
+    /// 为假时保留卡片上一次的读数，只改状态点。
+    replace_result: bool,
+}
+
+/// 丢包不覆盖已有读数。连续失败：一轮黄，再失败红。
+/// 还没有成功读数时维持等待。地址无效和解析失败仍改写读数。
+fn fold_query_poll(prev_status: QueryCardStatus, incoming_status: QueryPollStatus) -> FoldedPoll {
+    match incoming_status {
+        QueryPollStatus::Ok => FoldedPoll {
+            status: QueryCardStatus::Ok,
+            replace_result: true,
+        },
+        QueryPollStatus::Failed => {
+            let status = match prev_status {
+                QueryCardStatus::Ok => QueryCardStatus::Missed,
+                QueryCardStatus::Missed | QueryCardStatus::Stalled => QueryCardStatus::Stalled,
+                _ => QueryCardStatus::Pending,
+            };
+            FoldedPoll {
+                status,
+                replace_result: false,
+            }
+        }
+        QueryPollStatus::BadAddress => FoldedPoll {
+            status: QueryCardStatus::BadAddress,
+            replace_result: true,
+        },
+        QueryPollStatus::ParseError => FoldedPoll {
+            status: QueryCardStatus::ParseError,
+            replace_result: true,
+        },
+    }
+}
+
 fn apply_query_result_fields(item: &mut ModbusQueryItem) {
     let display = item.result.to_string();
     let hex = integer_debug_hex(
         &display,
-        parse_value_type(&item.value_type.to_string()),
+        item.value_type,
         if item.scale > 0 {
             item.scale as u32
         } else {
@@ -269,7 +297,7 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
     if ui_page != slint_page {
         warn!(
             target: "ble_gui::query_ui",
-            "页面状态不一致: ble.ui_page={ui_page} slint.current_page={slint_page}",
+            "页面状态不一致: ble.ui_page={ui_page:?} slint.current_page={slint_page:?}",
         );
     }
 
@@ -322,12 +350,21 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
             );
             continue;
         };
-        let new_status: SharedString = r.status.clone().into();
+        let folded = fold_query_poll(item.status, r.status);
+        let next_status = folded.status;
         let new_result: SharedString = r.result.clone().into();
-        if item.status != new_status || item.result != new_result {
-            item.status = new_status;
-            item.result = new_result;
-            apply_query_result_fields(item);
+        let next_result: SharedString = if folded.replace_result {
+            new_result
+        } else {
+            item.result.clone()
+        };
+        if item.status != next_status || item.result != next_result {
+            let result_changed = item.result != next_result;
+            item.status = next_status;
+            item.result = next_result;
+            if result_changed {
+                apply_query_result_fields(item);
+            }
             changed = true;
         }
     }
@@ -344,7 +381,7 @@ pub fn apply_query_poll_results(ui: &MainWindow, ctx: &AppContext) {
 }
 
 fn touch_poll_policy(ui: &MainWindow, ctx: &AppContext) {
-    if ctx.ble.ui_page() == PAGE_MODBUS {
+    if ctx.ble.ui_page() == AppPage::Modbus {
         sync_poll_policy(ui, ctx);
     }
 }
@@ -372,7 +409,7 @@ fn reset_active_query_runtime(ui: &MainWindow, ctx: &AppContext) {
         .collect();
     let mut changed = false;
     for item in &mut items_vec {
-        if item.status.as_str() != "等待查询" {
+        if item.status != QueryCardStatus::Pending {
             crate::state::query::reset_item_runtime(item);
             changed = true;
         }
@@ -393,8 +430,8 @@ fn clone_query_item_for_copy(source: &ModbusQueryItem) -> ModbusQueryItem {
         value_type: source.value_type.clone(),
         register_count: source.register_count,
         scale: source.scale,
-        status: "等待查询".into(),
-        result: "（Modbus 轮询后将自动填充）".into(),
+        status: QueryCardStatus::Pending,
+        result: QUERY_PENDING_TEXT.into(),
         result_display: SharedString::default(),
         result_hex: SharedString::default(),
         result_hex_below: false,
@@ -626,7 +663,7 @@ fn open_copy_dialog(ui: &MainWindow, ctx: &AppContext, src_tab: usize, src_items
     st.modbus_query.pending_copy_src_items = src_items.to_vec();
     drop(st);
     ui.set_dialog_tab_options(ModelRc::new(VecModel::from(labels)));
-    open_dialog(ui, DIALOG_COPY_QUERY);
+    open_dialog(ui, DialogKind::CopyQuery);
 }
 
 fn copy_queries_to_tab(ctx: &AppContext, ui: &MainWindow, target_tab: usize) {
@@ -764,7 +801,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         move || {
             let ui = ui_weak.unwrap();
             set_query_hint(&ui, "");
-            open_dialog(&ui, DIALOG_NEW_TAB);
+            open_dialog(&ui, DialogKind::NewTab);
         }
     });
 
@@ -1013,7 +1050,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
         ui.set_editing_query_index(item_index);
         ui.set_query_form_name(item.name);
         ui.set_query_form_register(item.register);
-        ui.set_query_form_value_type_index(value_type_to_index(&item.value_type));
+        ui.set_query_form_value_type_index(value_type_to_index(item.value_type));
         ui.set_query_form_register_count(item.register_count.to_string().into());
         ui.set_query_form_scale(item.scale.to_string().into());
         ui.set_show_add_query_form(true);
@@ -1073,7 +1110,7 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
     let ctx_confirm = ctx.clone();
     ui.on_dialog_confirm(move || {
         let ui = ui_weak.unwrap();
-        if ui.get_dialog_kind() != DIALOG_NEW_TAB {
+        if ui.get_dialog_kind() != DialogKind::NewTab {
             return;
         }
         let name = ui.get_dialog_name().trim().to_string();
@@ -1104,6 +1141,33 @@ pub fn wire(ui: &MainWindow, ctx: &AppContext) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missed_poll_keeps_value_and_steps_the_dot() {
+        let fresh = fold_query_poll(QueryCardStatus::Pending, QueryPollStatus::Ok);
+        assert_eq!(fresh.status, QueryCardStatus::Ok);
+        assert!(fresh.replace_result);
+
+        let once = fold_query_poll(QueryCardStatus::Ok, QueryPollStatus::Failed);
+        assert_eq!(once.status, QueryCardStatus::Missed);
+        assert!(!once.replace_result);
+
+        let twice = fold_query_poll(QueryCardStatus::Missed, QueryPollStatus::Failed);
+        assert_eq!(twice.status, QueryCardStatus::Stalled);
+        assert!(!twice.replace_result);
+
+        let still = fold_query_poll(QueryCardStatus::Stalled, QueryPollStatus::Failed);
+        assert_eq!(still.status, QueryCardStatus::Stalled);
+        assert!(!still.replace_result);
+
+        let back = fold_query_poll(QueryCardStatus::Stalled, QueryPollStatus::Ok);
+        assert_eq!(back.status, QueryCardStatus::Ok);
+        assert!(back.replace_result);
+
+        let waiting = fold_query_poll(QueryCardStatus::Pending, QueryPollStatus::Failed);
+        assert_eq!(waiting.status, QueryCardStatus::Pending);
+        assert!(!waiting.replace_result);
+    }
 
     #[test]
     fn drop_index_left_half_inserts_before_card() {

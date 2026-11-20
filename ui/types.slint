@@ -1,13 +1,82 @@
+export enum QueryCardStatus {
+    pending,
+    ok,
+    missed,
+    stalled,
+    bad-address,
+    parse-error,
+}
+
+export enum FirmwarePhase {
+    idle,
+    ready,
+    running,
+    success,
+    failed,
+}
+
+export enum RegValueType {
+    integer,
+    float,
+    text,
+}
+
+export global RegValueLabel {
+    public pure function text(kind: RegValueType) -> string {
+        if kind == RegValueType.float {
+            "float"
+        } else if kind == RegValueType.text {
+            "string"
+        } else {
+            "integer"
+        }
+    }
+}
+
+/// 灵活配置项的控件。
+export enum ConfigWidget {
+    switch,
+    text,
+    number,
+}
+
+/// 常用设置的控件。`choice` 是枚举下拉，和灵活项的文本框不是同一种。
+export enum BuiltinControl {
+    switch,
+    choice,
+    number,
+}
+
+/// 侧栏页面。旧的整数里空过 2（已删除的设置页），改成枚举后不再占位。
+export enum AppPage {
+    dashboard,
+    modbus,
+    firmware,
+    device-config,
+    external,
+}
+
+export enum DialogKind {
+    none,
+    new-tab,
+    copy-query,
+}
+
+export enum WifiPickerKind {
+    closed,
+    scan,
+    history,
+}
+
 export struct ModbusQueryItem {
     name: string,
     register: string,
-    /// `integer` | `float` | `string`（默认 integer）
-    value-type: string,
+    value-type: RegValueType,
     /// 连续保持寄存器个数（默认 1）
     register-count: int,
     /// 整数显示倍数，实际值 = 原始值 / scale（默认 1）
     scale: int,
-    status: string,
+    status: QueryCardStatus,
     result: string,
     result-display: string,
     /// 整数调试 hex（如 `0x10`）；非整数或无效读回为空
@@ -55,15 +124,14 @@ export struct BleFavoriteDevice {
 }
 
 /// 设备配置项（Modbus 寄存器读写；无倍数，控件决定展示方式）
-/// widget-kind: 0=开关 1=文本 2=数值
-/// 读回（result*）与写入（write-value）分离，轮询只更新读回，不覆盖编辑框
+/// 读回（result*）与写入（write-value）分离，轮询只更新读回，不覆盖编辑框。
+/// `status` 是给用户看的说明，可以是写入失败的原文；`awaiting` 才表示还没有读过。
 export struct DeviceConfigItem {
     name: string,
     register: string,
-    /// `integer` | `float` | `string`
-    value-type: string,
+    value-type: RegValueType,
     register-count: int,
-    widget-kind: int,
+    widget-kind: ConfigWidget,
     /// 轮询读回原始/解析结果（与查询页 result 同角色）
     result: string,
     result-display: string,
@@ -73,6 +141,7 @@ export struct DeviceConfigItem {
     /// 待写入值（开关用 "0"/"1"）；编辑只改这里
     write-value: string,
     status: string,
+    awaiting: bool,
     /// 本地已改、尚未写入设备
     dirty: bool,
 }
@@ -86,14 +155,13 @@ export struct DeviceConfigGroup {
 }
 
 /// 常用设置项（代码映射；可含 bit 域）。读写分离同灵活项。
-/// widget-kind: 0=开关 1=枚举 2=数值
 export struct BuiltinConfigItem {
     id: string,
     name: string,
     register: string,
-    value-type: string,
+    value-type: RegValueType,
     register-count: int,
-    widget-kind: int,
+    widget-kind: BuiltinControl,
     enum-labels: [string],
     enum-values: [string],
     enum-index: int,
@@ -102,6 +170,7 @@ export struct BuiltinConfigItem {
     result-hex: string,
     write-value: string,
     status: string,
+    awaiting: bool,
     dirty: bool,
     write-enabled: bool,
     disabled-hint: string,
